@@ -102,8 +102,8 @@ test.describe('zapakowana aplikacja, dowod przez stan na dysku', () => {
 
     const ledger = readLedger(join(userDataDir, 'index.db'));
     expect(ledger).not.toBeNull();
-    expect(ledger).toHaveLength(1);
-    expect(ledger?.[0]?.version).toBe(1);
+    // Dwie migracje: 001 (indeks) i 002 (log operacji). Obie musza przyjsc z paczki.
+    expect(ledger?.map((row) => row.version)).toEqual([1, 2]);
     // Data w rejestrze dowodzi, ze wykonal sie INSERT, a nie tylko CREATE TABLE.
     expect(Number.isNaN(Date.parse(ledger?.[0]?.applied_at ?? ''))).toBe(false);
   });
@@ -118,7 +118,7 @@ test.describe('zapakowana aplikacja, dowod przez stan na dysku', () => {
     const afterSecond = readLedger(join(userDataDir, 'index.db'));
 
     expect(afterSecond).toEqual(afterFirst);
-    expect(afterSecond).toHaveLength(1);
+    expect(afterSecond).toHaveLength(2);
   });
 
   /**
