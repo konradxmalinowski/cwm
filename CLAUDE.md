@@ -29,8 +29,10 @@ Dwie reguły, które najłatwiej złamać przez przypadek:
 
 - **Jeden kolor i jego odcienie.** Kobalt plus czerwień jako jedyny wyjątek. Żółć i zieleń
   nie istnieją w tym systemie, nawet w ilustracjach i ikonach.
-- **Czerwień znaczy wyłącznie „tego nie cofniesz".** Intensywność koloru rośnie z wagą
-  konsekwencji, a nie z ważnością elementu na ekranie.
+- **Czerwień znaczy wyłącznie usunięcie:** coś, co istnieje teraz, znika, a przywrócenie
+  wymaga osobnego kroku. Także wtedy, gdy kopia jest w historii. Operacja bez możliwości
+  kopii nie jest czerwona, tylko zablokowana. Intensywność koloru rośnie z wagą
+  konsekwencji, a nie z ważnością elementu na ekranie (`DESIGN.md`, sekcja „Czerwień”).
 
 ## Granice warstw
 
