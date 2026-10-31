@@ -1,7 +1,14 @@
 # ADR 0012: `WriteGate` jako jedyna droga zapisu
 
-Status: zaakceptowane, zmienione przez ADR 0028
+Status: zaakceptowane, zmienione przez ADR 0028, zakres doprecyzowany przez ADR 0031
 Data: 2026-10-20
+
+> Doprecyzowanie zakresu wprowadzone przez ADR 0031: plan i jawne zatwierdzenie dotyczą zapisu
+> poza `userData`, czyli konfiguracji narzędzi. Zapis własnych danych aplikacji w
+> `userData/library/` idzie przez zapis katalogiem roboczym z zamianą, na wspólnych z `WriteGate`
+> elementach prymitywu zapisu atomowego, i z warunkiem kopii (ADR 0028, 0031),
+> a plan i zatwierdzenie są wymagane tylko przy usunięciu elementu. Reszta tego rekordu obowiązuje
+> bez zmian.
 
 > Zmiana wprowadzona przez ADR 0028: krok 2 (kopia dotykanego stanu) nie jest krokiem, który
 > może się nie udać, tylko **twardym warunkiem wstępnym**. Jeśli kopia nie jest możliwa, operacja

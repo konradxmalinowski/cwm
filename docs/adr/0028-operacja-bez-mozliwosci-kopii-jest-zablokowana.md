@@ -5,6 +5,18 @@ Data: 2026-10-20
 Zmienia: ADR 0012 (krok 2 przestaje być krokiem i staje się warunkiem wstępnym),
 ADR 0013 (kontrakt adaptera zyskuje szósty element)
 Źródło: korekta reguły koloru w `docs/DESIGN.md`, wpisy 22 do 24 w Decisions Log
+Uzupełnione przez: ADR 0031 (kopia częściowa, decyzja właściciela z 2026-10-30)
+
+> Uzupełnienie wprowadzone przez ADR 0031 (decyzja właściciela z 2026-10-30): operacja na elemencie
+> biblioteki, którego nie da się w całości odczytać, ma trzeci wynik obok `recoverable` i `blocked`.
+> Plan jest `partial`, gdy da się skopiować część czytelną: zawiera jawną listę `unrecoverable`
+> (ścieżka względem katalogu elementu i przyczyna), a usunięcie wymaga osobnego potwierdzenia
+> utraty tych plików, niezależnego od zwykłego zatwierdzenia. `applyDelete` ustala to z dysku
+> w chwili zastosowania, nie z pól planu. Jeśli nie da się skopiować nawet części czytelnej, plan
+> jest `blocked`, jak dotąd. Operacje, które nadpisują katalog elementu, nie mają planu, więc przy
+> nieczytelnym wpisie po prostu się nie wykonują (`backup-failed`). Wykonuje to `LibraryService`
+> (`planDelete`, `applyDelete`); gałęzie `partial` i `blocked` osiąga `tests/unit/library-salvage.test.ts`.
+> Reszta tego rekordu obowiązuje bez zmian.
 
 ## Kontekst
 

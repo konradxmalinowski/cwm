@@ -17,7 +17,7 @@ universal-ai-skills-manager/
     00-wymagania-zrodlowe.md
     ARCHITECTURE.md
     ROADMAP.md
-    adr/0001 do 0027
+    adr/0001 do 0031
   .github/workflows/
     ci.yml
     release.yml
@@ -65,6 +65,10 @@ universal-ai-skills-manager/
     core/                           domena: zero zaleznosci na electron, fs, Angular, sqlite
       model/
         item.ts                     LibraryItem i typy pochodne
+        library-errors.ts           bledy walidacji i operacji biblioteki
+        library-limits.ts           limity rozmiaru i glebokosci (ADR 0031)
+        library-file-names.ts       nazwy tymczasowe i systemowe
+        path-containment.ts         kontrola zawierania sciezek, wspolna z main
         compatibility.ts            poziomy zgodnosci
         plan.ts                     WritePlan, SyncPlan, raporty
         hook.ts
@@ -74,6 +78,10 @@ universal-ai-skills-manager/
         file-gateway.ts             WriteGate
         toml-editor.ts
         object-store.ts
+        library-store.ts            odczyt i zapis plikow elementu
+        operation-log.ts            port logu operacji (implementacja w kawalku B)
+        id-generator.ts             ULID
+        store-failure.ts            przyczyny awarii magazynow
         index-store.ts
         secret-classifier.ts
         clock.ts
@@ -111,7 +119,11 @@ universal-ai-skills-manager/
       fs/
         write-gate.ts               kanonizacja, backup, tmp plus rename, weryfikacja
         link-mode.ts                symlink, junction, kopia plus wykrywanie zdolnosci
-        atomic.ts
+        atomic.ts                   zapis atomowy, wspolny z zapisem biblioteki (ADR 0031)
+        bounded-read.ts             odczyt z limitem rozmiaru, bez dowiazan
+      library/
+        library-store.ts            katalog roboczy plus zamiana katalogow
+        item-swap.ts                nazwy katalogow pobocznych, odzyskanie po przerwaniu
       db/
         schema/                     migracje
         index-store.ts              better-sqlite3, FTS5
@@ -201,6 +213,35 @@ szczegóły, edycja, walidacja. Import pojedynczego pliku. Metadane i pliki powi
 kolizji wielkości liter (ADR 0017). Normalizacja końców linii (ADR 0016). Przebudowa indeksu
 z plików z kwarantanną i triażem przyczyn awarii otwarcia (ADR 0029). Okno przed otwarciem
 indeksu, z widokiem dla odmowy i dla odbudowy (ADR 0029, ARCHITECTURE 13.1).
+
+**Stan (2026-10-31): kawałek A zrobiony.** Etap dzieli się na trzy kawałki: A to warstwa plików
+biblioteki i content store (ADR 0031), B to indeks, C to IPC i interfejs. Kawałek A dostarcza
+model elementu, porty, walidację (slug, kolizje, ścieżki assetów, `item.json` z dysku), normalizację
+końców linii, `LibraryService` (tworzenie, edycja, lista, plan i zastosowanie usunięcia, dwie
+akcje naprawy elementu niespójnego), zapis elementu katalogiem roboczym z zamianą, content store
+oraz zacommitowane syntetyczne drzewo `tests/fixtures/library-linux/`. Kryteria 8, 9 i 10 są
+spełnione lokalnie na macOS. **Żadne z nich nie ma jeszcze dowodu z czterech celów.** Kryterium 10
+(element zapisany na Linuksie otwiera się na macOS i Windowsie) i `rename` katalogu na Windowsie
+są do potwierdzenia przez macierz CI; ostateczny dowód to jej zielony przebieg po pushu. Test czytający fixture biegnie wtedy na
+`ubuntu-latest`, `macos-15`, `macos-15-intel` i `windows-latest`; to samo dotyczy kryteriów 8
+i 9 na trzech systemach. Zachowania Windowsa, FAT i SMB, których macOS nie sprawdza, wymienia
+ADR 0031.
+
+Do kawałka B przechodzi to, czego A świadomie nie robi:
+
+- **Log operacji w `index.sqlite`** (ADR 0019). Wersje w `objects/` już powstają przy każdym
+  zapisie, ale wpisów logu z kawałka A nie da się odtworzyć wstecz (log jest nieodtwarzalny
+  z plików, ADR 0014), więc edycje i usunięcia sprzed B mają treść do odzyskania, a nie mają
+  historii zdarzeń. Serwis ma już port `OperationLog`; w A istnieje tylko implementacja testowa.
+  B musi zdążyć przed C, bo od interfejsu użytkownik może edytować i ta luka przestaje być
+  teoretyczna.
+- **Indeks slugów** zamiast odczytu wszystkich `item.json` przy każdym zapisie
+  (`LibraryService.existingSlugs`). Dziś koszt jest liniowy względem liczby elementów.
+  Ma wynikać z indeksu unikalności `lower(slug)` + typ (ADR 0017), z komunikatem walidatora, nie
+  z naruszenia ograniczenia bazy (kryterium 8).
+- **FTS i odbudowa indeksu z plików.** Odbudowa czyta bibliotekę przez `LibraryService.list()`,
+  który zwraca osobno elementy poprawne, niespójne i problemy; raport odbudowy (kryterium 4) ma
+  wymienić wszystkie trzy grupy, nie tylko liczbę wczytanych.
 
 Dwa zadania odziedziczone po Etapie 1, oba konkretne: bezpośredni dowód FTS5 w zapakowanej
 aplikacji (domyka ryzyko R2) oraz docelowy model awarii startu indeksu.
@@ -313,6 +354,13 @@ Kryteria akceptacji:
 Zakres: `SyncPlanner`, wybór celów, plan operacji, diff przed zapisem, identyfikacja konfliktów,
 zatwierdzenie, `WriteGate` (ADR 0012), backup, obsługa błędów, weryfikacja po synchronizacji,
 cofanie. Polityka usuwania (po odpowiedzi właściciela, ARCHITECTURE sekcja 15.2, punkt 4).
+
+Prymityw zapisu atomowego `src/infra/fs/atomic.ts` (plik tymczasowy z pidem, `rename` z ponowieniami
+na Windowsie, przepisanie trybu, sprzątanie, odczyt kontrolny, `fsync` katalogu) powstał już
+w Etapie 2 i ma własne testy (ADR 0031). `WriteGate` go używa, nie pisze od nowa; Etap 5 dokłada
+kanonizację ścieżki, kontrolę prefiksu, plan, zatwierdzenie i rollback. Poprawki w prymitywie
+muszą pozostać zgodne z zapisem biblioteki, który dzieli z nim `renameWithRetry`, `syncDirectory`
+i wzorzec nazw tymczasowych.
 
 Kryteria akceptacji:
 1. Zapis bez planu i bez jawnego zatwierdzenia jest niemożliwy. Nie istnieje ścieżka kodu, która
@@ -557,6 +605,14 @@ zdolności przez próbę, z trybem widocznym w interfejsie. ACL przez `icacls` z
 i raportowaniem niepowodzenia zamiast milczenia. Testy na `windows-latest`, czyli bez uprawnień
 administratora.
 
+Co zmienił Etap 2, kawałek A (ADR 0031): zapis biblioteki dokłada dwie zależności od Windowsa,
+których nikt tam jeszcze nie uruchomił. Pierwsza to `rename` katalogu z plikiem otwartym przez
+antywirus lub indekser; kod ponawia go pięć razy w odstępach 25 do 400 ms i kończy błędem `busy`
+ze starym stanem na miejscu, ale logikę sprawdzono szwem, nie NTFS. Druga to twarde linki dla
+niezmienionych plików, z kopią tam, gdzie linku nie ma (FAT, SMB). Pierwsza jest do potwierdzenia
+przez macierz CI; drugiej macierz nie sprawdzi, bo nie ma w niej takiego woluminu. Poziom ryzyka bez
+zmiany; do zielonego przebiegu zapis biblioteki na Windowsie pozostaje nieudowodniony.
+
 ### R4: Dryf formatów obsługiwanych narzędzi. Poziom: WYSOKI
 
 Claude Code 2.1.303 i codex-cli 0.158.0 to narzędzia o szybkim cyklu wydań, a część ich zachowań
@@ -612,7 +668,11 @@ w Codeksie dwa razy pod tą samą nazwą albo pod inną niż w Claude.
 
 Mitygacja (Etap 2 i 3, ADR 0023 i 0026): oba identyfikatory w modelu, dedup po `realpath` przy
 skanowaniu (port z generatora), rozjechanie jako ostrzeżenie rozstrzygane per narzędzie przy
-eksporcie. Import nie prostuje nazwy, bo wymuszanie zgodności zablokowałoby przyjęcie poprawnego
+eksporcie. Po Etapie 2, kawałku A, część modelowa jest w kodzie: walidator zwraca ostrzeżenie
+`slug-differs-from-declared-name` zamiast błędu, a kolizja `lower(slug)` + typ blokuje zapis.
+Skutek uboczny dla Etapu 3: slug jest ASCII (litery, cyfry, `.`, `_`, `-`, najwyżej 64 znaki),
+więc import katalogu o innej nazwie musi wyliczyć slug, a oryginał zachować w `declaredName`
+albo `aliases`. To decyzja do podjęcia przy projektowaniu importu, nie rozstrzygnięta tu. Import nie prostuje nazwy, bo wymuszanie zgodności zablokowałoby przyjęcie poprawnego
 skilla Claude'a.
 
 Co zostaje z ryzyka: użytkownik może ostrzeżenie zignorować i dostać w Codeksie element pod nazwą,
@@ -656,11 +716,17 @@ serwis nie może zalogować sekretu, nawet gdyby chciał. Testy jako asercje neg
 Nazwy i ścieżki pochodzą z niezaufanej treści. Skutek: zapis do dowolnego miejsca w systemie
 plików użytkownika.
 
-Mitygacja (Etap 1 i 5, ADR 0008 i 0012): architektonicznie, nie przez walidację stringów.
+Mitygacja (Etap 1, 2 i 5, ADR 0008, 0012 i 0031): architektonicznie, nie przez walidację stringów.
 Renderer nie przekazuje ścieżek, tylko nieprzezroczysty `rootId`, więc nie istnieje kanał,
 przez który ścieżka mogłaby wejść. `WriteGate` kanonizuje przez `realpath` i sprawdza prefiks,
 odrzuca UNC i `\\?\`, nazwy zarezerwowane Windowsa, NUL i znaki kontrolne. Skanowanie odmawia
 podążania za symlinkiem wyprowadzającym poza root.
+
+Co zmienił Etap 2, kawałek A: powstała druga droga zapisu, do własnej biblioteki, więc S2 nie
+opiera się już wyłącznie na `WriteGate`. Ścieżki assetów przychodzą z niezaufanej treści i są
+sprawdzane dwa razy: walidatorem w core (zestaw reguł z sekcji 12.5) i, jako obrona w głąb,
+w magazynie plików (`assertPlan` z tą samą kontrolą zawierania co `main`); `id` elementu musi być
+przenośną nazwą jednego katalogu. Dowiązania w katalogu elementu są odrzucane w całości.
 
 ### S3: Wykonanie importowanego kodu. Poziom: KRYTYCZNY
 
@@ -699,6 +765,11 @@ Mitygacja (Etap 5, ADR 0012 i 0019): plan przed zapisem, jawne zatwierdzenie, ba
 operacją destrukcyjną, zapis atomowy, weryfikacja po zapisie, rollback przy niepowodzeniu,
 backup katalogowy z MANIFEST czytelny bez aplikacji. Zakaz usuwania plików docelowych, których
 nie ma w bibliotece.
+
+Po Etapie 2, kawałku A, część mitygacji jest przesunięta wcześniej: prymityw zapisu atomowego
+istnieje i ma testy (ADR 0031), a `WriteGate` w Etapie 5 go użyje. Zakres S6 się nie zmienia:
+dotyczy konfiguracji narzędzi, nie własnej biblioteki, która ma osobną ochronę (kopia poprzedniej
+wersji w `objects/` przed nadpisaniem, plan i potwierdzenie przy usunięciu).
 
 ### S7: Publiczne repozytorium jako kanał wycieku. Poziom: WYSOKI
 

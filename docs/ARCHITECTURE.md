@@ -114,7 +114,7 @@ Przekładają się na dwanaście modułów z sekcji 6 i na jedenaście widoków 
 | Wymaganie | Konsekwencja architektoniczna |
 |---|---|
 | Dane zostają na komputerze, brak backendu | Zero połączeń sieciowych wychodzących. Blokada na poziomie `session.webRequest`, nie na poziomie obietnicy (ADR 0008) |
-| Aplikacja nie nadpisuje po cichu | Każdy zapis przez `WriteGate`: plan, zatwierdzenie, backup, zapis atomowy, weryfikacja (ADR 0012) |
+| Aplikacja nie nadpisuje po cichu | Każdy zapis do plików konfiguracji narzędzi przez `WriteGate`: plan, zatwierdzenie, backup, zapis atomowy, weryfikacja (ADR 0012). Zapis własnej biblioteki w `userData` idzie katalogiem roboczym z zamianą i kopią poprzedniej wersji, plan i zatwierdzenie tylko przy usunięciu (ADR 0031) |
 | Import i synchronizacja odwracalne | Content-addressed store plus log operacji; rollback nie wymaga Gita (ADR 0019) |
 | Treść importowana jest niezaufana | Nic nie jest wykonywane. Zakaz `child_process` w `core/` i `adapters/` wymuszony lintem (ADR 0008) |
 | Konwersja jawna i testowalna | Poziom zgodności jest polem modelu, nie opinią w UI (ADR 0013) |
@@ -374,11 +374,11 @@ interface LibraryItem {
     toolSetting?: ToolSettingDefinition;
   };
 
-  assets: Asset[];                 // pliki pomocnicze skilla
+  assets: Asset[];                 // pliki pomocnicze skilla; Asset = { relPath, bytesHash, sizeBytes }
 
   source: {
     snapshots: SourceSnapshot[];   // per narzedzie, bajt w bajt
-    importedFrom: { tool: ToolId; rootId: RootId; path: string; at: Timestamp };
+    importedFrom: { tool: ToolId; rootId: RootId; path: string; at: Timestamp } | null;  // null: element utworzony w aplikacji
   };
 
   classification: {
@@ -386,14 +386,14 @@ interface LibraryItem {
     secretFindings: SecretFinding[];
   };
 
-  compatibility: Record<ToolId, CompatibilityVerdict>;  // wyliczane, nie wpisywane
-  syncState: Record<ToolId, SyncState>;
+  compatibility: Record<ToolId, CompatibilityVerdict>;  // wyliczane, nie wpisywane; nie ma tego w item.json
+  syncState: Record<ToolId, SyncState>;                 // stan z indeksu; nie ma tego w item.json
   version: { revision: number; contentHash: Sha256; updatedAt: Timestamp };
 }
 
 interface SourceSnapshot {
   tool: ToolId;
-  files: { relPath: string; objectHash: Sha256; mode: number | null; lineEnding: 'lf' | 'crlf' | 'mixed' }[];
+  files: { relPath: string; bytesHash: Sha256; mode: number | null; lineEnding: 'lf' | 'crlf' | 'mixed' }[];
   unmappedKeys: { path: string; value: unknown }[];  // to, czego model nie objal
 }
 
@@ -405,6 +405,25 @@ interface HookDefinition {
   timeoutSeconds: number | null;
 }
 ```
+
+**Zgodność tego typu z kodem** (`src/core/model/item.ts`, `src/core/services/library/item-codec.ts`,
+ADR 0031). Typ powyżej to model pojęciowy; utrwalany `LibraryItem` różni się od niego pięcioma
+rzeczami:
+
+- `importedFrom` może być `null`, bo element utworzony w aplikacji nie ma źródła. Gdy nie jest
+  `null`, jego `path` jest ścieżką bezwzględną, więc nie przechodzi przez IPC (sekcja 7.2).
+- Pole nazywa się `bytesHash`, nie `objectHash`, zarówno w `Asset`, jak i w plikach snapshotu.
+  To hash bajtów pliku, a `item.json` używa go do sprawdzenia, czy plik na dysku jest tym, który
+  zapisano (sekcja 9), niezależnie od tego, czy bajty leżą w `objects/`. Nazwa `objectHash`
+  sugerowała odwołanie do obiektu w content store, a zarazem zacierała różnicę wobec
+  `version.contentHash`, który jest hashem treści znormalizowanej do LF (ADR 0016), nie bajtów.
+- `item.json` ma dwa pola spoza typu: `formatVersion` (dziś 1; inna wartość daje
+  `unsupported-format`, żeby starsza aplikacja nie czytała nowszego formatu po cichu) oraz
+  `versionRecordHash`, hash rekordu wersji w `objects/`, do którego wraca `restoreVersion`.
+- `compatibility` i `syncState` nie są utrwalane w `item.json`. Pierwsze wylicza adapter
+  (sekcja 4.3), drugie należy do indeksu (ADR 0014). Widok łączący je z elementem powstaje tam,
+  gdzie te dane są dostępne, a nie w warstwie plików.
+- `content.body` leży w `body.md`, nie w `item.json`.
 
 Trzy pola są tu nieoczywiste i każde pochodzi z konkretnego ustalenia empirycznego:
 
@@ -602,7 +621,7 @@ poza anulowaniem operacji. Lista jest jawna i zamknięta; brak kanału ogólnego
 | `diagnostics:rebuild-index-apply` (Etap 2) | `planId`, potwierdzenie | raport odbudowy. Najmocniejsze uprawnienie na tej liście, uzasadnienie bezpieczeństwa w ADR 0030 |
 | zdarzenia main do renderera | `progress`, `operation-log` | tylko postęp i log, nigdy treść pliku |
 
-Trzy reguły tej granicy:
+Cztery reguły tej granicy:
 
 1. **Renderer nigdy nie przekazuje ścieżek, którym main ufa.** Lokalizacje są wykrywane w main
    i identyfikowane nieprzezroczystym `rootId`. Renderer nie zna i nie podaje ścieżek absolutnych.
@@ -613,6 +632,16 @@ Trzy reguły tej granicy:
    niezaufaną treść, więc traktujemy go jako potencjalnie skompromitowany.
 3. **Żaden kanał nie zwraca sekretu.** Redakcja dzieje się w main, przed serializacją, a nie
    w komponencie, który "i tak tego nie pokaże".
+4. **Żaden kanał nie zwraca ścieżki bezwzględnej, także w błędzie.** Reguła 1 mówi o wejściu,
+   ta o wyjściu (CLAUDE.md: renderer nigdy nie dostaje ścieżki). Dotyczy dwóch pól warstwy
+   biblioteki, które ścieżki niosą. `cause` w `LibraryOperationError` trzyma oryginalny błąd
+   systemu plików, którego komunikat zawiera ścieżkę; `message` i `failure` są wolne od ścieżek
+   z założenia i tylko one mogą wyjść. `importedFrom.path` w elemencie jest ścieżką bezwzględną
+   źródła importu; renderer dostaje `tool`, `rootId` i `at`, a `path` zostaje w main. Handler
+   kanału buduje odpowiedź jawnie (`reason`, `message`, `failure`, `detail`), nie serializuje
+   obiektu błędu ani elementu w całości, a schemat odpowiedzi (reguła 2) odrzuca pole, którego
+   nie zna. Ścieżki względem katalogu elementu (`detail.path`, `unrecoverable[].relPath`) są
+   dozwolone. Reguła czeka na kawałek C Etapu 2, który dodaje pierwsze kanały `library:*`.
 
 ---
 
@@ -671,7 +700,9 @@ Niezaufane dane, bez wyjątku. Konkretnie:
 
 ### 8.3 Granica 3: zapis
 
-`WriteGate` to jedyna droga zapisu. Każdy zapis przechodzi:
+`WriteGate` to jedyna droga zapisu do plików, których aplikacja nie jest właścicielem, czyli
+konfiguracji narzędzi poza `userData` (zakres doprecyzowany w ADR 0031). Każdy taki zapis
+przechodzi:
 
 0. **Warunek wstępny: kopia musi być możliwa.** Nie jest to krok, który może się nie udać,
    tylko warunek wykonania. `WriteGate` nie ma ścieżki kodu, która zapisuje bez udanej kopii
@@ -687,6 +718,24 @@ Niezaufane dane, bez wyjątku. Konkretnie:
 4. Sprzątanie pliku tymczasowego przy błędzie.
 5. Weryfikacja: odczyt z powrotem i porównanie z planem.
 6. Przy niepowodzeniu rollback z content store.
+
+**Zapis własnej biblioteki (`userData/library/`) nie przechodzi przez `WriteGate`** i nie ma
+planu ani zatwierdzenia przy edycji (ADR 0031). Nie jest to zwolnienie z gwarancji, tylko inny
+mechanizm dla innego rodzaju danych:
+
+- element zapisuje `FsLibraryStore`: nowy stan powstaje w katalogu roboczym obok `items/<id>`,
+  po `fsync` dostaje nazwę `ready`, stary katalog idzie na bok, `ready` wchodzi na jego miejsce,
+  a stary jest usuwany.
+  Przerwanie zostawia cały stary albo cały nowy element; stan między dwoma `rename` naprawia
+  `FsLibraryStore` przy następnym zapisie, `list()` lub odczycie,
+- przed nadpisaniem i przed usunięciem `LibraryService` zapisuje do `objects/` surowe bajty
+  całego katalogu elementu. Bez udanej kopii operacja się nie wykonuje, tak jak w ADR 0028,
+- plan i jawne zatwierdzenie wymaga tylko usunięcie (`planDelete`, `applyDelete`),
+- `WriteGate` i zapis biblioteki dzielą `src/infra/fs/atomic.ts` (`rename` z ponowieniami na
+  Windowsie, `fsync` katalogu, nazwy plików tymczasowych); `WriteGate` dołoży nad nim kontrolę
+  prefiksu, plan i zatwierdzenie.
+
+Zdania o gwarancjach tego mechanizmu, każde z trzema odpowiedziami z sekcji 2.4, są w ADR 0031.
 
 ### 8.4 Sekrety
 
@@ -734,6 +783,7 @@ Windowsie, dostajemy brak efektu i pokazujemy zieloną kontrolkę.
       body.md              tresc glowna
       assets/...           pliki pomocnicze
       snapshots/<tool>/... surowe zrodlo, bajt w bajt
+    items/.<itemId>.<work|ready|old>.<pid>.<hex12>/   katalog pomocniczy zapisu, nie element (patrz nizej)
   index.sqlite             indeks, wyszukiwanie (FTS5), log operacji, stan sync
   objects/<aa>/<sha256>    content-addressed store (wersje, backupy)
   backups/<timestamp>/     backup przed operacja destrukcyjna + MANIFEST
@@ -749,6 +799,19 @@ poza aplikacją (podejrzeć, zacommitować, zgrepować). Baza trzyma to, co słu
 i śledzeniu stanu, i musi być odtwarzalna ze plików. Utrata `index.sqlite` kosztuje czas
 przebudowy, nie dane. To jest warunek zaufania do aplikacji, która ma być jedynym miejscem
 trzymania konfiguracji.
+
+**Zapis elementu jest zamianą katalogu, a w `items/` mogą leżeć katalogi pomocnicze.** Zapis
+buduje nowy stan w `items/.<itemId>.work.<pid>.<hex12>`, po `fsync` wszystkiego zmienia jego
+nazwę na `.ready.`, odsuwa stary `items/<itemId>` do `.old.` i wsuwa `ready` na jego miejsce
+(ADR 0031). Nazwa zaczyna się
+od kropki i nie jest poprawnym ULID, więc `list()` ją pomija i żaden z nich nie jest elementem.
+Po przerwaniu może zostać katalog `work`, `ready` albo `old`; `FsLibraryStore` rozstrzyga, który
+wchodzi na miejsce (tylko najnowszy `ready`, w przeciwnym razie najnowszy `old`; `work` nigdy),
+a resztę usuwa. Narzędzia i skrypty czytające `items/` z zewnątrz muszą pomijać nazwy
+zaczynające się od kropki. `item.json` jest zapisywany jako ostatni i niesie hashe pozostałych
+plików, więc rozbieżność (ręczna edycja `body.md`, niepełna kopia katalogu) wychodzi jako
+niespójność elementu z dwiema akcjami naprawy: przyjęcie stanu z dysku albo przywrócenie wersji
+z `objects/`.
 
 Odtwarzalność jest ścieżką kodu, nie właściwością na papierze (ADR 0029). Uszkodzony indeks jest
 odbudowywany po przeniesieniu starego pliku do `userData/quarantine/`, a nie powodem odmowy
@@ -1036,6 +1099,19 @@ której nie przewidziano. Reguła obowiązuje każdy mechanizm, który czemuś o
 | `recoverability` (ADR 0028) | plik nieczytelny, katalog tylko do czytania, cel niebędący zwykłym plikiem | plik istniejący i czytelny, plik dopiero tworzony, plik tylko do czytania w katalogu zapisywalnym |
 | Klasyfikator sekretów | pliki credentials, wzorce kluczy, wysoka entropia | skill mówiący o tokenach w treści, nazwa pliku zawierająca słowo `key` w innym znaczeniu |
 | Blokada sieci (ADR 0008) | żądanie do hosta zewnętrznego | `file://` i protokół aplikacji muszą działać |
+| Walidacja ścieżek assetów (ADR 0017, 0031) | `..`, ścieżka absolutna, `\` na POSIX, NUL i znaki kontrolne, nazwa zarezerwowana Windowsa (`CON`, `aux.txt`), końcowa kropka lub spacja, nazwa jak plik tymczasowy zapisu albo plik systemowy (`.DS_Store`), ścieżka dłuższa niż 120 znaków, dwa assety różniące się wielkością liter lub zapisem NFD/NFC, plik i katalog pod tą samą ścieżką | spacje, polskie znaki, CJK, głębokie zagnieżdżenie (do 16 segmentów), plik bez rozszerzenia, `notes.tmp` jako zwykły asset, ścieżka dokładnie 120 znaków, nazwa w NFD zapisana na dysku w NFC |
+| Niezaufany `item.json` z dysku (ADR 0014, 0031) | zły JSON, brakujące pole, nieznany `kind`, `id` inne niż nazwa katalogu, `formatVersion` inny niż obsługiwany, plik ponad 4 MiB, bajty niebędące UTF-8, hash pliku niezgodny z wpisem; w każdym z tych przypadków `list()` zgłasza problem i pokazuje pozostałe elementy | `item.json` przepisany przez edytor (BOM, CRLF, inne wcięcia, inna kolejność kluczy), `body.md` z CRLF po `autocrlf`, `item.json` o rozmiarze równym limitowi |
+| Zapis biblioteki (ADR 0031) | dowiązanie symboliczne w katalogu elementu (jako sam katalog, `assets/`, `snapshots/`, `snapshots/<tool>/` albo plik w środku): `read` odrzuca cały element, `readSalvage` zgłasza je jako nieczytelne, więc `update` się nie wykonuje, a zapis nie podąża za dowiązaniem i nie rusza jego celu; `ObjectStore` odmawia `put`: nadpisanie się nie wykonuje; awaria drugiego `rename`: stary stan na miejscu | element ze ścieżkami ze spacjami i nie-ASCII, zmiana samej wielkości liter nazwy assetu, zmiana pliku w katalog i z powrotem, niezmieniony plik współdzielony twardym linkiem, przerwany zapis naprawiony przy następnym odczycie |
+
+Wiersz "Zapis biblioteki" różni się od `WriteGate` w jednej sprawie, celowo: dowiązanie
+symboliczne w katalogu elementu jest odrzucane w całości, a nie rozwiązywane i sprawdzane
+względem roota. `WriteGate` pisze do cudzych drzew, w których symlinki są normą (Codex celowo
+czyta symlinkowane katalogi skilli, sekcja 8.1), więc musi je przepuszczać, gdy `realpath`
+zostaje pod rootem. Katalog elementu jest własnością aplikacji, która nigdy nie tworzy w nim
+dowiązań, więc dowiązanie oznacza skopiowane lub podłożone drzewo. Przejście za nim czytałoby
+albo nadpisywało pliki poza biblioteką, a kopii celu leżącego poza nią aplikacja nie potrafi
+zagwarantować (ADR 0028, cel będący symlinkiem prowadzącym poza root). Użytkownik ma wyjście:
+usunięcie takiego elementu idzie planem `partial`, z jawnym potwierdzeniem utraty.
 
 Każdy wiersz tej tabeli ma dwie kolumny i obie są wymagane. Kryterium akceptacji jest proste:
 żaden bezpiecznik nie wchodzi do repozytorium z samą kolumną lewą.
