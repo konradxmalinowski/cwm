@@ -1,7 +1,7 @@
 <dialog
   #dialog
   class="dialog"
-  [class.dialog--destructive]="plan()?.recoverability === 'partial'"
+  [class.dialog--destructive]="plan() !== null && plan()?.recoverability !== 'blocked'"
   aria-labelledby="delete-title"
   data-testid="delete-dialog"
   (cancel)="onCancel($event)"
@@ -46,7 +46,8 @@
           Usunięcie elementu {{ displayName() }} {{ lossSentence() }}.
         </h2>
         <p class="notice__text">
-          <span class="dialog__label">Nie do cofnięcia.</span> Aplikacja nie ma kopii tych plików:
+          <span class="dialog__label dialog__label--destructive">Nie do cofnięcia.</span> Aplikacja
+          nie ma kopii tych plików:
         </p>
         <ul class="notice__list" data-testid="unrecoverable-list">
           @for (file of p.unrecoverable; track file.path) {
@@ -93,8 +94,9 @@
           Usuniesz element {{ displayName() }}.
         </h2>
         <p>
-          Kopia wszystkich plików zostaje w magazynie kopii biblioteki, więc element da się
-          odtworzyć. Zniknie z listy i z dysku.
+          <span class="dialog__label dialog__label--destructive">Usunięcie.</span>
+          Element zniknie z listy i z dysku. Kopia wszystkich plików zostaje w magazynie kopii
+          biblioteki, ale przywrócenie jest osobnym krokiem.
         </p>
         <p class="view__context">{{ kindLabel(p.kind) }}</p>
         @if (s.status === 'error') {
@@ -106,7 +108,7 @@
           <button type="button" class="btn" autofocus (click)="close()">Anuluj</button>
           <button
             type="button"
-            class="btn"
+            class="btn btn--destructive"
             data-testid="confirm-delete"
             [disabled]="s.status === 'applying'"
             (click)="confirm()"

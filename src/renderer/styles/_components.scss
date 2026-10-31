@@ -153,16 +153,8 @@ textarea.control[aria-invalid='true'] {
   border-left: 2px solid var(--cobalt-300);
 }
 
-.notice--destructive {
-  border-left-color: var(--destructive);
-}
-
 .notice__label {
   font-weight: 700;
-}
-
-.notice--destructive .notice__label {
-  color: var(--destructive);
 }
 
 .notice__text {
@@ -313,7 +305,7 @@ kbd {
   font-weight: 700;
 }
 
-.dialog--destructive .dialog__label {
+.dialog__label--destructive {
   color: var(--destructive);
 }
 
