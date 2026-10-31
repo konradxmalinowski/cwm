@@ -1,0 +1,49 @@
+{
+  "formatVersion": 1,
+  "id": "01M66AWWC8FJ1RN4CRKYKAVD5V",
+  "kind": "command",
+  "identity": {
+    "slug": "acme-deploy",
+    "declaredName": "acme-deploy",
+    "aliases": []
+  },
+  "content": {
+    "title": "acme-deploy",
+    "description": "Syntetyczny element acme-deploy.",
+    "descriptionOrigin": "source",
+    "body": "Uruchom wdrozenie.\n"
+  },
+  "attributes": {},
+  "assets": [],
+  "source": {
+    "snapshots": [
+      {
+        "tool": "claude-code",
+        "files": [
+          {
+            "relPath": "commands/acme-deploy.md",
+            "bytesHash": "389414c4ff79eefb954e70da878455bfcd75161abe43f913591697cab3fe4b5c",
+            "mode": 420,
+            "lineEnding": "crlf"
+          }
+        ],
+        "unmappedKeys": []
+      }
+    ],
+    "importedFrom": {
+      "tool": "claude-code",
+      "rootId": "acme-root-1",
+      "path": "commands/acme-deploy.md",
+      "at": "2026-10-30T12:00:00.000Z"
+    }
+  },
+  "classification": {
+    "scope": "private",
+    "secretFindings": []
+  },
+  "version": {
+    "revision": 1,
+    "contentHash": "1eb1e96106162305a6cdf68112871575f3168c0268edfbc551fc86cd159ff9cf",
+    "updatedAt": "2026-10-30T12:00:05.000Z"
+  }
+}

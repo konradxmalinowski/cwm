@@ -1,0 +1,62 @@
+{
+  "formatVersion": 1,
+  "id": "01M66AWRF83WK2TD1V894N0NTY",
+  "kind": "skill",
+  "identity": {
+    "slug": "acme-review",
+    "declaredName": "acme-review",
+    "aliases": []
+  },
+  "content": {
+    "title": "acme-review",
+    "description": "Syntetyczny element acme-review.",
+    "descriptionOrigin": "source",
+    "body": "# Acme review\n\nSprawdz zmiany w repozytorium acme.\n"
+  },
+  "attributes": {},
+  "assets": [
+    {
+      "relPath": "acme notes/read me.md",
+      "bytesHash": "4d86887841cf8d6663c9ddb773ffd955375e03a2ddd890da3cd0d252c6b89073",
+      "sizeBytes": 18
+    },
+    {
+      "relPath": "zażółć gęślą jaźń.md",
+      "bytesHash": "c7d89b0130b4dda02e344b721ff4717a15716a391382627cd0e9eb8bf37118bc",
+      "sizeBytes": 20
+    },
+    {
+      "relPath": "資料/説明.md",
+      "bytesHash": "4bd57b9d2dcfa83efc6bb8326daf5e663224b35290bf1ef1c2ee5382570851b1",
+      "sizeBytes": 4
+    },
+    {
+      "relPath": "p1/p2/p3/p4/p5/p6/p7/p8/p9/p10/acme-deep.txt",
+      "bytesHash": "b9a5c5819fff36d0b53823e01a4d2ac3980e6a89e7639e62a7efd39b50e21f31",
+      "sizeBytes": 18
+    },
+    {
+      "relPath": "Makefile",
+      "bytesHash": "1ece5460198731cf41f6852c1f98c9c5e64e9821c0525c5bd0a7fb8723259084",
+      "sizeBytes": 17
+    },
+    {
+      "relPath": "bin/acme.dat",
+      "bytesHash": "9477b31d54b8b9f599bfbe6e0d113210902a97d3f313538ed1dfadbfa6ac0fe1",
+      "sizeBytes": 9
+    }
+  ],
+  "source": {
+    "snapshots": [],
+    "importedFrom": null
+  },
+  "classification": {
+    "scope": "private",
+    "secretFindings": []
+  },
+  "version": {
+    "revision": 1,
+    "contentHash": "69851e680e2edaf547c8f38dba4947eece03a8ae9cd089324fb09e1d65160617",
+    "updatedAt": "2026-10-30T12:00:01.000Z"
+  }
+}

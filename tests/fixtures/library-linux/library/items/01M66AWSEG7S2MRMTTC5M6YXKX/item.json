@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "id": "01M66AWSEG7S2MRMTTC5M6YXKX",
+  "kind": "agent",
+  "identity": {
+    "slug": "acme-review",
+    "declaredName": "acme-review",
+    "aliases": []
+  },
+  "content": {
+    "title": "acme-review",
+    "description": "Syntetyczny element acme-review.",
+    "descriptionOrigin": "source"
+  },
+  "attributes": {},
+  "assets": [],
+  "source": {
+    "snapshots": [],
+    "importedFrom": null
+  },
+  "classification": {
+    "scope": "private",
+    "secretFindings": []
+  },
+  "version": {
+    "revision": 1,
+    "contentHash": "96e9dc359125012e3e26a30389676edf95d5364c0fbbf706628fe86a42d17a9c",
+    "updatedAt": "2026-10-30T12:00:02.000Z"
+  },
+  "versionRecordHash": "76e8a6976055ade8f71baea3cfaaab18598b3d0b81df457ae6d0b4b77afe0422"
+}

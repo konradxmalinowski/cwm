@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "id": "01M66AWXBGKEHAKC5QQV2WSMYT",
+  "kind": "rule",
+  "identity": {
+    "slug": "acme-style",
+    "declaredName": "acme-style",
+    "aliases": []
+  },
+  "content": {
+    "title": "acme-style",
+    "description": "Syntetyczny element acme-style.",
+    "descriptionOrigin": "source",
+    "body": ""
+  },
+  "attributes": {},
+  "assets": [],
+  "source": {
+    "snapshots": [],
+    "importedFrom": null
+  },
+  "classification": {
+    "scope": "private",
+    "secretFindings": []
+  },
+  "version": {
+    "revision": 1,
+    "contentHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "updatedAt": "2026-10-30T12:00:06.000Z"
+  }
+}

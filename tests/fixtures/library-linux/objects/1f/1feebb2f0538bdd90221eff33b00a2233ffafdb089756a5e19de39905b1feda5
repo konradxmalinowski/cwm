@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "id": "01M66AWTDRBNJ6PWKSG23RX5CW",
+  "kind": "agent",
+  "identity": {
+    "slug": "acme-planner",
+    "declaredName": "acme-architect",
+    "aliases": []
+  },
+  "content": {
+    "title": "acme-planner",
+    "description": "Syntetyczny element acme-planner.",
+    "descriptionOrigin": "source",
+    "body": "Planuje prace acme, wersja druga.\n"
+  },
+  "attributes": {},
+  "assets": [],
+  "source": {
+    "snapshots": [],
+    "importedFrom": null
+  },
+  "classification": {
+    "scope": "private",
+    "secretFindings": []
+  },
+  "version": {
+    "revision": 2,
+    "contentHash": "16ab2ebae70978ba48ea857bdec7ccaa911194cc4c1f6a3b001792c3a22ffa51",
+    "updatedAt": "2026-10-30T12:00:04.000Z"
+  }
+}

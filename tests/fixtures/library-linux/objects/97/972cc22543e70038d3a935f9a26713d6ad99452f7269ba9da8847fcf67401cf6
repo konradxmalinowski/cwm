@@ -1,0 +1,39 @@
+{
+  "formatVersion": 1,
+  "id": "01M66AWYARQB0WHKYPVQJEQWQS",
+  "kind": "hook",
+  "identity": {
+    "slug": "acme-format-hook",
+    "declaredName": "acme-format-hook",
+    "aliases": []
+  },
+  "content": {
+    "title": "acme-format-hook",
+    "description": "Syntetyczny element acme-format-hook.",
+    "descriptionOrigin": "source",
+    "body": "Formatowanie po edycji.\n"
+  },
+  "attributes": {
+    "hook": {
+      "event": "PostToolUse",
+      "matcher": "Edit",
+      "command": "acme-format --check",
+      "pathStyle": "home-relative",
+      "timeoutSeconds": 30
+    }
+  },
+  "assets": [],
+  "source": {
+    "snapshots": [],
+    "importedFrom": null
+  },
+  "classification": {
+    "scope": "private",
+    "secretFindings": []
+  },
+  "version": {
+    "revision": 1,
+    "contentHash": "4a02542a9fd6af8116990856380f6741382069d549cbe51944e113314af8e3ea",
+    "updatedAt": "2026-10-30T12:00:07.000Z"
+  }
+}

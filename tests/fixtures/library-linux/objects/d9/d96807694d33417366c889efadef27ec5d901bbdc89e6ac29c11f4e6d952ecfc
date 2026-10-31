@@ -1,0 +1,37 @@
+{
+  "formatVersion": 1,
+  "id": "01M66AWZA0V7GEFVQNZG1GM48R",
+  "kind": "tool-setting",
+  "identity": {
+    "slug": "acme-model",
+    "declaredName": "acme-model",
+    "aliases": []
+  },
+  "content": {
+    "title": "acme-model",
+    "description": "Syntetyczny element acme-model.",
+    "descriptionOrigin": "source",
+    "body": "Model domyslny.\n"
+  },
+  "attributes": {
+    "toolSetting": {
+      "tool": "codex",
+      "key": "model",
+      "value": "acme-large"
+    }
+  },
+  "assets": [],
+  "source": {
+    "snapshots": [],
+    "importedFrom": null
+  },
+  "classification": {
+    "scope": "private",
+    "secretFindings": []
+  },
+  "version": {
+    "revision": 1,
+    "contentHash": "b4548ac4cb2bd09eaadbe771f1494f1d28968988cf1db81aa8442b3c53d720ba",
+    "updatedAt": "2026-10-30T12:00:08.000Z"
+  }
+}
