@@ -8,6 +8,7 @@ export interface PathApi {
   resolve(...segments: string[]): string;
   relative(from: string, to: string): string;
   isAbsolute(value: string): boolean;
+  readonly sep: string;
 }
 
 /**
@@ -32,7 +33,9 @@ export function isPathInsideWith(
   if (resolvedChild === resolvedParent) return allowSame;
 
   const rel = pathApi.relative(resolvedParent, resolvedChild);
-  return rel !== '' && !rel.startsWith('..') && !pathApi.isAbsolute(rel);
+  // Wyjscie to segment `..`, a nie prefiks nazwy: `..chunk.js` jest poprawnym plikiem w korzeniu.
+  const escapes = rel === '..' || rel.startsWith(`..${pathApi.sep}`);
+  return rel !== '' && !escapes && !pathApi.isAbsolute(rel);
 }
 
 export function isPathInside(

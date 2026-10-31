@@ -2,7 +2,7 @@ import { win32, posix } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { isPathInsideWith } from '../../src/main/bootstrap/path-containment';
+import { isPathInsideWith } from '../../src/core/model/path-containment';
 import { isInsideWith } from '../harness/isolation';
 
 /**
@@ -46,6 +46,29 @@ describe('kontrola prefiksu sciezki, semantyka POSIX', () => {
     expect(isPathInsideWith(posix, '/app/dist/renderer/main.js', '/app/dist/renderer')).toBe(true);
     expect(isPathInsideWith(posix, '/etc/passwd', '/app/dist/renderer')).toBe(false);
     expect(isPathInsideWith(posix, '/app/dist/renderer-evil/x', '/app/dist/renderer')).toBe(false);
+  });
+});
+
+describe('nazwy zaczynajace sie od dwoch kropek leza w katalogu (nie sa wyjsciem)', () => {
+  it('POSIX: ..chunk.js i ..data/x', () => {
+    expect(isPathInsideWith(posix, '/app/dist/renderer/..chunk.js', '/app/dist/renderer')).toBe(
+      true,
+    );
+    expect(isPathInsideWith(posix, '/app/dist/renderer/..data/x', '/app/dist/renderer')).toBe(true);
+    expect(isPathInsideWith(posix, '/app/dist/renderer/../x', '/app/dist/renderer')).toBe(false);
+  });
+
+  it('Windows: ..chunk.js i ..data\\x', () => {
+    const root = 'C:\\app\\dist\\renderer';
+    expect(isPathInsideWith(win32, `${root}\\..chunk.js`, root)).toBe(true);
+    expect(isPathInsideWith(win32, `${root}\\..data\\x`, root)).toBe(true);
+    expect(isPathInsideWith(win32, `${root}\\..\\x`, root)).toBe(false);
+    expect(isPathInsideWith(win32, 'D:\\..chunk.js', root)).toBe(false);
+  });
+
+  it('samo .. jako rodzic nadal wychodzi', () => {
+    expect(isPathInsideWith(posix, '/app/dist', '/app/dist/renderer')).toBe(false);
+    expect(isPathInsideWith(win32, 'C:\\app\\dist', 'C:\\app\\dist\\renderer')).toBe(false);
   });
 });
 

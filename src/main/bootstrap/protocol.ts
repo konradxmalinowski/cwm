@@ -3,7 +3,7 @@ import { extname, join, resolve } from 'node:path';
 
 import { protocol } from 'electron';
 
-import { isPathInside } from './path-containment';
+import { isPathInside } from '../../core/model/path-containment';
 import { APP_HOST, APP_SCHEME } from './paths';
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -67,22 +67,34 @@ function contentTypeFor(filePath: string): string {
   return CONTENT_TYPES[extname(filePath).toLowerCase()] ?? 'application/octet-stream';
 }
 
-async function resolveTarget(root: string, pathname: string): Promise<string | null> {
-  const decoded = decodeURIComponent(pathname).replace(/^\/+/, '');
+export type ResolvedTarget =
+  | { readonly kind: 'file'; readonly path: string }
+  | { readonly kind: 'outside' }
+  | { readonly kind: 'malformed' }
+  | { readonly kind: 'missing' };
+
+export async function resolveTarget(root: string, pathname: string): Promise<ResolvedTarget> {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(pathname).replace(/^\/+/, '');
+  } catch {
+    // Zniekszatlcona sekwencja `%` to zle zadanie, nie wyjatek, ktory zrywa obietnice handlera.
+    return { kind: 'malformed' };
+  }
   const candidate = resolve(join(root, decoded === '' ? 'index.html' : decoded));
 
-  if (!isPathInside(candidate, root, { allowSame: true })) return null;
+  if (!isPathInside(candidate, root, { allowSame: true })) return { kind: 'outside' };
 
   try {
     const info = await stat(candidate);
-    if (info.isFile()) return candidate;
-    if (info.isDirectory()) return resolve(join(candidate, 'index.html'));
+    if (info.isFile()) return { kind: 'file', path: candidate };
+    if (info.isDirectory()) return { kind: 'file', path: resolve(join(candidate, 'index.html')) };
   } catch {
     // Sciezka bez rozszerzenia to trasa aplikacji, nie plik: oddajemy powloke.
-    if (extname(candidate) === '') return resolve(join(root, 'index.html'));
-    return null;
+    if (extname(candidate) === '') return { kind: 'file', path: resolve(join(root, 'index.html')) };
+    return { kind: 'missing' };
   }
-  return null;
+  return { kind: 'missing' };
 }
 
 export function handleAppScheme(rendererRootDir: string): void {
@@ -93,15 +105,21 @@ export function handleAppScheme(rendererRootDir: string): void {
     }
 
     const target = await resolveTarget(rendererRootDir, url.pathname);
-    if (target === null) {
+    if (target.kind === 'malformed') {
+      return new Response('niepoprawny adres zadania', { status: 400 });
+    }
+    if (target.kind === 'outside') {
       return new Response('zadanie poza katalogiem builda', { status: 403 });
+    }
+    if (target.kind === 'missing') {
+      return new Response('nie znaleziono', { status: 404 });
     }
 
     try {
-      const body = await readFile(target);
+      const body = await readFile(target.path);
       return new Response(new Uint8Array(body), {
         status: 200,
-        headers: { ...SECURITY_HEADERS, 'Content-Type': contentTypeFor(target) },
+        headers: { ...SECURITY_HEADERS, 'Content-Type': contentTypeFor(target.path) },
       });
     } catch {
       return new Response('nie znaleziono', { status: 404 });
