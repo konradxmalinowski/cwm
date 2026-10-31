@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { link, mkdir, open, readdir } from 'node:fs/promises';
+import { chmod, link, mkdir, open, readdir } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import { TOOL_IDS, type AssetFile, type SnapshotFile, type ToolId } from '../../core/model/item';
@@ -309,6 +309,7 @@ export class FsLibraryStore implements LibraryStore {
         throw symlinkError('');
       }
       old = join(this.itemsDir, sideDirName(id, 'old', randomSuffix()));
+      await restoreOwnerAccess(target);
       try {
         await this.renameDir(target, old);
       } catch (error: unknown) {
@@ -476,6 +477,24 @@ export class FsLibraryStore implements LibraryStore {
   }
 }
 
+/**
+ * Przeniesienie katalogu wymaga prawa zapisu do niego samego (macOS aktualizuje wpis `..`). Biblioteka
+ * nalezy do aplikacji, a ADR 0018 wymaga dla jej katalogow 0700, wiec zwykly katalog elementu
+ * nalezacy do biezacego uzytkownika dostaje 0700 przed odsunieciem. Gdy `chmod` sie nie uda,
+ * zostaje blad z `rename` (`permission-denied`). Nie dotyczy Windowsa ani dowiazan.
+ */
+async function restoreOwnerAccess(dir: string): Promise<void> {
+  if (process.platform === 'win32' || process.getuid === undefined) return;
+  const info = await lstatOrNull(dir);
+  if (info === null || !info.isDirectory() || info.isSymbolicLink()) return;
+  if (info.uid !== process.getuid() || (info.mode & 0o700) === 0o700) return;
+  try {
+    await chmod(dir, 0o700);
+  } catch {
+    // Zostaje obecny blad z rename.
+  }
+}
+
 function randomSuffix(): string {
   return randomBytes(6).toString('hex');
 }
@@ -546,16 +565,21 @@ export function assertPlan(dir: string, files: readonly PlannedFile[]): void {
       isAbsolute(rel) ||
       /^[a-zA-Z]:/.test(rel) ||
       segments.some((s) => s === '' || s === '.' || s === '..');
-    // Kontrola zawierania wspolna z `main` (core/model/path-containment): wynik musi lezec pod katalogiem elementu.
-    if (malformed || !isPathInside(resolve(dir, ...segments), dir)) {
+    if (malformed) {
       throw new LibraryStoreError('path-escape', `sciezka wychodzi poza element: ${rel}`);
     }
     // Plik o takiej nazwie znikalby przy odczycie jako slad przerwanego zapisu.
     if (segments.some(isAtomicTempName)) {
       throw new LibraryStoreError('temp-name', `nazwa pasuje do pliku tymczasowego: ${rel}`);
     }
+    // Reguly nazw przed kontrola zawierania: na Windowsie `resolve` traktuje segment `C:` jako dysk
+    // i zwrocilby `path-escape`, wiec `reason` zalezalby od systemu.
     if (!segments.every(isPortableName)) {
       throw new LibraryStoreError('invalid-name', `nazwa niedozwolona na Windowsie: ${rel}`);
+    }
+    // Kontrola zawierania wspolna z `main` (core/model/path-containment): wynik musi lezec pod katalogiem elementu.
+    if (!isPathInside(resolve(dir, ...segments), dir)) {
+      throw new LibraryStoreError('path-escape', `sciezka wychodzi poza element: ${rel}`);
     }
     if (seen.has(rel)) {
       throw new LibraryStoreError('path-conflict', `sciezka podana dwa razy: ${rel}`);
