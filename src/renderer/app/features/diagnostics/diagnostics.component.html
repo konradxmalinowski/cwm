@@ -1,0 +1,169 @@
+@let state = startup.state();
+<section class="view" aria-labelledby="diagnostics-heading">
+  <header class="view__head">
+    <p class="view__context">Diagnostyka</p>
+    <h1 class="view__sentence" id="diagnostics-heading" tabindex="-1">
+      @if (state.status === 'loading') {
+        Odczytuję raport.
+      } @else if (state.status === 'error') {
+        Nie udało się odczytać raportu.
+      } @else {
+        {{ view()?.sentence }}
+      }
+    </h1>
+  </header>
+
+  @if (state.status === 'loading') {
+    <div class="skeleton" aria-hidden="true" data-testid="diagnostics-loading">
+      @for (row of [1, 2, 3, 4]; track row) {
+        <div class="skeleton__row">
+          <span class="skeleton__bar skeleton__bar--m"></span>
+          <span class="skeleton__bar skeleton__bar--l"></span>
+        </div>
+      }
+    </div>
+    <p class="sr-only" role="status">Odczytuję raport diagnostyczny.</p>
+  } @else if (state.status === 'error') {
+    <div class="notice" role="alert" data-testid="diagnostics-error">
+      <p class="notice__text"><span class="notice__label">Błąd.</span> {{ state.message }}</p>
+      <p class="row-actions">
+        <button type="button" class="btn" (click)="reload()">Spróbuj ponownie</button>
+      </p>
+    </div>
+  } @else {
+    @let v = view();
+    @if (v !== null) {
+      <div class="report" data-testid="diagnostics-report">
+        <section class="section" aria-labelledby="diag-start">
+          <h2 class="section__title" id="diag-start">Start indeksu</h2>
+          @if (v.kind === 'refused') {
+            <div class="notice" role="note">
+              <p class="notice__text">
+                <span class="notice__label">Odmowa startu.</span> {{ v.reasonLabel }} {{ v.advice }}
+              </p>
+              @if (v.message !== '') {
+                <p class="notice__text">{{ v.message }}</p>
+              }
+            </div>
+          } @else if (v.kind === 'rebuilt' && v.facts !== null) {
+            <div class="notice notice--info" role="note">
+              <p class="notice__text">
+                <span class="notice__label">Indeks odbudowany.</span> {{ v.reasonLabel }}
+              </p>
+              <p class="notice__text">
+                {{ v.facts.restored }}
+                @if (v.facts.zeroWarning) {
+                  To nie potwierdza, że biblioteka jest pusta ani że indeks jest kompletny.
+                }
+              </p>
+              <p class="notice__text">Nie odzyskano:</p>
+              <ul class="notice__list">
+                @for (line of v.facts.notRestored; track line) {
+                  <li>{{ line }}</li>
+                }
+              </ul>
+            </div>
+          }
+          <dl class="report__grid">
+            <dt>Wynik</dt>
+            <dd>
+              {{
+                v.kind === 'normal'
+                  ? 'Start normalny'
+                  : v.kind === 'rebuilt'
+                    ? 'Odbudowa indeksu'
+                    : 'Odmowa startu'
+              }}
+            </dd>
+            @if (v.reasonLabel !== '') {
+              <dt>Przyczyna</dt>
+              <dd>{{ v.reasonLabel }}</dd>
+            }
+            @if (v.quarantined !== '') {
+              <dt>Plik w kwarantannie</dt>
+              <dd class="mono">{{ v.quarantined }}</dd>
+            }
+          </dl>
+        </section>
+
+        <section class="section" aria-labelledby="diag-db">
+          <h2 class="section__title" id="diag-db">Baza</h2>
+          <dl class="report__grid">
+            @if (v.report.database.status === 'ok') {
+              <dt>Stan</dt>
+              <dd>Działa</dd>
+              <dt>Silnik</dt>
+              <dd>{{ v.report.database.engine }} {{ v.report.database.engineVersion }}</dd>
+              <dt>SQLite</dt>
+              <dd>{{ v.report.database.sqliteVersion }}</dd>
+              <dt>Wyszukiwanie pełnotekstowe</dt>
+              <dd>{{ v.report.database.fts5Available ? 'Dostępne' : 'Niedostępne' }}</dd>
+              <dt>Tryb dziennika</dt>
+              <dd>{{ v.report.database.journalMode }}</dd>
+              <dt>Wersja schematu</dt>
+              <dd>{{ v.report.database.schemaVersion }}</dd>
+              <dt>Lokalizacja</dt>
+              <dd>{{ locationLabel(v.report.database.locationLabel) }}</dd>
+            } @else if (v.report.database.status === 'failed') {
+              <dt>Stan</dt>
+              <dd>Błąd odczytu</dd>
+              <dt>Powód</dt>
+              <dd>{{ v.report.database.reason }}</dd>
+              <dt>Lokalizacja</dt>
+              <dd>{{ locationLabel(v.report.database.locationLabel) }}</dd>
+            } @else {
+              <dt>Stan</dt>
+              <dd>Niedostępna</dd>
+              <dt>Powód</dt>
+              <dd>{{ v.report.database.reason }}</dd>
+            }
+          </dl>
+        </section>
+
+        <section class="section" aria-labelledby="diag-env">
+          <h2 class="section__title" id="diag-env">Środowisko</h2>
+          <dl class="report__grid">
+            <dt>System</dt>
+            <dd>{{ v.platform }}, {{ v.report.runtime.arch }}</dd>
+            <dt>Wersja aplikacji</dt>
+            <dd>{{ v.report.runtime.appVersion }}</dd>
+            <dt>Electron</dt>
+            <dd>{{ v.report.runtime.electronVersion }}</dd>
+            <dt>Chromium</dt>
+            <dd>{{ v.report.runtime.chromeVersion }}</dd>
+            <dt>Node</dt>
+            <dd>{{ v.report.runtime.nodeVersion }}</dd>
+            <dt>Wydanie</dt>
+            <dd>
+              {{
+                v.report.runtime.packaged ? 'Zapakowana aplikacja' : 'Uruchomienie deweloperskie'
+              }}
+            </dd>
+          </dl>
+        </section>
+
+        <section class="section" aria-labelledby="diag-other">
+          <h2 class="section__title" id="diag-other">Ograniczenia</h2>
+          <dl class="report__grid">
+            <dt>Ikona aplikacji</dt>
+            <dd>
+              {{
+                v.report.appIcon === 'placeholder'
+                  ? 'Tymczasowa. Właściciel nie wybrał jeszcze ikony.'
+                  : 'Ustawiona'
+              }}
+            </dd>
+            <dt>Etap</dt>
+            <dd>{{ v.report.stage }}</dd>
+            <dt>Raport z</dt>
+            <dd>{{ formatDate(v.report.generatedAt) }}</dd>
+          </dl>
+        </section>
+
+        <p class="row-actions">
+          <button type="button" class="btn" (click)="reload()">Odśwież raport</button>
+        </p>
+      </div>
+    }
+  }
+</section>

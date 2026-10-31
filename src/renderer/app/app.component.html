@@ -1,0 +1,73 @@
+<button type="button" class="skip-link" (click)="skipToContent()">Przejdź do treści</button>
+
+<div class="frame" data-testid="app-shell">
+  <div class="shell">
+    <nav class="toc" aria-label="Główna nawigacja">
+      <p class="toc__name">Universal AI Skills Manager</p>
+
+      <ul class="toc__list">
+        <li>
+          <a
+            class="toc__link"
+            [href]="'#' + paths.library"
+            [attr.aria-current]="section() === 'library' ? 'page' : null"
+            ><span class="toc__num" aria-hidden="true">1.</span>Biblioteka</a
+          >
+        </li>
+        <li>
+          <a
+            class="toc__link"
+            [href]="'#' + paths.diagnostics"
+            [attr.aria-current]="section() === 'diagnostics' ? 'page' : null"
+            ><span class="toc__num" aria-hidden="true">2.</span>Diagnostyka</a
+          >
+        </li>
+      </ul>
+
+      <fieldset class="theme toc__foot">
+        <legend>Motyw</legend>
+        <div class="theme__options">
+          @for (option of themeOptions; track option.value) {
+            <label class="theme__option">
+              <input
+                type="radio"
+                name="theme"
+                [value]="option.value"
+                [checked]="theme.preference() === option.value"
+                (change)="theme.set(option.value)"
+              />
+              <span>{{ option.label }}</span>
+            </label>
+          }
+        </div>
+      </fieldset>
+    </nav>
+
+    <main id="main" class="main" tabindex="-1">
+      <app-startup-banner />
+
+      @let current = route();
+      @if (current.name === 'library') {
+        <app-library-list />
+      } @else if (current.name === 'library-new') {
+        <app-library-form />
+      } @else if (current.name === 'library-item') {
+        <app-library-detail [id]="current.id" />
+      } @else if (current.name === 'library-edit') {
+        <app-library-form [id]="current.id" />
+      } @else if (current.name === 'diagnostics') {
+        <app-diagnostics />
+      } @else {
+        <section class="view">
+          <header class="view__head">
+            <h1 class="view__sentence" tabindex="-1">Nie ma takiego widoku.</h1>
+            <p class="view__sub">Wróć do biblioteki albo otwórz diagnostykę.</p>
+          </header>
+          <p class="row-actions">
+            <a class="btn" [href]="'#' + paths.library">Przejdź do biblioteki</a>
+          </p>
+        </section>
+      }
+    </main>
+  </div>
+</div>

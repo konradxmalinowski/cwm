@@ -12,7 +12,6 @@ test('aplikacja startuje, okno sie pojawia i powloka renderera jest widoczna', a
 
   try {
     await expect(page.locator('[data-testid="app-shell"]')).toBeVisible();
-    await expect(page.locator('[data-testid="app-stage"]')).toContainText('Etap 1');
     expect(await page.title()).toBe('Universal AI Skills Manager');
 
     const windowCount = await app.evaluate(

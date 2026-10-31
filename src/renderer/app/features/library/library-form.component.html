@@ -1,0 +1,168 @@
+<section class="view" aria-labelledby="form-heading">
+  <header class="view__head">
+    <p class="view__context"><a [href]="listHref">Biblioteka</a></p>
+    <h1 class="view__sentence" id="form-heading" tabindex="-1">{{ heading() }}</h1>
+  </header>
+
+  @let state = load();
+  @if (state.status === 'loading') {
+    <div class="skeleton" aria-hidden="true" data-testid="form-loading">
+      @for (row of [1, 2, 3, 4]; track row) {
+        <div class="skeleton__row">
+          <span class="skeleton__bar skeleton__bar--m"></span>
+          <span class="skeleton__bar skeleton__bar--l"></span>
+        </div>
+      }
+    </div>
+    <p class="sr-only" role="status">Wczytuję element.</p>
+  } @else if (state.status === 'error') {
+    <div class="notice" role="alert" data-testid="form-load-error">
+      <p class="notice__text"><span class="notice__label">Błąd.</span> {{ state.message }}</p>
+      <p class="row-actions">
+        @if (state.code !== 'not-found') {
+          <button type="button" class="btn" (click)="loadItem()">Spróbuj ponownie</button>
+        }
+        <a class="btn" [href]="listHref">Wróć do listy</a>
+      </p>
+    </div>
+  } @else {
+    <form class="form" novalidate (submit)="submit($event)" data-testid="item-form">
+      @if (submitted() && errorCount() > 0) {
+        <div class="notice" role="alert">
+          <p class="notice__text">
+            <span class="notice__label">Błąd.</span>
+            {{
+              errorCount() === 1
+                ? 'Jedno pole wymaga poprawy.'
+                : 'Pola wymagające poprawy: ' + errorCount() + '.'
+            }}
+          </p>
+        </div>
+      }
+      @if (formError(); as message) {
+        <div class="notice" role="alert" id="form-error" tabindex="-1" data-testid="form-error">
+          <p class="notice__text"><span class="notice__label">Błąd zapisu.</span> {{ message }}</p>
+        </div>
+      }
+
+      <div class="field">
+        <label class="field__label" for="field-kind">Typ</label>
+        <select
+          id="field-kind"
+          class="control"
+          [disabled]="editing()"
+          [attr.aria-describedby]="editing() ? 'hint-kind' : null"
+          (change)="onKind($any($event.target).value)"
+        >
+          @for (k of kinds; track k.value) {
+            <option [value]="k.value" [selected]="kind() === k.value">{{ k.label }}</option>
+          }
+        </select>
+        @if (editing()) {
+          <p class="field__hint" id="hint-kind">Typu istniejącego elementu nie da się zmienić.</p>
+        }
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="field-slug">Slug (wymagane)</label>
+        <input
+          id="field-slug"
+          class="control mono"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          [value]="value('slug')"
+          [attr.aria-invalid]="errors().slug ? 'true' : null"
+          [attr.aria-describedby]="errors().slug ? 'error-slug' : 'hint-slug'"
+          (input)="onInput('slug', $any($event.target).value)"
+          (blur)="onBlur('slug')"
+        />
+        @if (errors().slug; as message) {
+          <p class="field__error" id="error-slug" data-testid="error-slug">
+            <strong>Błąd:</strong> {{ message }}
+          </p>
+        } @else {
+          <p class="field__hint" id="hint-slug">
+            Krótka nazwa elementu. Musi być unikalna w obrębie typu.
+          </p>
+        }
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="field-title">Tytuł (wymagane)</label>
+        <input
+          id="field-title"
+          class="control"
+          type="text"
+          autocomplete="off"
+          [value]="value('title')"
+          [attr.aria-invalid]="errors().title ? 'true' : null"
+          [attr.aria-describedby]="errors().title ? 'error-title' : null"
+          (input)="onInput('title', $any($event.target).value)"
+          (blur)="onBlur('title')"
+        />
+        @if (errors().title; as message) {
+          <p class="field__error" id="error-title" data-testid="error-title">
+            <strong>Błąd:</strong> {{ message }}
+          </p>
+        }
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="field-description">Opis (wymagane)</label>
+        <textarea
+          id="field-description"
+          class="control control--prose"
+          rows="3"
+          [value]="value('description')"
+          [attr.aria-invalid]="errors().description ? 'true' : null"
+          [attr.aria-describedby]="errors().description ? 'error-description' : null"
+          (input)="onInput('description', $any($event.target).value)"
+          (blur)="onBlur('description')"
+        ></textarea>
+        @if (errors().description; as message) {
+          <p class="field__error" id="error-description" data-testid="error-description">
+            <strong>Błąd:</strong> {{ message }}
+          </p>
+        }
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="field-body">Treść (wymagane)</label>
+        <textarea
+          id="field-body"
+          class="control control--body"
+          rows="14"
+          spellcheck="false"
+          [value]="value('body')"
+          [attr.aria-invalid]="errors().body ? 'true' : null"
+          [attr.aria-describedby]="errors().body ? 'error-body' : null"
+          (input)="onInput('body', $any($event.target).value)"
+          (blur)="onBlur('body')"
+        ></textarea>
+        @if (errors().body; as message) {
+          <p class="field__error" id="error-body" data-testid="error-body">
+            <strong>Błąd:</strong> {{ message }}
+          </p>
+        }
+      </div>
+
+      <div class="field">
+        <label class="field__label" for="field-scope">Zakres</label>
+        <select id="field-scope" class="control" (change)="onScope($any($event.target).value)">
+          @for (s of scopes; track s.value) {
+            <option [value]="s.value" [selected]="scope() === s.value">{{ s.label }}</option>
+          }
+        </select>
+      </div>
+
+      <div class="row-actions">
+        <button type="submit" class="btn btn--primary" [disabled]="saving()" data-testid="save">
+          {{ saving() ? 'Zapisuję…' : editing() ? 'Zapisz zmiany' : 'Utwórz element' }}
+        </button>
+        <a class="btn" [href]="cancelHref()">Anuluj</a>
+      </div>
+      <p class="sr-only" role="status">{{ saving() ? 'Zapisuję element.' : '' }}</p>
+    </form>
+  }
+</section>

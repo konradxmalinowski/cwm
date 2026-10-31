@@ -1,0 +1,170 @@
+@let st = state();
+<section class="view" aria-labelledby="detail-heading">
+  @if (st.status === 'loading') {
+    <header class="view__head">
+      <p class="view__context">Biblioteka</p>
+      <h1 class="view__sentence" id="detail-heading" tabindex="-1">Wczytuję element.</h1>
+    </header>
+    <div class="skeleton" aria-hidden="true" data-testid="detail-loading">
+      @for (row of [1, 2, 3]; track row) {
+        <div class="skeleton__row">
+          <span class="skeleton__bar skeleton__bar--m"></span>
+          <span class="skeleton__bar skeleton__bar--l"></span>
+        </div>
+      }
+    </div>
+    <p class="sr-only" role="status">Wczytuję element.</p>
+  } @else if (st.status === 'error') {
+    <header class="view__head">
+      <p class="view__context">Biblioteka</p>
+      <h1 class="view__sentence" id="detail-heading" tabindex="-1">
+        {{
+          st.code === 'not-found' ? 'Nie ma takiego elementu.' : 'Nie udało się wczytać elementu.'
+        }}
+      </h1>
+    </header>
+    <div class="notice" role="alert" data-testid="detail-error">
+      <p class="notice__text"><span class="notice__label">Błąd.</span> {{ st.message }}</p>
+      <p class="row-actions">
+        @if (st.code !== 'not-found') {
+          <button type="button" class="btn" (click)="load()">Spróbuj ponownie</button>
+        }
+        <a class="btn" [href]="listHref">Wróć do listy</a>
+      </p>
+    </div>
+  } @else {
+    @let item = st.item;
+    <header class="view__head">
+      <p class="view__context"><a [href]="listHref">Biblioteka</a></p>
+      <h1 class="view__sentence" id="detail-heading" tabindex="-1">
+        „{{ item.content.title }}” to {{ kindLabel(item.kind).toLowerCase() }}, wersja&nbsp;<strong
+          >{{ item.revision }}</strong
+        >.
+      </h1>
+    </header>
+
+    @if (flash.current(); as note) {
+      <div class="notice notice--info" role="status" data-testid="flash">
+        <p class="notice__text">{{ note.message }}</p>
+        @if (note.warnings.length > 0) {
+          <p class="notice__text"><span class="notice__label">Ostrzeżenia:</span></p>
+          <ul class="notice__list">
+            @for (warning of note.warnings; track $index) {
+              <li>{{ warning.message }}</li>
+            }
+          </ul>
+        }
+        <p class="row-actions">
+          <button type="button" class="btn btn--small" (click)="flash.clear()">Zamknij</button>
+        </p>
+      </div>
+    }
+
+    <div class="row-actions">
+      <a class="btn btn--primary" [href]="editHref()" data-testid="edit-link">Edytuj</a>
+      <button type="button" class="btn" data-testid="delete-open" (click)="deleting.set(true)">
+        Usuń…
+      </button>
+    </div>
+
+    <div class="split">
+      <div class="view">
+        <section class="section">
+          <h2 class="section__title">Opis</h2>
+          @if (item.content.description === '') {
+            <p class="view__sub">Element nie ma opisu.</p>
+          } @else {
+            <p>{{ item.content.description }}</p>
+          }
+        </section>
+
+        <section class="section">
+          <h2 class="section__title" id="body-heading">Treść</h2>
+          @if (item.content.body === '') {
+            <p class="body-text body-text--empty">Treść jest pusta.</p>
+          } @else {
+            <pre
+              class="body-text"
+              tabindex="0"
+              aria-labelledby="body-heading"
+              data-testid="item-body"
+              >{{ item.content.body }}</pre>
+          }
+        </section>
+      </div>
+
+      <aside class="panel" aria-label="Właściwości elementu">
+        <dl class="facts">
+          <div>
+            <dt>Typ</dt>
+            <dd>{{ kindLabel(item.kind) }}</dd>
+          </div>
+          <div>
+            <dt>Slug</dt>
+            <dd class="mono">{{ item.identity.slug }}</dd>
+          </div>
+          @if (item.identity.declaredName !== null) {
+            <div>
+              <dt>Nazwa zadeklarowana</dt>
+              <dd class="mono">{{ item.identity.declaredName }}</dd>
+            </div>
+          }
+          @if (item.identity.aliases.length > 0) {
+            <div>
+              <dt>Aliasy</dt>
+              <dd class="mono">{{ item.identity.aliases.join(', ') }}</dd>
+            </div>
+          }
+          <div>
+            <dt>Zakres</dt>
+            <dd>{{ scopeLabel(item.scope) }}</dd>
+          </div>
+          <div>
+            <dt>Pochodzenie opisu</dt>
+            <dd>
+              {{
+                item.content.descriptionOrigin === 'source'
+                  ? 'Z treści źródłowej'
+                  : 'Wyliczony z treści'
+              }}
+            </dd>
+          </div>
+          @if (item.importedFromTool !== null) {
+            <div>
+              <dt>Zaimportowano z</dt>
+              <dd>{{ item.importedFromTool }}</dd>
+            </div>
+          }
+          <div>
+            <dt>Zmieniono</dt>
+            <dd>{{ formatDate(item.updatedAt) }}</dd>
+          </div>
+          <div>
+            <dt>Pliki dodatkowe</dt>
+            @if (item.assets.length === 0) {
+              <dd>Brak</dd>
+            } @else {
+              <dd>
+                <ul class="repair__files">
+                  @for (asset of item.assets; track asset.relPath) {
+                    <li>
+                      <span class="mono">{{ asset.relPath }}</span> ({{ formatBytes(asset.size) }})
+                    </li>
+                  }
+                </ul>
+              </dd>
+            }
+          </div>
+        </dl>
+      </aside>
+    </div>
+
+    @if (deleting()) {
+      <app-delete-dialog
+        [itemId]="item.id"
+        [navigatesAfter]="true"
+        (closed)="onDeleteClosed($event)"
+      />
+    }
+  }
+</section>

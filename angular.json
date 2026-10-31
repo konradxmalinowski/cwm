@@ -26,10 +26,15 @@
             "browser": "src/renderer/main.ts",
             "tsConfig": "tsconfig.renderer.json",
             "polyfills": [],
-            "assets": [],
-            "styles": [],
+            "assets": [
+              {
+                "glob": "**/*",
+                "input": "src/renderer/assets",
+                "output": "/assets"
+              }
+            ],
+            "styles": ["src/renderer/styles/styles.scss"],
             "scripts": [],
-            "baseHref": "/",
             "extractLicenses": false,
             "sourceMap": true,
             "optimization": {

@@ -1,0 +1,231 @@
+// Rama reaguje na szerokosc wlasnego kontenera, nie okna (DESIGN.md, Layout).
+.frame {
+  container: frame / inline-size;
+  min-height: 100vh;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: var(--toc-width) minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.skip-link {
+  position: absolute;
+  left: var(--s2);
+  top: var(--s2);
+  z-index: 10;
+  padding: var(--s2) var(--s4);
+  background: var(--background);
+  border: 2px solid var(--cobalt-300);
+  color: var(--text);
+  transform: translateY(-200%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+.toc {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s6);
+  height: 100vh;
+  padding: var(--s5) var(--s4);
+  overflow-y: auto;
+  background: var(--surface);
+  border-right: 1px solid var(--hairline);
+}
+
+.toc__name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 700;
+}
+
+.toc__name small {
+  display: block;
+  margin-top: var(--s1);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.toc__list {
+  display: grid;
+  gap: var(--s1);
+}
+
+.toc__link {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 28px;
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+
+.toc__link:hover {
+  color: var(--text);
+  border-bottom-color: var(--hairline);
+}
+
+.toc__link[aria-current='page'] {
+  border-bottom-color: var(--cobalt-300);
+}
+
+.toc__num {
+  color: var(--text-muted);
+  margin-right: var(--s1);
+}
+
+.toc__foot {
+  margin-top: auto;
+}
+
+.main {
+  min-width: 0;
+  padding: var(--s5);
+}
+
+.main:focus {
+  outline: none;
+}
+
+@container frame (max-width: 720px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+  }
+
+  .toc {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s5);
+    padding: var(--s3) var(--s4);
+    border-right: 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .toc__name small {
+    display: none;
+  }
+
+  .toc__list {
+    display: flex;
+    gap: var(--s4);
+  }
+
+  .toc__link {
+    font-size: 16px;
+  }
+
+  .toc__foot {
+    margin-top: 0;
+    margin-left: auto;
+  }
+
+  .main {
+    padding: var(--s4);
+  }
+}
+
+// Widok: kontekst, zdanie otwierajace, tresc.
+.view {
+  display: grid;
+  gap: var(--s5);
+  align-content: start;
+}
+
+.view__head {
+  display: grid;
+  gap: var(--s2);
+  max-width: 62ch;
+}
+
+.view__context {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.view__sentence {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 28px;
+  line-height: 36px;
+  overflow-wrap: anywhere;
+}
+
+.view__sentence strong {
+  font-weight: 700;
+}
+
+.view__sub {
+  color: var(--text-muted);
+}
+
+@container frame (max-width: 720px) {
+  .view__sentence {
+    font-size: 24px;
+    line-height: 32px;
+  }
+}
+
+// Tresc i panel szczegolu. Panel przechodzi pod tresc ponizej 1000 px.
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--panel-width);
+  gap: var(--s5);
+  align-items: start;
+}
+
+@container frame (max-width: 1000px) {
+  .split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panel {
+  display: grid;
+  gap: var(--s4);
+  padding: var(--s5);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+
+@container frame (max-width: 720px) {
+  .panel {
+    padding: var(--s4);
+  }
+}
+
+.section {
+  display: grid;
+  gap: var(--s3);
+}
+
+.section__title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2) var(--s3);
+}

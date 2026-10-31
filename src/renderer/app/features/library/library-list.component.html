@@ -1,0 +1,264 @@
+<section class="view" aria-labelledby="library-heading" [attr.aria-busy]="refreshing()">
+  <header class="view__head">
+    <p class="view__context">Biblioteka</p>
+    @let s = summary();
+    <h1 class="view__sentence" id="library-heading" tabindex="-1">
+      @if (s === null) {
+        @if (state().status === 'error') {
+          Nie udało się wczytać biblioteki.
+        } @else {
+          Wczytuję bibliotekę.
+        }
+      } @else {
+        {{ s.sentence }}
+      }
+    </h1>
+    @if (s !== null && s.attention > 0) {
+      <p class="view__sub">Do naprawy: {{ s.attentionText }}.</p>
+    }
+  </header>
+
+  @if (flash.current(); as note) {
+    <div class="notice notice--info" role="status" data-testid="flash">
+      <p class="notice__text">{{ note.message }}</p>
+      @if (note.warnings.length > 0) {
+        <p class="notice__text"><span class="notice__label">Ostrzeżenia:</span></p>
+        <ul class="notice__list">
+          @for (warning of note.warnings; track $index) {
+            <li>{{ warning.message }}</li>
+          }
+        </ul>
+      }
+      <p class="row-actions">
+        <button type="button" class="btn btn--small" (click)="flash.clear()">Zamknij</button>
+      </p>
+    </div>
+  }
+
+  @if (!isEmptyLibrary() && state().status !== 'error') {
+    <div class="toolbar" role="search">
+      <div class="field toolbar__grow">
+        <label class="field__label" for="library-query">Szukaj w bibliotece</label>
+        <input
+          id="library-query"
+          class="control"
+          type="search"
+          autocomplete="off"
+          [value]="query()"
+          (input)="onQuery($any($event.target).value)"
+        />
+      </div>
+      <div class="field toolbar__select">
+        <label class="field__label" for="library-kind">Typ</label>
+        <select
+          id="library-kind"
+          class="control"
+          [value]="kind()"
+          (change)="onKind($any($event.target).value)"
+        >
+          <option value="">Wszystkie typy</option>
+          @for (k of kinds; track k.value) {
+            <option [value]="k.value" [selected]="kind() === k.value">{{ k.label }}</option>
+          }
+        </select>
+      </div>
+      @if (filtered()) {
+        <button type="button" class="btn" (click)="clearFilters()">Wyczyść filtry</button>
+      }
+      <a class="btn btn--primary toolbar__end" [href]="newHref">Nowy element</a>
+    </div>
+    <p class="hints">
+      <span><kbd>/</kbd> szukaj</span>
+      <span><kbd>j</kbd> <kbd>k</kbd> następny i poprzedni wiersz</span>
+      <span><kbd>Enter</kbd> otwórz</span>
+    </p>
+  }
+
+  @switch (state().status) {
+    @case ('loading') {
+      <div class="skeleton" aria-hidden="true" data-testid="library-loading">
+        @for (row of [1, 2, 3, 4, 5]; track row) {
+          <div class="skeleton__row">
+            <span class="skeleton__bar skeleton__bar--s"></span>
+            <span class="skeleton__bar skeleton__bar--m"></span>
+            <span class="skeleton__bar skeleton__bar--l"></span>
+          </div>
+        }
+      </div>
+      <p class="sr-only" role="status">Wczytuję elementy biblioteki.</p>
+    }
+
+    @case ('error') {
+      @if (state(); as failed) {
+        @if (failed.status === 'error') {
+          <div class="notice" role="alert" data-testid="library-error">
+            <p class="notice__text">
+              <span class="notice__label">Błąd.</span> {{ failed.message }}
+            </p>
+            <p class="row-actions">
+              <button type="button" class="btn" (click)="retry()">Spróbuj ponownie</button>
+            </p>
+          </div>
+        }
+      }
+    }
+
+    @case ('ready') {
+      @if (isEmptyLibrary()) {
+        <div class="empty" data-testid="library-empty">
+          <p class="section__title">Nie ma tu jeszcze żadnego elementu.</p>
+          <p>
+            Element biblioteki to skill, agent, komenda, instrukcja albo reguła. Utwórz pierwszy, a
+            pojawi się na tej liście.
+          </p>
+          <a class="btn btn--primary" [href]="newHref">Utwórz pierwszy element</a>
+        </div>
+      } @else if (state(); as ready) {
+        @if (ready.status === 'ready') {
+          @if (ready.data.inconsistent.length > 0 || ready.data.problems.length > 0) {
+            <section class="section" aria-labelledby="repair-heading">
+              <h2 class="section__title" id="repair-heading">Do naprawy</h2>
+              <ul class="repair-list">
+                @for (entry of ready.data.inconsistent; track entry.id) {
+                  <li class="repair" data-testid="inconsistent">
+                    <div>
+                      <p class="repair__title">
+                        <span class="notice__label">Niespójny.</span>
+                        {{ inconsistentTitle(entry) }}
+                      </p>
+                      <p class="view__context">{{ kindLabel(entry.kind) }}</p>
+                    </div>
+                    <p>
+                      Pliki tego elementu na dysku nie zgadzają się z tym, co zapisała biblioteka.
+                    </p>
+                    <ul class="repair__files">
+                      @for (file of entry.files; track file.path) {
+                        <li>
+                          <span class="mono">{{ file.path }}</span
+                          >:
+                          {{ fileProblemLabel(file.problem) }}
+                        </li>
+                      }
+                    </ul>
+                    <div class="repair__choices">
+                      <div class="repair__choice">
+                        <button
+                          type="button"
+                          class="btn"
+                          [disabled]="repairing() !== null"
+                          (click)="repair(entry.id, 'adopt-disk')"
+                        >
+                          Przyjmij stan z dysku
+                        </button>
+                        <p class="view__sub">
+                          Pliki, które leżą teraz na dysku, staną się nową wersją elementu. Obecny
+                          stan dysku trafia najpierw do kopii.
+                        </p>
+                      </div>
+                      <div class="repair__choice">
+                        <button
+                          type="button"
+                          class="btn"
+                          [disabled]="repairing() !== null"
+                          (click)="repair(entry.id, 'restore-version')"
+                        >
+                          Przywróć ostatnią wersję
+                        </button>
+                        <p class="signal-overwrite">
+                          <span><strong>Nadpisze</strong> pliki elementu na dysku.</span>
+                          <span
+                            >Wróci wersja zapisana w bibliotece. Obecny stan dysku trafia najpierw
+                            do kopii.</span
+                          >
+                        </p>
+                      </div>
+                    </div>
+                    @if (repairError(); as failed) {
+                      @if (failed.id === entry.id) {
+                        <p class="notice__text" role="alert">
+                          <span class="notice__label">Błąd.</span> {{ failed.message }}
+                        </p>
+                      }
+                    }
+                    <p class="row-actions">
+                      <button type="button" class="btn btn--small" (click)="openDelete(entry.id)">
+                        Usuń element…
+                      </button>
+                    </p>
+                  </li>
+                }
+                @for (problem of ready.data.problems; track problem.id) {
+                  <li class="repair" data-testid="problem">
+                    <p class="repair__title">
+                      <span class="notice__label">Nieczytelny.</span> {{ problemTitle(problem) }}
+                    </p>
+                    <p>{{ problem.message }}</p>
+                    <p class="row-actions">
+                      <button type="button" class="btn btn--small" (click)="openDelete(problem.id)">
+                        Usuń element…
+                      </button>
+                    </p>
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          @if (ready.data.items.length > 0) {
+            <div class="register__wrap">
+              <table class="register" data-testid="library-table">
+                <caption class="sr-only">
+                  Elementy biblioteki
+                </caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Typ</th>
+                    <th scope="col">Nazwa</th>
+                    <th scope="col" class="col-slug">Slug</th>
+                    <th scope="col" class="col-desc">Opis</th>
+                    <th scope="col" class="num">Wersja</th>
+                    <th scope="col" class="col-updated">Zmieniono</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (item of ready.data.items; track item.id) {
+                    <tr>
+                      <td>{{ kindLabel(item.kind) }}</td>
+                      <td>
+                        <a class="register__title" data-row-link [href]="itemHref(item.id)">{{
+                          item.title
+                        }}</a>
+                      </td>
+                      <td class="col-slug">
+                        <span class="register__slug">{{ item.slug }}</span>
+                      </td>
+                      <td class="col-desc">
+                        <div class="register__clip">{{ item.description }}</div>
+                      </td>
+                      <td class="num">{{ item.revision }}</td>
+                      <td class="col-updated">{{ formatDate(item.updatedAt) }}</td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          } @else if (filtered()) {
+            <div class="empty" data-testid="library-no-match">
+              <p>Zmień zapytanie albo wyczyść filtry, żeby zobaczyć wszystkie elementy.</p>
+            </div>
+          }
+        }
+      }
+    }
+  }
+
+  <p class="sr-only" role="status">
+    @if (s !== null && !refreshing()) {
+      {{ s.sentence }}
+    }
+  </p>
+</section>
+
+@if (deleting(); as deletingId) {
+  <app-delete-dialog [itemId]="deletingId" (closed)="onDeleteClosed($event)" />
+}

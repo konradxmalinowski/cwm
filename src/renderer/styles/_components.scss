@@ -1,0 +1,426 @@
+// ---- Przyciski ----
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  min-height: var(--control-height);
+  padding: 0 var(--s4);
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--surface-raised);
+  color: var(--text);
+}
+
+.btn--primary,
+.btn--primary:hover {
+  background: var(--cobalt-300);
+  border-color: var(--cobalt-300);
+  color: var(--on-accent);
+}
+
+.btn--primary:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.btn--destructive,
+.btn--destructive:hover {
+  background: var(--destructive);
+  border-color: var(--destructive);
+  color: var(--on-accent);
+}
+
+.btn--small {
+  min-height: 24px;
+  padding: 0 var(--s2);
+  font-size: 12px;
+}
+
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  background: var(--surface-raised);
+  border-color: var(--hairline);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+// ---- Pola ----
+.form {
+  display: grid;
+  gap: var(--s5);
+  max-width: 72ch;
+}
+
+.field {
+  display: grid;
+  gap: var(--s1);
+}
+
+.field__label {
+  font-weight: 500;
+}
+
+.field__hint {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.field__error {
+  font-weight: 500;
+}
+
+.field__error strong {
+  font-weight: 700;
+}
+
+.control {
+  width: 100%;
+  min-height: var(--control-height);
+  padding: 0 var(--s2);
+  background: var(--background);
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius);
+  color: var(--text);
+}
+
+.control:disabled {
+  background: var(--surface);
+  color: var(--text-muted);
+  border-color: var(--hairline);
+}
+
+// Blad walidacji pola: ramka 2 px w kolorze tekstu i slowo "Blad" (DESIGN.md).
+.control[aria-invalid='true'] {
+  border: 2px solid var(--text);
+  padding: 0 calc(var(--s2) - 1px);
+}
+
+textarea.control {
+  padding-top: var(--s2);
+  padding-bottom: var(--s2);
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+textarea.control[aria-invalid='true'] {
+  padding-top: calc(var(--s2) - 1px);
+  padding-bottom: calc(var(--s2) - 1px);
+}
+
+.control--search {
+  max-width: 36ch;
+}
+
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+}
+
+.check input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--cobalt-300);
+  flex: none;
+}
+
+// ---- Komunikaty ----
+// Bez koloru, poza wyjatkami z DESIGN.md. Waga komunikatu to grubosc paska.
+.notice {
+  display: grid;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-left: 4px solid var(--text);
+}
+
+.notice--info {
+  border-left: 2px solid var(--cobalt-300);
+}
+
+.notice--destructive {
+  border-left-color: var(--destructive);
+}
+
+.notice__label {
+  font-weight: 700;
+}
+
+.notice--destructive .notice__label {
+  color: var(--destructive);
+}
+
+.notice__text {
+  max-width: 72ch;
+}
+
+.notice__list {
+  display: grid;
+  gap: var(--s1);
+  list-style: disc;
+  padding-left: var(--s5);
+}
+
+// Sygnal nadpisania: slowo, waga, pasek 3 px i tlo, nie sam kolor (DESIGN.md, Color).
+.signal-overwrite {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  background: var(--cobalt-600);
+  border-left: 3px solid var(--cobalt-200);
+  color: var(--cobalt-100);
+}
+
+.signal-overwrite strong {
+  color: var(--cobalt-200);
+  font-weight: 700;
+}
+
+// ---- Klawisze ----
+kbd {
+  display: inline-block;
+  padding: 0 var(--s1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s4);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+// ---- Lista definicji w panelu ----
+.facts {
+  display: grid;
+  gap: var(--s3);
+}
+
+.facts dt {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.facts dd {
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+// ---- Stany ladowania: statyczny szkielet, bez shimmeru ----
+.skeleton {
+  display: grid;
+}
+
+.skeleton__row {
+  display: flex;
+  align-items: center;
+  gap: var(--s5);
+  height: var(--row-height);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.skeleton__bar {
+  display: block;
+  height: 12px;
+  background: var(--surface-raised);
+}
+
+.skeleton__bar--s {
+  width: 64px;
+}
+
+.skeleton__bar--m {
+  width: 160px;
+}
+
+.skeleton__bar--l {
+  width: 280px;
+}
+
+.empty {
+  display: grid;
+  gap: var(--s4);
+  justify-items: start;
+  max-width: 62ch;
+  padding: var(--s5) 0;
+}
+
+// ---- Okno dialogowe (natywne <dialog>: pulapka fokusu i Escape za darmo) ----
+.dialog {
+  width: min(560px, calc(100vw - 2 * var(--s4)));
+  max-height: calc(100vh - 2 * var(--s5));
+  margin: 12vh auto auto calc(var(--toc-width) + var(--s5));
+  padding: 0;
+  overflow: auto;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--text-muted);
+  border-left: 4px solid var(--text);
+  border-radius: 0;
+}
+
+.dialog--destructive {
+  border-left-color: var(--destructive);
+}
+
+.dialog::backdrop {
+  background: var(--scrim);
+}
+
+.dialog__body {
+  display: grid;
+  gap: var(--s4);
+  padding: var(--s5);
+}
+
+.dialog__title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 24px;
+  line-height: 32px;
+  overflow-wrap: anywhere;
+}
+
+.dialog__label {
+  font-weight: 700;
+}
+
+.dialog--destructive .dialog__label {
+  color: var(--destructive);
+}
+
+@media (max-width: 760px) {
+  .dialog {
+    margin: var(--s4) auto auto var(--s4);
+  }
+
+  .dialog__body {
+    padding: var(--s4);
+  }
+}
+
+// ---- Wybor motywu ----
+.theme {
+  display: grid;
+  gap: var(--s1);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.theme legend {
+  padding: 0;
+  margin-bottom: var(--s1);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.theme__options {
+  display: grid;
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius);
+}
+
+.theme__option {
+  position: relative;
+  flex: 1;
+}
+
+.theme__option input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.theme__option span {
+  display: block;
+  padding: var(--s1) var(--s2);
+  text-align: left;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.theme__option:last-child span {
+  border-bottom: 0;
+}
+
+.theme__option input:checked + span {
+  background: var(--cobalt-300);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+.theme__option input:focus-visible + span {
+  outline: 2px solid var(--cobalt-300);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--background);
+}
+
+.theme__option input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+textarea.control--prose {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+app-startup-banner {
+  display: block;
+}
+
+app-startup-banner .notice {
+  margin-bottom: var(--s5);
+}
+
+@container frame (max-width: 720px) {
+  .theme__options {
+    grid-auto-flow: column;
+  }
+
+  .theme__option span {
+    border-bottom: 0;
+    border-right: 1px solid var(--hairline);
+  }
+
+  .theme__option:last-child span {
+    border-right: 0;
+  }
+}

@@ -1,0 +1,193 @@
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--s3) var(--s4);
+}
+
+.toolbar__grow {
+  flex: 1 1 240px;
+  max-width: 36ch;
+}
+
+.toolbar__select {
+  min-width: 18ch;
+}
+
+.toolbar__end {
+  margin-left: auto;
+}
+
+// Rejestr: wiersze po 40 px rozdzielone linia 1 px.
+.register {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.register th {
+  padding: var(--s2);
+  text-align: left;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.register td {
+  height: var(--row-height);
+  padding: 0 var(--s2);
+  border-bottom: 1px solid var(--hairline);
+  vertical-align: middle;
+}
+
+.register tbody tr:hover,
+.register tbody tr:focus-within {
+  background: var(--surface-raised);
+}
+
+.register .num {
+  text-align: right;
+}
+
+.register__title {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.register__title:hover {
+  color: var(--cobalt-300);
+}
+
+.register__clip {
+  max-width: 44ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.register__slug {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.register__wrap {
+  overflow-x: auto;
+}
+
+@container frame (max-width: 960px) {
+  .col-desc {
+    display: none;
+  }
+}
+
+@container frame (max-width: 720px) {
+  .col-updated,
+  .col-slug {
+    display: none;
+  }
+
+  .register td {
+    height: 56px;
+  }
+}
+
+// Elementy do naprawy.
+.repair-list {
+  display: grid;
+  gap: var(--s3);
+}
+
+.repair {
+  display: grid;
+  gap: var(--s3);
+  padding: var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-left: 4px solid var(--text);
+}
+
+.repair__title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.repair__files {
+  display: grid;
+  gap: var(--s1);
+}
+
+.repair__choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s3);
+}
+
+.repair__choice {
+  display: grid;
+  gap: var(--s2);
+  align-content: start;
+  justify-items: start;
+}
+
+@container frame (max-width: 1000px) {
+  .repair__choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.body-text {
+  margin: 0;
+  max-width: 88ch;
+  max-height: 60vh;
+  padding: var(--s4);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.body-text--empty {
+  font-family: var(--font-sans);
+  color: var(--text-muted);
+}
+
+// Diagnostyka.
+.report {
+  display: grid;
+  gap: var(--s5);
+}
+
+.report__grid {
+  display: grid;
+  grid-template-columns: minmax(12ch, 22ch) minmax(0, 1fr);
+  gap: var(--s2) var(--s5);
+}
+
+.report__grid dt {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.report__grid dd {
+  overflow-wrap: anywhere;
+}
+
+@container frame (max-width: 720px) {
+  .report__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  .report__grid dd {
+    margin-bottom: var(--s3);
+  }
+}

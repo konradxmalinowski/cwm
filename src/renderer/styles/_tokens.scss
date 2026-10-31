@@ -1,0 +1,80 @@
+// Tokeny z docs/DESIGN.md. Jeden kolor (kobalt) i jego odcienie, plus czerwien.
+// Zolc i zielen nie istnieja w tym systemie.
+
+@mixin dark {
+  color-scheme: dark;
+  --background: #000000;
+  --surface: #0a0a0a;
+  --surface-raised: #141414;
+  --hairline: #262626;
+  --text: #ededed;
+  --text-muted: #8a8a8a;
+  --cobalt-100: #d6e0ff;
+  --cobalt-200: #a8beff;
+  --cobalt-300: #7f9fff;
+  --cobalt-400: #4f68c4;
+  --cobalt-500: #2a3a6e;
+  --cobalt-600: #1b2a5e;
+  --on-accent: #000000;
+  --destructive: #f2705d;
+  --scrim: rgb(0 0 0 / 0.72);
+}
+
+@mixin light {
+  color-scheme: light;
+  --background: #ffffff;
+  --surface: #f7f7f7;
+  --surface-raised: #ededed;
+  --hairline: #d4d4d4;
+  --text: #111111;
+  --text-muted: #5a5a5a;
+  --cobalt-100: #0b1550;
+  --cobalt-200: #16268f;
+  --cobalt-300: #2a47c7;
+  --cobalt-400: #6079db;
+  --cobalt-500: #c9d5fa;
+  --cobalt-600: #dde5ff;
+  --on-accent: #ffffff;
+  --destructive: #b3261e;
+  --scrim: rgb(0 0 0 / 0.45);
+}
+
+// Ciemny jest domyslny. Bez recznego wyboru decyduje system: jasny tylko gdy o niego prosi.
+:root {
+  @include dark;
+
+  --accent: var(--cobalt-300);
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+  --s7: 48px;
+  --s8: 64px;
+
+  --radius: 2px;
+  --control-height: 32px;
+  --row-height: 40px;
+  --toc-width: 168px;
+  --panel-width: 280px;
+
+  --font-display: 'Cabinet Grotesk', 'Source Sans 3', system-ui, sans-serif;
+  --font-sans: 'Source Sans 3', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Commit Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    @include light;
+  }
+}
+
+:root[data-theme='light'] {
+  @include light;
+}
+
+:root[data-theme='dark'] {
+  @include dark;
+}

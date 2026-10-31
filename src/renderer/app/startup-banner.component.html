@@ -1,0 +1,53 @@
+@let v = view();
+@if (v !== null && v.kind === 'unreadable') {
+  <div class="notice" role="alert" data-testid="startup-banner">
+    <p class="notice__text">
+      <span class="notice__label">Błąd.</span>
+      Nie udało się odczytać stanu startu aplikacji. {{ v.message }}
+    </p>
+    <p class="row-actions">
+      <button type="button" class="btn btn--small" (click)="retry()">Spróbuj ponownie</button>
+    </p>
+  </div>
+} @else if (v !== null && v.kind === 'refused') {
+  <div class="notice" role="alert" data-testid="startup-banner">
+    <p class="notice__text">
+      <span class="notice__label">Odmowa startu.</span>
+      Aplikacja nie otworzyła indeksu biblioteki.
+      {{ v.reasonLabel }} {{ v.advice }}
+    </p>
+    @if (v.message !== '') {
+      <p class="notice__text">{{ v.message }}</p>
+    }
+    @if (v.quarantined !== '') {
+      <p class="notice__text">
+        Stary plik indeksu odłożono do kwarantanny jako <span class="mono">{{ v.quarantined }}</span
+        >.
+      </p>
+    }
+    <p class="row-actions"><a class="btn btn--small" [href]="diagnosticsHref">Szczegóły</a></p>
+  </div>
+} @else if (v !== null && v.kind === 'rebuilt' && !startup.bannerDismissed()) {
+  <div class="notice notice--info" role="status" data-testid="startup-banner">
+    <p class="notice__text">
+      <span class="notice__label">Indeks odbudowany.</span>
+      {{ v.reasonLabel }} Aplikacja odłożyła stary plik do kwarantanny i zbudowała indeks od nowa.
+    </p>
+    <p class="notice__text">
+      {{ v.facts.restored }}
+      @if (v.facts.zeroWarning) {
+        To nie potwierdza, że biblioteka jest pusta ani że indeks jest kompletny.
+      }
+    </p>
+    <p class="notice__text">Nie odzyskano:</p>
+    <ul class="notice__list">
+      @for (line of v.facts.notRestored; track line) {
+        <li>{{ line }}</li>
+      }
+    </ul>
+    <p class="row-actions">
+      <a class="btn btn--small" [href]="diagnosticsHref">Szczegóły</a>
+      <button type="button" class="btn btn--small" (click)="dismiss()">Zamknij</button>
+    </p>
+  </div>
+}

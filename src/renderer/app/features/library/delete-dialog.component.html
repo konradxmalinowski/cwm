@@ -1,0 +1,125 @@
+<dialog
+  #dialog
+  class="dialog"
+  [class.dialog--destructive]="plan()?.recoverability === 'partial'"
+  aria-labelledby="delete-title"
+  data-testid="delete-dialog"
+  (cancel)="onCancel($event)"
+>
+  <div class="dialog__body">
+    @let s = state();
+    @if (s.status === 'planning') {
+      <h2 class="dialog__title" id="delete-title" tabindex="-1">Sprawdzam, co usunięcie zmieni.</h2>
+      <p role="status">Przygotowuję plan usunięcia.</p>
+      <div class="row-actions">
+        <button type="button" class="btn" autofocus (click)="close()">Anuluj</button>
+      </div>
+    } @else if (s.status === 'error' && s.plan === null) {
+      <h2 class="dialog__title" id="delete-title" tabindex="-1">
+        Nie udało się przygotować usunięcia.
+      </h2>
+      <p class="notice__text" role="alert">
+        <span class="dialog__label">Błąd.</span> {{ s.message }}
+      </p>
+      <div class="row-actions">
+        <button type="button" class="btn" (click)="buildPlan()">Spróbuj ponownie</button>
+        <button type="button" class="btn" (click)="close()">Zamknij</button>
+      </div>
+    } @else {
+      @let p = plan();
+      @if (p !== null && p.recoverability === 'blocked') {
+        <h2 class="dialog__title" id="delete-title" tabindex="-1">
+          Usunięcie elementu {{ displayName() }} jest zablokowane.
+        </h2>
+        <p>
+          <span class="dialog__label">Zablokowane.</span>
+          {{ p.blockedReason ?? 'Aplikacja nie potrafi zabezpieczyć kopii tego elementu.' }}
+        </p>
+        <p class="view__sub">
+          Gdy nie da się zrobić kopii, aplikacja odmawia usunięcia zamiast je wykonać.
+        </p>
+        <div class="row-actions">
+          <button type="button" class="btn" (click)="close()">Zamknij</button>
+        </div>
+      } @else if (p !== null && p.recoverability === 'partial') {
+        <h2 class="dialog__title" id="delete-title" tabindex="-1">
+          Usunięcie elementu {{ displayName() }} {{ lossSentence() }}.
+        </h2>
+        <p class="notice__text">
+          <span class="dialog__label">Nie do cofnięcia.</span> Aplikacja nie ma kopii tych plików:
+        </p>
+        <ul class="notice__list" data-testid="unrecoverable-list">
+          @for (file of p.unrecoverable; track file.path) {
+            <li>
+              <span class="mono">{{ file.path }}</span
+              >: {{ file.reason }}
+            </li>
+          }
+        </ul>
+        <p>Reszta elementu zostaje zachowana w kopii.</p>
+        <label class="check">
+          <input
+            type="checkbox"
+            data-testid="acknowledge"
+            [checked]="acknowledged()"
+            (change)="onAcknowledge($any($event.target).checked)"
+          />
+          <span>Rozumiem, że te pliki przepadną bezpowrotnie.</span>
+        </label>
+        @if (s.status === 'error') {
+          <p class="notice__text" role="alert">
+            <span class="dialog__label">Błąd.</span> {{ s.message }}
+          </p>
+        }
+        <div class="row-actions">
+          <button type="button" class="btn" autofocus (click)="close()">Anuluj</button>
+          <button
+            type="button"
+            class="btn btn--destructive"
+            data-testid="confirm-delete"
+            [disabled]="!canConfirm() || s.status === 'applying'"
+            (click)="confirm()"
+          >
+            {{ s.status === 'applying' ? 'Usuwam…' : 'Usuń element' }}
+          </button>
+          @if (s.status === 'error') {
+            <button type="button" class="btn btn--small" (click)="buildPlan()">
+              Przygotuj plan od nowa
+            </button>
+          }
+        </div>
+      } @else if (p !== null) {
+        <h2 class="dialog__title" id="delete-title" tabindex="-1">
+          Usuniesz element {{ displayName() }}.
+        </h2>
+        <p>
+          Kopia wszystkich plików zostaje w magazynie kopii biblioteki, więc element da się
+          odtworzyć. Zniknie z listy i z dysku.
+        </p>
+        <p class="view__context">{{ kindLabel(p.kind) }}</p>
+        @if (s.status === 'error') {
+          <p class="notice__text" role="alert">
+            <span class="dialog__label">Błąd.</span> {{ s.message }}
+          </p>
+        }
+        <div class="row-actions">
+          <button type="button" class="btn" autofocus (click)="close()">Anuluj</button>
+          <button
+            type="button"
+            class="btn"
+            data-testid="confirm-delete"
+            [disabled]="s.status === 'applying'"
+            (click)="confirm()"
+          >
+            {{ s.status === 'applying' ? 'Usuwam…' : 'Usuń element' }}
+          </button>
+          @if (s.status === 'error') {
+            <button type="button" class="btn btn--small" (click)="buildPlan()">
+              Przygotuj plan od nowa
+            </button>
+          }
+        </div>
+      }
+    }
+  </div>
+</dialog>
