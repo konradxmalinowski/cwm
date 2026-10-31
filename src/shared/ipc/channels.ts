@@ -10,7 +10,9 @@ export const IPC_CHANNELS = [
   'library:list',
   'library:get',
   'library:save',
-  'library:delete',
+  'library:delete-plan',
+  'library:delete-apply',
+  'library:repair',
   'import:detect',
   'import:scan',
   'import:plan',
@@ -43,7 +45,15 @@ export type IpcEvent = (typeof IPC_EVENTS)[number];
  * implementacji - wywolanie takiego kanalu odrzuca sie bledem Electrona
  * "No handler registered", zamiast udawac dzialajaca funkcje.
  */
-export const IMPLEMENTED_CHANNELS = ['diagnostics:report'] as const;
+export const IMPLEMENTED_CHANNELS = [
+  'library:list',
+  'library:get',
+  'library:save',
+  'library:delete-plan',
+  'library:delete-apply',
+  'library:repair',
+  'diagnostics:report',
+] as const;
 
 const CHANNEL_SET: ReadonlySet<string> = new Set(IPC_CHANNELS);
 const EVENT_SET: ReadonlySet<string> = new Set(IPC_EVENTS);

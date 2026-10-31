@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { IpcRegistry, type IpcHandleTarget } from '../../src/main/ipc/registry';
-import type { IpcChannel } from '../../src/shared/ipc/channels';
+import { IMPLEMENTED_CHANNELS, type IpcChannel } from '../../src/shared/ipc/channels';
 
 function fakeTarget(): IpcHandleTarget & { channels: string[] } {
   const channels: string[] = [];
@@ -38,7 +38,7 @@ describe('rejestr IPC wymusza zamknieta liste', () => {
   it('wykrywa kanal zadeklarowany jako gotowy bez handlera', () => {
     const registry = new IpcRegistry(fakeTarget());
     expect(() => registry.assertImplementedRegistered()).toThrow(/bez handlera/);
-    registry.register('diagnostics:report', () => null);
+    for (const channel of IMPLEMENTED_CHANNELS) registry.register(channel, () => null);
     expect(() => registry.assertImplementedRegistered()).not.toThrow();
   });
 

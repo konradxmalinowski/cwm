@@ -7,7 +7,7 @@ import type { IndexStore } from '../../../core/ports/index-store';
 import { buildDiagnosticsReport } from '../../services/diagnostics';
 import type { IpcRegistry } from '../registry';
 
-const STAGE = 'etap-1-szkielet';
+const STAGE = 'etap-2-biblioteka';
 
 function runtimeInfo(): RuntimeInfo {
   return {

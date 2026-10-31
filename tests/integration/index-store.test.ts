@@ -63,9 +63,9 @@ describe('indeks SQLite', () => {
     expect(schemaObjects(dbPath)).toContain('schema_migrations');
 
     const ledger = readLedger(dbPath);
-    expect(ledger).toHaveLength(1);
-    expect(ledger[0]?.version).toBe(SCHEMA_VERSION);
-    expect(Number.isNaN(Date.parse(ledger[0]?.applied_at ?? ''))).toBe(false);
+    expect(ledger.map((row) => row.version)).toEqual([1, SCHEMA_VERSION]);
+    expect(ledger.every((row) => !Number.isNaN(Date.parse(row.applied_at)))).toBe(true);
+    expect(schemaObjects(dbPath)).toContain('operation_log');
   });
 
   it('jest idempotentna: powtorne otwarcie nie zmienia schematu ani rejestru', () => {
@@ -87,7 +87,7 @@ describe('indeks SQLite', () => {
     // faktycznie zostala zastosowana.
     expect(readLedger(dbPath)).toEqual(afterFirst);
     expect(schemaObjects(dbPath)).toEqual(objectsAfterFirst);
-    expect(readLedger(dbPath)).toHaveLength(1);
+    expect(readLedger(dbPath)).toHaveLength(SCHEMA_VERSION);
   });
 
   it('raport diagnostyczny nie zmienia niczego w bazie', () => {

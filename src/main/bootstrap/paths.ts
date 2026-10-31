@@ -21,3 +21,13 @@ export function databaseFile(userDataDir: string): string {
 export function quarantineRoot(userDataDir: string): string {
   return join(userDataDir, 'quarantine');
 }
+
+/** Biblioteka elementow na dysku (`items/<id>`), ADR 0014. */
+export function libraryRoot(userDataDir: string): string {
+  return join(userDataDir, 'library');
+}
+
+/** Content store z poprzednimi wersjami (`objects/<aa>/<sha256>`), ADR 0019. */
+export function objectsRoot(userDataDir: string): string {
+  return join(userDataDir, 'objects');
+}

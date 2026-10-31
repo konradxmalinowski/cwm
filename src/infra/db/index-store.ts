@@ -8,12 +8,26 @@ import type { Database } from 'better-sqlite3';
 import type { DatabaseProbe } from '../../core/model/diagnostics';
 import type { IndexFailureReason } from '../../core/model/index-health';
 import type { IndexStore } from '../../core/ports/index-store';
+import type { OperationLog, OperationRecord } from '../../core/ports/operation-log';
 import { redactHomePath } from '../logging/redact';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
-function defaultSchemaFile(): string {
-  return join(__dirname, 'schema', '001-init.sql');
+function schemaDir(): string {
+  return join(__dirname, 'schema');
+}
+
+interface Migration {
+  readonly version: number;
+  readonly file: string;
+}
+
+/** Lista migracji w kolejnosci; `schemaFile` z opcji podmienia tylko pierwsza (szew testowy). */
+function migrationList(firstFile: string | undefined): readonly Migration[] {
+  return [
+    { version: 1, file: firstFile ?? join(schemaDir(), '001-init.sql') },
+    { version: 2, file: join(schemaDir(), '002-operation-log.sql') },
+  ];
 }
 
 export interface IndexStoreOptions {
@@ -145,7 +159,7 @@ export class SqliteIndexStore implements IndexStore {
     try {
       db.pragma('journal_mode = WAL');
       SqliteIndexStore.assertSchemaIsUsable(db);
-      SqliteIndexStore.migrate(db, options.schemaFile ?? defaultSchemaFile());
+      SqliteIndexStore.migrate(db, migrationList(options.schemaFile));
     } catch (error: unknown) {
       db.close();
       if (error instanceof IndexStoreOpenError) throw error;
@@ -207,24 +221,66 @@ export class SqliteIndexStore implements IndexStore {
   }
 
   /**
-   * Idempotentna z konstrukcji: wersja wchodzi do rejestru tylko wtedy, gdy
-   * jej tam nie ma, a cala operacja idzie w jednej transakcji.
+   * Idempotentna z konstrukcji: migracja wchodzi do rejestru tylko wtedy, gdy jej tam nie ma,
+   * a cala operacja idzie w jednej transakcji. Migracja 1 jest wykonywana zawsze, bo zaklada
+   * sam rejestr, z ktorego czytamy biezaca wersje.
    */
-  private static migrate(db: Database, schemaFile: string): void {
-    const sql = readFileSync(schemaFile, 'utf8');
-
-    db.transaction(() => {
-      db.exec(sql);
+  private static migrate(db: Database, migrations: readonly Migration[]): void {
+    const sqlByVersion = migrations.map((m) => ({ m, sql: readFileSync(m.file, 'utf8') }));
+    const currentVersion = (): number => {
       const applied = db.prepare('SELECT max(version) AS version FROM schema_migrations').get() as
         VersionRow | undefined;
+      return applied?.version ?? 0;
+    };
 
-      if ((applied?.version ?? 0) < SCHEMA_VERSION) {
-        db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
-          SCHEMA_VERSION,
-          new Date().toISOString(),
-        );
+    db.transaction(() => {
+      for (const { m, sql } of sqlByVersion) {
+        if (m.version === 1 || currentVersion() < m.version) db.exec(sql);
+        if (currentVersion() < m.version) {
+          db.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(
+            m.version,
+            new Date().toISOString(),
+          );
+        }
       }
     })();
+  }
+
+  /**
+   * Log operacji na tym samym polaczeniu co indeks. Zapis jest synchroniczny i jednowierszowy,
+   * wiec nie wymaga transakcji; blad (np. zamkniete polaczenie) leci do `LibraryService`,
+   * ktory zamienia go na ostrzezenie.
+   */
+  operationLog(): OperationLog {
+    const insert = this.db.prepare(
+      `INSERT INTO operation_log (
+         operation, item_id, item_kind, slug, at,
+         before_revision, before_content_hash, before_version_hash,
+         after_revision, after_content_hash, after_version_hash
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    return {
+      append: (record: OperationRecord): Promise<void> => {
+        try {
+          insert.run(
+            record.operation,
+            record.itemId,
+            record.itemKind,
+            record.slug,
+            record.at,
+            record.before?.revision ?? null,
+            record.before?.contentHash ?? null,
+            record.before?.versionHash ?? null,
+            record.after?.revision ?? null,
+            record.after?.contentHash ?? null,
+            record.after?.versionHash ?? null,
+          );
+          return Promise.resolve();
+        } catch (error: unknown) {
+          return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      },
+    };
   }
 
   /** Odczyt stanu, bez zapisu. */
