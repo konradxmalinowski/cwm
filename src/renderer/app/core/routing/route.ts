@@ -3,12 +3,14 @@ export type Route =
   | { readonly name: 'library-new' }
   | { readonly name: 'library-item'; readonly id: string }
   | { readonly name: 'library-edit'; readonly id: string }
+  | { readonly name: 'import' }
   | { readonly name: 'diagnostics' }
   | { readonly name: 'not-found'; readonly path: string };
 
 export const ROUTES = {
   library: '/biblioteka',
   libraryNew: '/biblioteka/nowy',
+  import: '/import',
   diagnostics: '/diagnostyka',
   libraryItem: (id: string): string => `/biblioteka/${encodeURIComponent(id)}`,
   libraryEdit: (id: string): string => `/biblioteka/${encodeURIComponent(id)}/edycja`,
@@ -30,6 +32,7 @@ export function parseRoute(hash: string): Route {
   if (segments.length === 0) return { name: 'library' };
   const [head, second, third] = segments;
 
+  if (head === 'import' && segments.length === 1) return { name: 'import' };
   if (head === 'diagnostyka' && segments.length === 1) return { name: 'diagnostics' };
 
   if (head === 'biblioteka') {

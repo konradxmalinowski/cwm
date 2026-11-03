@@ -40,6 +40,7 @@ export class LibraryListComponent {
 
   protected readonly kinds = ITEM_KINDS;
   protected readonly newHref = `#${ROUTES.libraryNew}`;
+  protected readonly importHref = `#${ROUTES.import}`;
   protected readonly kindLabel = kindLabel;
   protected readonly fileProblemLabel = fileProblemLabel;
   protected readonly formatDate = formatDate;

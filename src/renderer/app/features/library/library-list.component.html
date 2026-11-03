@@ -111,7 +111,10 @@
             Element biblioteki to skill, agent, komenda, instrukcja albo reguła. Utwórz pierwszy, a
             pojawi się na tej liście.
           </p>
-          <a class="btn btn--primary" [href]="newHref">Utwórz pierwszy element</a>
+          <p class="row-actions">
+            <a class="btn btn--primary" [href]="newHref">Utwórz pierwszy element</a>
+            <a class="btn" [href]="importHref">Zaimportuj z Claude Code lub Codeksa</a>
+          </p>
         </div>
       } @else if (state(); as ready) {
         @if (ready.status === 'ready') {

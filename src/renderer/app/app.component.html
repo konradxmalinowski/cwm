@@ -17,9 +17,17 @@
         <li>
           <a
             class="toc__link"
+            [href]="'#' + paths.import"
+            [attr.aria-current]="section() === 'import' ? 'page' : null"
+            ><span class="toc__num" aria-hidden="true">2.</span>Import</a
+          >
+        </li>
+        <li>
+          <a
+            class="toc__link"
             [href]="'#' + paths.diagnostics"
             [attr.aria-current]="section() === 'diagnostics' ? 'page' : null"
-            ><span class="toc__num" aria-hidden="true">2.</span>Diagnostyka</a
+            ><span class="toc__num" aria-hidden="true">3.</span>Diagnostyka</a
           >
         </li>
       </ul>
@@ -55,13 +63,17 @@
         <app-library-detail [id]="current.id" />
       } @else if (current.name === 'library-edit') {
         <app-library-form [id]="current.id" />
+      } @else if (current.name === 'import') {
+        <app-import-wizard />
       } @else if (current.name === 'diagnostics') {
         <app-diagnostics />
       } @else {
         <section class="view">
           <header class="view__head">
             <h1 class="view__sentence" tabindex="-1">Nie ma takiego widoku.</h1>
-            <p class="view__sub">Wróć do biblioteki albo otwórz diagnostykę.</p>
+            <p class="view__sub">
+              Wróć do biblioteki, zaimportuj elementy albo otwórz diagnostykę.
+            </p>
           </header>
           <p class="row-actions">
             <a class="btn" [href]="'#' + paths.library">Przejdź do biblioteki</a>

@@ -1,0 +1,264 @@
+// Kreator importu. Kolor tylko tam, gdzie DESIGN.md go przyznaje: zaznaczenie (kobalt) i
+// sygnal "nadpisze" (.signal-overwrite). Czerwieni tu nie ma, bo import niczego nie usuwa.
+
+.import-tools {
+  display: grid;
+  gap: var(--s5);
+}
+
+.import-tool {
+  display: grid;
+  gap: var(--s3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.import-tool legend {
+  padding: 0;
+  margin-bottom: var(--s3);
+}
+
+.roots {
+  display: grid;
+  border-top: 1px solid var(--hairline);
+}
+
+.root {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s3) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.root__pick {
+  align-items: center;
+  cursor: pointer;
+}
+
+.root--missing .root__pick {
+  cursor: not-allowed;
+}
+
+.root__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s3);
+}
+
+.root__kind {
+  color: var(--text-muted);
+}
+
+.root__note {
+  padding-left: calc(16px + var(--s2));
+  max-width: 72ch;
+  color: var(--text-muted);
+}
+
+.root__state {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.group__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2) var(--s4);
+}
+
+.group__count {
+  margin-left: var(--s1);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cands {
+  display: grid;
+  border-top: 1px solid var(--hairline);
+}
+
+.cand {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: var(--s3);
+  padding: var(--s3) var(--s2);
+  border-bottom: 1px solid var(--hairline);
+  border-left: 3px solid transparent;
+}
+
+.cand:hover,
+.cand:focus-within {
+  background: var(--surface-raised);
+}
+
+// Nadpisanie: pasek 3 px w cobalt-200 i tlo cobalt-600, plus slowo w sygnale (DESIGN.md).
+.cand--overwrite,
+.cand--overwrite:hover,
+.cand--overwrite:focus-within {
+  background: var(--cobalt-600);
+  border-left-color: var(--cobalt-200);
+}
+
+.cand--blocked {
+  border-left-color: var(--text);
+}
+
+.cand__box {
+  padding-top: 2px;
+}
+
+.cand__box input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--cobalt-300);
+}
+
+.cand__body {
+  display: grid;
+  gap: var(--s1);
+  min-width: 0;
+}
+
+.cand__title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.cand__title label {
+  cursor: pointer;
+}
+
+.cand__replace {
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.cand__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  color: var(--text-muted);
+}
+
+.cand__path {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+}
+
+.cand__desc {
+  max-width: 72ch;
+}
+
+.cand__info:empty {
+  display: none;
+}
+
+.cand__info,
+.cand__secret,
+.cand__warn {
+  display: grid;
+  gap: var(--s1);
+  max-width: 72ch;
+}
+
+.cand__info a,
+.cand__note a {
+  color: var(--cobalt-300);
+}
+
+.cand__secret {
+  margin-top: var(--s1);
+  padding: var(--s2) var(--s3);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-left: 4px solid var(--text);
+}
+
+.cand__warn {
+  margin-top: var(--s1);
+}
+
+.skipped {
+  display: grid;
+  border-top: 1px solid var(--hairline);
+}
+
+.skipped__row {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.skipped__row .mono {
+  overflow-wrap: anywhere;
+}
+
+// Suma: podwojna linia 3 px tylko nad nia, liczba jako najwiekszy element (DESIGN.md).
+.import-total {
+  display: grid;
+  gap: var(--s3);
+  padding-top: var(--s4);
+  border-top: 3px double var(--text-muted);
+  max-width: 72ch;
+}
+
+.import-total__count {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+}
+
+.import-total__num {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 56px;
+  line-height: 56px;
+}
+
+.import-total__num--zero {
+  color: var(--text-muted);
+}
+
+.results {
+  display: grid;
+  border-top: 1px solid var(--hairline);
+}
+
+.results__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s1) var(--s4);
+  min-height: var(--row-height);
+  padding: var(--s2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.results > .notice {
+  margin-top: var(--s2);
+}
+
+.cand input:focus-visible,
+.root input:focus-visible {
+  outline: 2px solid var(--cobalt-300);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--background);
+}
+
+@container frame (max-width: 720px) {
+  .import-total__num {
+    font-size: 40px;
+    line-height: 40px;
+  }
+}

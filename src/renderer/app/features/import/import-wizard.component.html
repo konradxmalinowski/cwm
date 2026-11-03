@@ -1,0 +1,554 @@
+<section
+  class="view"
+  aria-labelledby="import-heading"
+  [attr.aria-busy]="phase() === 'scanning' || phase() === 'applying'"
+>
+  <header class="view__head">
+    <p class="view__context">{{ stepLabel() }}</p>
+    <h1 class="view__sentence" id="import-heading" tabindex="-1">{{ sentence() }}</h1>
+    @switch (phase()) {
+      @case ('locations') {
+        @if (detect().status === 'ready' && existingCount() > 0) {
+          <p class="view__sub">
+            Import tylko czyta pliki. Niczego w katalogach narzędzi nie zmienia.
+          </p>
+        }
+      }
+      @case ('preview') {
+        @if (statusSummary() !== '') {
+          <p class="view__sub" data-testid="import-summary">{{ statusSummary() }}.</p>
+        }
+      }
+      @case ('result') {
+        @if (result(); as r) {
+          @if (r.failed.length > 0) {
+            <p class="view__sub">
+              {{ r.failed.length }}
+              {{ r.failed.length === 1 ? 'element się nie udał' : 'elementów się nie udało' }}.
+              Szczegóły są niżej.
+            </p>
+          }
+        }
+      }
+    }
+  </header>
+
+  @switch (phase()) {
+    <!-- Krok 1: lokalizacje -->
+    @case ('locations') {
+      @let d = detect();
+      @if (d.status === 'loading') {
+        <div class="skeleton" aria-hidden="true" data-testid="import-detect-loading">
+          @for (row of [1, 2, 3, 4]; track row) {
+            <div class="skeleton__row">
+              <span class="skeleton__bar skeleton__bar--s"></span>
+              <span class="skeleton__bar skeleton__bar--l"></span>
+            </div>
+          }
+        </div>
+        <p class="sr-only" role="status">Szukam lokalizacji Claude Code i Codeksa.</p>
+      } @else if (d.status === 'error') {
+        <div class="notice" role="alert" data-testid="import-detect-error">
+          <p class="notice__text"><span class="notice__label">Błąd.</span> {{ d.message }}</p>
+          <p class="row-actions">
+            <button type="button" class="btn" (click)="loadDetect()">Spróbuj ponownie</button>
+          </p>
+        </div>
+      } @else {
+        @if (scanError(); as message) {
+          <div class="notice" role="alert" data-testid="import-scan-error">
+            <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+            <p class="notice__text">
+              Zaznaczenie lokalizacji zostało. Możesz przeskanować ponownie.
+            </p>
+          </div>
+        }
+
+        @if (rootCount() === 0) {
+          <div class="empty" data-testid="import-no-roots">
+            <p>
+              Claude Code trzyma konfigurację w katalogu <span class="mono">~/.claude</span>, a
+              Codex w <span class="mono">~/.codex</span>. Żadnego z nich nie ma na tym komputerze,
+              więc nie ma skąd importować.
+            </p>
+            <p class="row-actions">
+              <button type="button" class="btn" (click)="loadDetect()">Sprawdź ponownie</button>
+              <a class="btn" [href]="libraryHref">Wróć do biblioteki</a>
+            </p>
+          </div>
+        } @else {
+          <div class="import-tools">
+            @for (group of toolGroups(); track group.tool) {
+              <fieldset class="import-tool" [attr.data-testid]="'tool-' + group.tool">
+                <legend class="section__title">{{ group.label }}</legend>
+                <ul class="roots">
+                  @for (root of group.roots; track root.rootId) {
+                    <li class="root" [class.root--missing]="!root.exists">
+                      <label class="check root__pick">
+                        <input
+                          type="checkbox"
+                          [checked]="root.exists && pickedRoots().has(root.rootId)"
+                          [disabled]="!root.exists"
+                          [attr.aria-describedby]="'root-note-' + root.rootId"
+                          (change)="toggleRoot(root.rootId, $any($event.target).checked)"
+                        />
+                        <span class="root__main">
+                          <span class="mono root__label">{{ root.label }}</span>
+                          <span class="root__kind">{{ rootKindLabel(root.kind) }}</span>
+                        </span>
+                      </label>
+                      <p class="root__note" [id]="'root-note-' + root.rootId">
+                        @if (root.exists) {
+                          <span class="root__state">Istnieje.</span>
+                        } @else {
+                          <span class="root__state">Nie istnieje</span> na tym komputerze, więc nie
+                          ma czego skanować.
+                        }
+                        @if (!root.active) {
+                          {{ group.label }} nie czyta tego katalogu, więc to, co w nim leży, nie
+                          wpływa na narzędzie.
+                          @if (root.exists) {
+                            Domyślnie odznaczony.
+                          }
+                        }
+                      </p>
+                    </li>
+                  }
+                </ul>
+              </fieldset>
+            }
+          </div>
+
+          @if (existingCount() === 0) {
+            <p class="notice__text">
+              Zainstaluj albo uruchom narzędzie przynajmniej raz, a potem wróć tutaj.
+            </p>
+          }
+
+          <div class="row-actions">
+            <button
+              type="button"
+              class="btn btn--primary"
+              data-testid="import-scan"
+              [disabled]="pickedCount() === 0"
+              [attr.aria-describedby]="pickedCount() === 0 ? 'scan-hint' : null"
+              (click)="startScan()"
+            >
+              Przeskanuj
+            </button>
+            @if (pickedCount() === 0) {
+              <span class="view__sub" id="scan-hint">Zaznacz co najmniej jedną lokalizację.</span>
+            } @else {
+              <span class="view__sub" role="status">
+                Wybrano {{ pickedCount() }}
+                {{ pickedCount() === 1 ? 'lokalizację' : 'lokalizacje' }}.
+              </span>
+            }
+          </div>
+        }
+      }
+    }
+
+    @case ('scanning') {
+      <div class="skeleton" aria-hidden="true" data-testid="import-scan-loading">
+        @for (row of [1, 2, 3, 4, 5]; track row) {
+          <div class="skeleton__row">
+            <span class="skeleton__bar skeleton__bar--s"></span>
+            <span class="skeleton__bar skeleton__bar--m"></span>
+            <span class="skeleton__bar skeleton__bar--l"></span>
+          </div>
+        }
+      </div>
+      <p role="status">
+        Czytam pliki z wybranych lokalizacji. Przy dużej konfiguracji może to chwilę potrwać.
+      </p>
+      <p class="row-actions">
+        <button type="button" class="btn" (click)="cancelScan()">Anuluj skan</button>
+      </p>
+    }
+
+    <!-- Krok 2: podglad -->
+    @case ('preview') {
+      @if (applyError(); as message) {
+        <div class="notice" role="alert" data-testid="import-apply-error">
+          <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+          <p class="notice__text">
+            Wybór został zachowany. Możesz spróbować ponownie albo wrócić i przeskanować od nowa.
+          </p>
+        </div>
+      }
+
+      @if (candidates().length === 0) {
+        <div class="empty" data-testid="import-no-candidates">
+          <p>
+            W wybranych lokalizacjach nie ma skilli, agentów ani komend, które da się odczytać.
+            Spróbuj wybrać inne lokalizacje.
+          </p>
+        </div>
+      } @else {
+        <p class="hints">
+          <span><kbd>j</kbd> <kbd>k</kbd> następny i poprzedni element</span>
+          <span><kbd>Spacja</kbd> zaznacz albo odznacz</span>
+        </p>
+
+        @for (group of groups(); track group.status) {
+          <section
+            class="section"
+            [attr.aria-labelledby]="'group-' + group.status"
+            [attr.data-testid]="'group-' + group.status"
+          >
+            <div class="group__head">
+              <h2 class="section__title" [id]="'group-' + group.status">
+                {{ group.title }}
+                <span class="group__count">{{ group.items.length }}</span>
+              </h2>
+              @if (groupSelectableCount(group.status) > 0) {
+                <div class="row-actions">
+                  <span class="view__sub" role="status">
+                    Wybrano {{ groupSelectedCount(group.status) }} z
+                    {{ groupSelectableCount(group.status) }}
+                  </span>
+                  <button
+                    type="button"
+                    class="btn btn--small"
+                    [attr.aria-label]="'Zaznacz wszystkie w grupie ' + group.title"
+                    (click)="selectGroup(group.status)"
+                  >
+                    Zaznacz wszystkie
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn--small"
+                    [attr.aria-label]="'Odznacz wszystkie w grupie ' + group.title"
+                    (click)="clearGroup(group.status)"
+                  >
+                    Odznacz wszystkie
+                  </button>
+                </div>
+              }
+            </div>
+            <p class="view__sub">{{ group.note }}</p>
+            @if (groupSecretHeldBack(group.status) > 0) {
+              <p class="view__sub">
+                Elementy z możliwym sekretem zostają odznaczone i wymagają osobnego potwierdzenia.
+              </p>
+            }
+
+            <ul class="cands">
+              @for (c of group.items; track c.candidateId) {
+                <li
+                  class="cand"
+                  [class.cand--overwrite]="c.status === 'changed' && isSelected(c)"
+                  [class.cand--blocked]="c.status === 'conflict'"
+                  data-testid="candidate"
+                  [attr.data-status]="c.status"
+                  [attr.data-slug]="c.slug"
+                >
+                  <div class="cand__box">
+                    @if (isSelectable(c)) {
+                      <input
+                        type="checkbox"
+                        data-cand-pick
+                        [id]="pickId(c)"
+                        [checked]="isSelected(c)"
+                        [attr.aria-labelledby]="
+                          c.status === 'changed' ? pickId(c) + '-replace ' + titleId(c) : titleId(c)
+                        "
+                        [attr.aria-describedby]="'cand-info-' + c.candidateId"
+                        (change)="onPick(c, $event)"
+                      />
+                    }
+                  </div>
+                  <div class="cand__body">
+                    <p class="cand__title">
+                      @if (isSelectable(c)) {
+                        <label [id]="titleId(c)" [for]="pickId(c)">{{ c.title }}</label>
+                      } @else {
+                        <span [id]="titleId(c)">{{ c.title }}</span>
+                      }
+                    </p>
+                    @if (c.status === 'changed') {
+                      <label class="cand__replace" [id]="pickId(c) + '-replace'" [for]="pickId(c)">
+                        Zastąp wersję w bibliotece
+                      </label>
+                    }
+                    <p class="cand__meta">
+                      <span>{{ kindLabel(c.kind) }}</span>
+                      <span class="mono">{{ c.slug }}</span>
+                      <span>{{ toolLabel(c.tool) }}</span>
+                    </p>
+                    <p class="mono cand__path">{{ pathLabel(c) }}</p>
+                    @if (c.description !== '') {
+                      <p class="cand__desc">{{ c.description }}</p>
+                    }
+
+                    <div class="cand__info" [id]="'cand-info-' + c.candidateId">
+                      @switch (c.status) {
+                        @case ('changed') {
+                          @if (isSelected(c)) {
+                            <p class="signal-overwrite">
+                              <span
+                                ><strong>Nadpisze</strong> wersję tego elementu w bibliotece.</span
+                              >
+                              <span>Powstanie nowa rewizja z treścią z tego pliku.</span>
+                            </p>
+                          } @else {
+                            <p class="view__sub">
+                              Pominięty. W bibliotece jest ten sam element z inną treścią.
+                              @if (c.existingItemId; as existing) {
+                                <a [href]="itemHref(existing)">Zobacz wersję w bibliotece</a>.
+                              }
+                            </p>
+                          }
+                        }
+                        @case ('unchanged') {
+                          <p class="view__sub">
+                            Jest już w bibliotece z tą samą treścią.
+                            @if (c.existingItemId; as existing) {
+                              <a [href]="itemHref(existing)">Zobacz w bibliotece</a>.
+                            }
+                          </p>
+                        }
+                        @case ('duplicate') {
+                          @let target = duplicateTarget(c);
+                          <p class="cand__note">
+                            <span class="notice__label">Duplikat.</span>
+                            @if (target !== null) {
+                              {{ toolLabel(c.tool) }} czyta egzemplarz z
+                              <span class="mono">{{ pathLabel(target) }}</span
+                              >, a ten jest dla narzędzia niewidoczny.
+                            } @else {
+                              {{ toolLabel(c.tool) }} czyta inny egzemplarz tego elementu.
+                            }
+                          </p>
+                        }
+                        @case ('conflict') {
+                          <p class="cand__note">
+                            <span class="notice__label">Konflikt nazwy.</span>
+                            Po zrównaniu wielkości liter ta nazwa jest taka sama jak nazwa innego
+                            elementu biblioteki. Na macOS i Windowsie oba trafiłyby do jednego
+                            pliku. Zmień nazwę w źródle i przeskanuj ponownie.
+                            @if (c.existingItemId; as existing) {
+                              <a [href]="itemHref(existing)">Zobacz kolidujący element</a>.
+                            }
+                          </p>
+                        }
+                      }
+                    </div>
+
+                    @if (c.secrets.length > 0) {
+                      <div class="cand__secret" data-testid="candidate-secret">
+                        <p>
+                          <span class="notice__label">Możliwy sekret.</span>
+                          @if (isSelected(c)) {
+                            Zaznaczony po osobnym potwierdzeniu.
+                          } @else {
+                            Odznaczony. Zaznaczenie wymaga osobnego potwierdzenia.
+                          }
+                        </p>
+                        <ul class="notice__list">
+                          @for (hit of c.secrets; track $index) {
+                            <li>
+                              {{ hit.reason }}
+                              <span class="mono"
+                                >({{ hitLocation(hit) }}, reguła {{ hit.rule }})</span
+                              >
+                            </li>
+                          }
+                        </ul>
+                      </div>
+                    }
+
+                    @if (c.warnings.length > 0) {
+                      <div class="cand__warn">
+                        <p><span class="notice__label">Ostrzeżenia:</span></p>
+                        <ul class="notice__list">
+                          @for (w of c.warnings; track $index) {
+                            <li>{{ w.message }}</li>
+                          }
+                        </ul>
+                      </div>
+                    }
+                  </div>
+                </li>
+              }
+            </ul>
+          </section>
+        }
+      }
+
+      @if (scan(); as s) {
+        @if (s.skipped.length > 0) {
+          <section class="section" aria-labelledby="skipped-heading" data-testid="import-skipped">
+            <h2 class="section__title" id="skipped-heading">
+              Pominięte
+              <span class="group__count">{{ s.skipped.length }}</span>
+            </h2>
+            <p class="view__sub">
+              Tych plików skan nie uznał za elementy do importu. Przy każdym jest powód.
+            </p>
+            <ul class="skipped">
+              @for (item of s.skipped; track $index) {
+                <li class="skipped__row">
+                  <p class="mono">{{ item.rootLabel }}/{{ item.relPath }}</p>
+                  <p>
+                    {{ item.message }}
+                    <span class="view__sub">({{ toolLabel(item.tool) }}, {{ item.reason }})</span>
+                  </p>
+                </li>
+              }
+            </ul>
+          </section>
+        }
+      }
+
+      <div class="import-total" data-testid="import-total">
+        <p class="import-total__count">
+          <span class="import-total__num" [class.import-total__num--zero]="selectedCount() === 0">{{
+            selectedCount()
+          }}</span>
+          <span>wybrano z {{ selectableCount() }} możliwych do zaznaczenia</span>
+        </p>
+        <p class="sr-only" role="status">
+          Wybrano {{ selectedCount() }} z {{ selectableCount() }}.
+        </p>
+        @if (overwriteCount() > 0) {
+          <p class="signal-overwrite" data-testid="import-overwrite-total">
+            <span>
+              <strong>Nadpisze</strong> {{ overwriteCount() }}
+              {{ overwriteCount() === 1 ? 'wersję' : 'wersje' }} w bibliotece.
+            </span>
+            <span>Każde nadpisanie tworzy nową rewizję elementu.</span>
+          </p>
+        }
+        @if (secretSelectedCount() > 0) {
+          <p class="view__sub">
+            W wyborze jest {{ secretSelectedCount() }}
+            {{ secretSelectedCount() === 1 ? 'element' : 'elementy' }} z możliwym sekretem,
+            potwierdzone osobno.
+          </p>
+        }
+        <div class="row-actions">
+          <button
+            type="button"
+            class="btn btn--primary"
+            data-testid="import-apply"
+            [disabled]="selectedCount() === 0 || phase() !== 'preview'"
+            (click)="apply()"
+          >
+            Importuj {{ selectedCount() }}
+            {{
+              selectedCount() === 1
+                ? 'element'
+                : selectedCount() >= 2 && selectedCount() <= 4
+                  ? 'elementy'
+                  : 'elementów'
+            }}
+          </button>
+          <button type="button" class="btn" (click)="backToLocations()">Wróć do lokalizacji</button>
+        </div>
+      </div>
+    }
+
+    @case ('applying') {
+      <div class="skeleton" aria-hidden="true" data-testid="import-apply-loading">
+        @for (row of [1, 2, 3]; track row) {
+          <div class="skeleton__row">
+            <span class="skeleton__bar skeleton__bar--m"></span>
+            <span class="skeleton__bar skeleton__bar--l"></span>
+          </div>
+        }
+      </div>
+      <p role="status">Zapisuję wybrane elementy w bibliotece.</p>
+    }
+
+    <!-- Krok 3: wynik -->
+    @case ('result') {
+      @if (result(); as r) {
+        <div class="report" data-testid="import-result">
+          @if (r.imported.length > 0) {
+            <section class="section" aria-labelledby="res-imported">
+              <h2 class="section__title" id="res-imported">
+                Zaimportowane <span class="group__count">{{ r.imported.length }}</span>
+              </h2>
+              <ul class="results">
+                @for (entry of r.imported; track entry.candidateId) {
+                  <li class="results__row" data-testid="imported">
+                    <a class="register__title" [href]="itemHref(entry.itemId)">{{
+                      titleOf(entry.candidateId)
+                    }}</a>
+                    <span class="view__sub">
+                      {{
+                        entry.action === 'created'
+                          ? 'Dodano do biblioteki.'
+                          : 'Zaktualizowano, powstała nowa rewizja.'
+                      }}
+                    </span>
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          @if (r.skipped.length > 0) {
+            <section class="section" aria-labelledby="res-skipped">
+              <h2 class="section__title" id="res-skipped">
+                Pominięte <span class="group__count">{{ r.skipped.length }}</span>
+              </h2>
+              <ul class="results">
+                @for (entry of r.skipped; track entry.candidateId) {
+                  <li class="results__row" data-testid="apply-skipped">
+                    <span>{{ titleOf(entry.candidateId) }}</span>
+                    <span class="view__sub">{{ entry.reason }}</span>
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          @if (r.failed.length > 0) {
+            <section class="section" aria-labelledby="res-failed">
+              <h2 class="section__title" id="res-failed">
+                Nie udało się <span class="group__count">{{ r.failed.length }}</span>
+              </h2>
+              <ul class="results">
+                @for (entry of r.failed; track entry.candidateId) {
+                  <li class="notice" data-testid="apply-failed">
+                    <p class="notice__text">
+                      <span class="notice__label">Błąd.</span> {{ titleOf(entry.candidateId) }}
+                    </p>
+                    <p class="notice__text">
+                      {{ entry.message }}
+                      <span class="mono">({{ entry.code }})</span>
+                    </p>
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          @if (r.imported.length === 0 && r.skipped.length === 0 && r.failed.length === 0) {
+            <div class="empty">
+              <p>Raport jest pusty: do importu nie trafił żaden element.</p>
+            </div>
+          }
+        </div>
+
+        <p class="row-actions">
+          <a class="btn btn--primary" data-testid="import-to-library" [href]="libraryHref"
+            >Przejdź do biblioteki</a
+          >
+          <button type="button" class="btn" (click)="restart()">Zaimportuj kolejne</button>
+        </p>
+      }
+    }
+  }
+</section>
+
+@if (confirming(); as pending) {
+  <app-secret-confirm-dialog
+    [candidate]="pending"
+    (confirmed)="confirmSecret()"
+    (cancelled)="cancelSecret()"
+  />
+}
