@@ -64,6 +64,46 @@ describe('raport diagnostyczny', () => {
   });
 });
 
+describe('raport nie zawiera sciezek', () => {
+  it('etykieta, kwarantanna i komunikaty nie niosa katalogu domowego ani userData', () => {
+    const report = buildDiagnosticsReport({
+      runtime,
+      indexStore: storeReturning({
+        status: 'failed',
+        reason: 'blad w /private/tmp/acme-userdata/index.db',
+        locationLabel: '/private/tmp/acme-userdata/index.db',
+      }),
+      index: {
+        outcome: 'rebuilt',
+        message: 'katalog indeksu ~/Library/acme/index.db nie jest zapisywalny',
+        quarantinedAs: '~/Library/acme/quarantine/index-1.sqlite',
+        notRestored: ['plik C:\\Users\\acme\\x.db'],
+      },
+      clock: { now: () => new Date(0) },
+      appIcon: 'placeholder',
+      stage: 'etap-2-biblioteka',
+    });
+    const json = JSON.stringify(report);
+    expect(json).not.toContain('/private/tmp');
+    expect(json).not.toContain('Library/acme');
+    expect(json).not.toContain('Users');
+    expect(report.index.quarantinedAs).toBe('index-1.sqlite');
+    expect(report.database).toMatchObject({ locationLabel: 'index.db (katalog danych aplikacji)' });
+  });
+
+  it('niedostepny indeks tez nie wypuszcza sciezki', () => {
+    const report = buildDiagnosticsReport({
+      runtime,
+      indexStore: null,
+      index: { outcome: 'refused', message: 'brak zapisu w /home/acme/.config/app' },
+      clock: { now: () => new Date(0) },
+      appIcon: 'placeholder',
+      stage: 'etap-2-biblioteka',
+    });
+    expect(JSON.stringify(report)).not.toContain('/home/acme');
+  });
+});
+
 describe('redakcja sciezek', () => {
   it('zamienia katalog domowy na ~', () => {
     expect(redactHomePath('/home/acme/.local/app/index.db', '/home/acme')).toBe(
