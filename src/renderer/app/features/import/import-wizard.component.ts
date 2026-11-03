@@ -26,6 +26,7 @@ import {
   isSelectable,
   pathLabel,
   rootKindLabel,
+  skipReasonLabel,
   toolLabel,
 } from './import-model';
 import { SecretConfirmDialogComponent } from './secret-confirm-dialog.component';
@@ -52,6 +53,7 @@ export class ImportWizardComponent {
   protected readonly rootKindLabel = rootKindLabel;
   protected readonly kindLabel = kindLabel;
   protected readonly pathLabel = pathLabel;
+  protected readonly skipReasonLabel = skipReasonLabel;
   protected readonly hitLocation = hitLocation;
   protected readonly isSelectable = isSelectable;
 

@@ -325,9 +325,9 @@
                         @case ('conflict') {
                           <p class="cand__note">
                             <span class="notice__label">Konflikt nazwy.</span>
-                            Po zrównaniu wielkości liter ta nazwa jest taka sama jak nazwa innego
-                            elementu biblioteki. Na macOS i Windowsie oba trafiłyby do jednego
-                            pliku. Zmień nazwę w źródle i przeskanuj ponownie.
+                            Po zrównaniu wielkości liter ta nazwa i ten typ są już zajęte przez inny
+                            element: z biblioteki albo z tego samego skanu. Na macOS i Windowsie oba
+                            trafiłyby do jednego pliku. Zmień nazwę w źródle i przeskanuj ponownie.
                             @if (c.existingItemId; as existing) {
                               <a [href]="itemHref(existing)">Zobacz kolidujący element</a>.
                             }
@@ -340,7 +340,9 @@
                       <div class="cand__secret" data-testid="candidate-secret">
                         <p>
                           <span class="notice__label">Możliwy sekret.</span>
-                          @if (isSelected(c)) {
+                          @if (!isSelectable(c)) {
+                            Nie wchodzi do importu, ale reguły coś znalazły.
+                          } @else if (isSelected(c)) {
                             Zaznaczony po osobnym potwierdzeniu.
                           } @else {
                             Odznaczony. Zaznaczenie wymaga osobnego potwierdzenia.
@@ -390,10 +392,12 @@
             <ul class="skipped">
               @for (item of s.skipped; track $index) {
                 <li class="skipped__row">
-                  <p class="mono">{{ item.rootLabel }}/{{ item.relPath }}</p>
+                  <p class="mono">{{ pathLabel(item) }}</p>
                   <p>
                     {{ item.message }}
-                    <span class="view__sub">({{ toolLabel(item.tool) }}, {{ item.reason }})</span>
+                    <span class="view__sub"
+                      >({{ toolLabel(item.tool) }}, {{ skipReasonLabel(item.reason) }})</span
+                    >
                   </p>
                 </li>
               }

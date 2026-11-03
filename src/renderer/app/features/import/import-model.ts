@@ -82,7 +82,7 @@ export const STATUS_GROUPS: readonly StatusGroupMeta[] = [
   {
     status: 'conflict',
     title: 'Konflikty nazw',
-    note: 'Nazwa zderza się z innym elementem biblioteki. Takiego elementu nie da się zaznaczyć.',
+    note: 'Nazwa zderza się z innym elementem biblioteki albo z tego skanu. Takiego elementu nie da się zaznaczyć.',
   },
 ];
 
@@ -91,8 +91,29 @@ export function isSelectable(candidate: CandidateDto): boolean {
   return candidate.status !== 'conflict' && candidate.status !== 'unchanged';
 }
 
-export function pathLabel(candidate: CandidateDto): string {
-  return `${candidate.rootLabel}/${candidate.relPath}`;
+/**
+ * Dla rootow bedacych plikiem (CLAUDE.md, settings.json, config.toml) `relPath` zaczyna sie
+ * od nazwy tego samego pliku, wiec samo sklejenie dalo by "root/CLAUDE.md/CLAUDE.md".
+ */
+export function joinRootPath(rootLabel: string, relPath: string): string {
+  const first = relPath.split(/[#/]/)[0] ?? '';
+  if (first !== '' && rootLabel.endsWith(`/${first}`))
+    return `${rootLabel}${relPath.slice(first.length)}`;
+  return `${rootLabel}/${relPath}`;
+}
+
+export function pathLabel(candidate: { rootLabel: string; relPath: string }): string {
+  return joinRootPath(candidate.rootLabel, candidate.relPath);
+}
+
+const SKIP_REASON_LABEL: Readonly<Record<string, string>> = {
+  'not-an-element': 'to nie jest element',
+  unsupported: 'nieobsługiwane',
+  malformed: 'uszkodzony wpis',
+};
+
+export function skipReasonLabel(reason: string): string {
+  return SKIP_REASON_LABEL[reason] ?? reason;
 }
 
 /** Tekst reguly sekretu: nazwa reguly, plik i linia, bez wartosci (ta nigdy nie przychodzi). */
