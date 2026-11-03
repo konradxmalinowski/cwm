@@ -54,6 +54,7 @@ export interface MarkdownItem {
  */
 export function buildMarkdownItem(input: MarkdownItemInput): MarkdownItem {
   const fm = parseFrontmatter(input.text);
+  const unclosed = fm.issues.some((i) => i.code === 'frontmatter-unclosed');
   const warnings: ImportWarning[] = fm.issues.map((i) => ({ code: i.code, message: i.message }));
   const unmapped: { path: string; value: JsonValue }[] = [];
 
@@ -140,7 +141,9 @@ export function buildMarkdownItem(input: MarkdownItemInput): MarkdownItem {
     kind: input.kind,
     identity,
     content: {
-      title: declaredName ?? firstHeading(fm.body) ?? slug.slug,
+      // Przy niedomknietym frontmatterze nagłówek z treści bywa przypadkowy, wiec tytul daje nazwa zrodla.
+      title:
+        declaredName ?? (unclosed ? input.sourceName : (firstHeading(fm.body) ?? input.sourceName)),
       description,
       descriptionOrigin,
       body: fm.body,

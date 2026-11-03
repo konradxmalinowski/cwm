@@ -118,7 +118,18 @@ export function firstHeading(body: string): string | null {
       continue;
     }
     const m = /^#\s+(.+?)\s*#*$/.exec(line);
-    if (m !== null && (m[1] ?? '') !== '') return m[1] ?? null;
+    const cleaned = cleanInline(m?.[1] ?? '');
+    if (cleaned !== '') return cleaned;
   }
   return null;
+}
+
+/** Znaczniki Markdowna nie nadaja sie na tytul: zostaje sam tekst. */
+function cleanInline(text: string): string {
+  return text
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/(\*\*|__|\*|`|~~)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

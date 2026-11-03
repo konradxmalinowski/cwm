@@ -4,8 +4,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 
 import { CodexAdapter, createCodexAdapter } from '../../src/adapters/codex';
 import { registryTarget } from '../../src/adapters/codex/agents';
+import type { DetectedRoot } from '../../src/core/ports/tool-adapter';
 import { createTempTree, removeTempTrees } from '../harness/isolation';
-import { plain, writeTreeFile } from '../contract/support/fs-source-reader';
+import { FsSourceReader, plain, writeTreeFile } from '../contract/support/fs-source-reader';
 import {
   candidate,
   scanRoot,
@@ -18,6 +19,31 @@ const fixtures = resolve(__dirname, '..', 'fixtures', 'codex');
 const home = join(fixtures, 'home', '.codex');
 const agentsHome = join(fixtures, 'home', '.agents');
 const adapter = createCodexAdapter();
+
+function rootOf(kind: 'agents' | 'agent-registry', exists: boolean): DetectedRoot {
+  return { rootId: `r-${kind}`, tool: 'codex', kind, label: kind, exists, active: true };
+}
+
+function readerFor(roots: Map<string, string>): FsSourceReader {
+  return new FsSourceReader(roots);
+}
+
+/** Skan katalogu agentow i rejestru, potem finalize: tak robi serwis importu. */
+async function scanAndFinalize(agentsDir: string, config: string) {
+  const a = new CodexAdapter();
+  const reader = readerFor(
+    new Map([
+      ['r-agents', agentsDir],
+      ['r-agent-registry', config],
+    ]),
+  );
+  const scans = [];
+  for (const kind of ['agents', 'agent-registry'] as const) {
+    const root = rootOf(kind, true);
+    scans.push({ root, result: await a.scan(root, reader) });
+  }
+  return { scans, done: await a.finalize(scans, reader) };
+}
 
 afterAll(() => {
   removeTempTrees();
@@ -90,29 +116,34 @@ describe('Codex: agenci i rejestr', () => {
     );
   });
 
-  it('wpis rejestracyjny bez pliku i plik bez wpisu (skan katalogu, potem rejestru)', async () => {
-    const a = new CodexAdapter();
-    await scanRoot(a, 'agents', agentsDir);
-    const reg = await scanRoot(a, 'agent-registry', config);
+  it('wpis rejestracyjny bez pliku i plik bez wpisu (finalize)', async () => {
+    const { scans, done } = await scanAndFinalize(agentsDir, config);
+    const agents = done[0]!;
+    const reg = done[1]!;
 
     const ghost = skipFor(reg, 'config.toml#agents.acme-ghost');
     expect(ghost?.reason).toBe('malformed');
     expect(ghost?.message).toContain('agents/acme-ghost.toml');
     expect(reg.skipped.some((s) => s.relPath.includes('acme-reviewer'))).toBe(false);
-    expect(skipFor(reg, 'agents/acme-unregistered.toml')?.message).toContain('nie ma wpisu');
-    expect(reg.candidates).toEqual([]);
+
+    const paired = candidate(agents, 'acme-reviewer.toml');
+    expect(warningCodes(paired)).toEqual([]);
+    expect(unmapped(paired)['registry.entry']).toBe('acme-reviewer');
+
+    // Agent bez wpisu jest kandydatem z ostrzezeniem, nie wpisem w skipped.
+    const lone = candidate(agents, 'acme-unregistered.toml');
+    expect(warningCodes(lone)).toEqual(['agent-not-registered']);
+    expect(agents.skipped.some((s) => s.relPath.includes('unregistered'))).toBe(false);
+    expect(reg.skipped.some((s) => s.relPath.includes('unregistered'))).toBe(false);
+    expect(done).toHaveLength(scans.length);
   });
 
-  it('sam rejestr, bez wczesniejszego skanu agentow, nie zgaduje o plikach', async () => {
-    const reg = await scanRoot(new CodexAdapter(), 'agent-registry', config);
-    expect(reg.skipped).toEqual([]);
-  });
-
-  it('pamiec skanu agentow jest jednorazowa', async () => {
+  it('bez roota agentow w skanie wyniki zostaja bez zmian', async () => {
     const a = new CodexAdapter();
-    await scanRoot(a, 'agents', agentsDir);
-    expect((await scanRoot(a, 'agent-registry', config)).skipped.length).toBeGreaterThan(0);
-    expect((await scanRoot(a, 'agent-registry', config)).skipped).toEqual([]);
+    const reg = await scanRoot(a, 'agent-registry', config);
+    const scans = [{ root: rootOf('agent-registry', true), result: reg }];
+    const done = await a.finalize(scans, readerFor(new Map([['r-agent-registry', config]])));
+    expect(done[0]).toEqual(reg);
   });
 
   it('config.toml: z pliku nic poza sekcjami agentow nie trafia do wyniku (sekrety)', async () => {
@@ -151,9 +182,7 @@ describe('Codex: agenci i rejestr', () => {
       'config.toml',
       '[weird]\nx = @@@\n[agents.a]\ndescription = "d"\nconfig_file = "./agents/a.toml"\n[agents.b]\ndescription = "d"\n',
     );
-    const a = new CodexAdapter();
-    await scanRoot(a, 'agents', join(tree, 'agents'));
-    const reg = await scanRoot(a, 'agent-registry', join(tree, 'config.toml'));
+    const reg = (await scanAndFinalize(join(tree, 'agents'), join(tree, 'config.toml'))).done[1]!;
     expect(skipFor(reg, 'config.toml')?.reason).toBe('malformed');
     expect(skipFor(reg, 'config.toml#agents.b')?.message).toContain('config_file');
     expect(reg.skipped.some((s) => s.relPath === 'config.toml#agents.a')).toBe(false);

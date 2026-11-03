@@ -191,10 +191,7 @@ export async function scanCodexAgents(ctx: ScanContext): Promise<ReadonlySet<str
   return listed;
 }
 
-/**
- * Wpisy rejestru, ktorych nie da sie sparowac z plikiem. Gdy ten sam adapter przed chwila skanowal
- * katalog agentow (`agentFiles`), zestawiamy obie strony; inaczej widzimy tylko sam rejestr.
- */
+/** Problemy samego rejestru oraz wpisy bez pliku (gdy znamy pliki z katalogu agentow). */
 export function reportRegistry(
   ctx: ScanContext,
   registry: Registry,
@@ -231,16 +228,6 @@ export function reportRegistry(
         shown,
         'malformed',
         `Wpis agents.${entry.name} wskazuje plik "${target}", którego nie ma. Codex nie załaduje tego agenta.`,
-      );
-    }
-  }
-  if (agentFiles === null) return;
-  for (const file of agentFiles) {
-    if (!targets.has(file)) {
-      ctx.skip(
-        `agents/${file}`,
-        'unsupported',
-        `Agent "${file}" nie ma wpisu [agents.<nazwa>] w config.toml. Codex nie załaduje go bez rejestracji (element zostaje na liście importu).`,
       );
     }
   }
@@ -374,4 +361,11 @@ function buildAgent(ctx: ScanContext, input: AgentInput): void {
 function textOrNull(value: TomlValue | undefined): string | null {
   const s = tomlString(value);
   return s === null || s.trim() === '' ? null : s.trim();
+}
+
+/** Nazwa pliku w katalogu agents, na ktory wskazuje wpis, albo `null`. */
+export function registeredFile(entry: RegistryEntry): string | null {
+  if (entry.configFile === null) return null;
+  const target = registryTarget(entry.configFile);
+  return target !== null && /^agents\/[^/]+$/.test(target) ? target.slice('agents/'.length) : null;
 }

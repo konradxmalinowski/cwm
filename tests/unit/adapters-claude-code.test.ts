@@ -164,6 +164,10 @@ describe('Claude Code: skille', () => {
     const c = candidate(await scanRoot(adapter, 'skills', skillsDir), 'acme broken skill');
     expect(c.draft.identity.slug).toBe('acme-broken-skill');
     expect(c.draft.identity.aliases).toEqual(['acme broken skill']);
+    // Niedomkniety frontmatter nie robi z "# Heading" tytulu; opis idzie z akapitu po bloku.
+    expect(c.draft.content.title).toBe('acme broken skill');
+    expect(c.draft.content.description).toBe('Paragraph text that becomes the body.');
+    expect(c.draft.content.body).toBe('# Heading\n\nParagraph text that becomes the body.\n');
     expect(warningCodes(c)).toEqual(
       expect.arrayContaining(['slug-derived', 'frontmatter-unclosed', 'description-derived']),
     );

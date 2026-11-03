@@ -9,11 +9,12 @@ import type {
 import type { JsonValue } from '../../core/model/item';
 import { addHookCandidates, isRecord } from '../shared/hooks';
 import { scanInstructionFile } from '../shared/instructions';
+import type { ImportCandidate, RootScan } from '../../core/ports/tool-adapter';
 import type { MarkdownItem } from '../shared/markdown-item';
 import { ScanContext, unsupportedRootKind } from '../shared/scan-context';
 import { scanSkillsRoot } from '../shared/skills';
 import { TextDecodeError, toParsableText } from '../shared/text';
-import { readRegistry, reportRegistry, scanCodexAgents } from './agents';
+import { readRegistry, registeredFile, reportRegistry, scanCodexAgents } from './agents';
 
 const NAME = 'OpenAI Codex';
 
@@ -29,8 +30,6 @@ export class CodexAdapter implements ToolAdapter {
     'hooks',
   ];
 
-  private agentFiles: ReadonlySet<string> | null = null;
-
   async scan(root: DetectedRoot, reader: SourceReader): Promise<ScanResult> {
     const ctx = new ScanContext(this.id, root, reader);
     if (!root.exists) return ctx.result();
@@ -43,16 +42,11 @@ export class CodexAdapter implements ToolAdapter {
         });
         break;
       case 'agents':
-        this.agentFiles = await scanCodexAgents(ctx);
+        await scanCodexAgents(ctx);
         break;
-      case 'agent-registry': {
-        // Root rejestru to sam config.toml. Pary z plikami agentow sprawdzamy tylko wtedy, gdy ten
-        // sam adapter chwile wczesniej skanowal katalog agentow; pamiec jest jednorazowa.
-        const registry = await readRegistry(ctx);
-        if (registry !== null) reportRegistry(ctx, registry, this.agentFiles);
-        this.agentFiles = null;
+      case 'agent-registry':
+        // Root rejestru to sam config.toml, a pary z agentami wylicza `finalize` po skanie rootow.
         break;
-      }
       case 'global-instructions':
         await scanInstructionFile(ctx, 'AGENTS.md', 'agents-md');
         break;
@@ -64,6 +58,93 @@ export class CodexAdapter implements ToolAdapter {
     }
     return ctx.result();
   }
+
+  /**
+   * Paruje agentow z wpisami `[agents.<nazwa>]`, ktore leza w innym roocie niz pliki. Bez roota
+   * agentow w skanie (albo bez rejestru) wyniki zostaja bez zmian, z ostrzezeniem o braku kontroli.
+   */
+  async finalize(scans: readonly RootScan[], reader: SourceReader): Promise<readonly ScanResult[]> {
+    const registryScan = scans.find((s) => s.root.kind === 'agent-registry' && s.root.exists);
+    const agentScans = scans.filter((s) => s.root.kind === 'agents' && s.root.exists);
+    if (registryScan === undefined || agentScans.length === 0) return scans.map((s) => s.result);
+
+    const ctx = new ScanContext(this.id, registryScan.root, reader);
+    const registry = await readRegistry(ctx);
+    if (registry === null) {
+      return scans.map((s) => (s === registryScan ? merge(s.result, ctx.result()) : s.result));
+    }
+    const registered = new Map<string, (typeof registry.entries)[number]>();
+    for (const e of registry.entries) {
+      const file = registeredFile(e);
+      if (file !== null && !registered.has(file)) registered.set(file, e);
+    }
+    const present = new Set<string>();
+    for (const s of agentScans) {
+      for (const c of s.result.candidates) present.add(c.relPath);
+      for (const k of s.result.skipped) present.add(k.relPath);
+    }
+    reportRegistry(ctx, registry, present);
+
+    return scans.map((s) => {
+      if (s === registryScan) return merge(s.result, ctx.result());
+      if (!agentScans.includes(s)) return s.result;
+      return {
+        candidates: s.result.candidates.map((c) => pairAgent(c, registered.get(c.relPath))),
+        skipped: s.result.skipped,
+      };
+    });
+  }
+}
+
+function merge(base: ScanResult, extra: ScanResult): ScanResult {
+  return {
+    candidates: [...base.candidates, ...extra.candidates],
+    skipped: [...base.skipped, ...extra.skipped],
+  };
+}
+
+function pairAgent(
+  c: ImportCandidate,
+  entry:
+    | {
+        readonly name: string;
+        readonly extra: readonly { readonly key: string; readonly value: JsonValue }[];
+      }
+    | undefined,
+): ImportCandidate {
+  if (c.kind !== 'agent') return c;
+  const warnings = c.warnings.filter((w) => w.code !== 'agent-registration-unchecked');
+  if (entry === undefined) {
+    return {
+      ...c,
+      warnings: [
+        ...warnings,
+        {
+          code: 'agent-not-registered',
+          message:
+            'Plik agenta nie ma wpisu [agents.<nazwa>] w config.toml, więc Codex go nie załaduje.',
+        },
+      ],
+    };
+  }
+  const snapshot = c.draft.source?.snapshots[0];
+  if (c.draft.source === undefined || snapshot === undefined) return { ...c, warnings };
+  const unmappedKeys = [
+    ...snapshot.unmappedKeys,
+    { path: 'registry.entry', value: entry.name },
+    ...entry.extra.map((e) => ({ path: `registry.${e.key}`, value: e.value })),
+  ];
+  return {
+    ...c,
+    warnings,
+    draft: {
+      ...c.draft,
+      source: {
+        ...c.draft.source,
+        snapshots: [{ ...snapshot, unmappedKeys }, ...c.draft.source.snapshots.slice(1)],
+      },
+    },
+  };
 }
 
 const INACTIVE_ROOT: ImportWarning = {

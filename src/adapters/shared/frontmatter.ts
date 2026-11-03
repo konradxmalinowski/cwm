@@ -46,11 +46,14 @@ export function parseFrontmatter(text: string): FrontmatterResult {
     }
   }
   if (end === -1) {
-    return empty(text, [
+    // Do pierwszej pustej linii to niedomkniety blok metadanych, a nie tresc: opis wyliczamy z tego, co po nim.
+    const blank = lines.findIndex((l, i) => i > 0 && l.trim() === '');
+    const rest = blank === -1 ? '' : lines.slice(blank + 1).join('\n');
+    return empty(rest, [
       {
         code: 'frontmatter-unclosed',
         message:
-          'Frontmatter zaczyna się od "---", ale nie ma linii zamykającej. Cały plik potraktowano jako treść.',
+          'Frontmatter zaczyna się od "---", ale nie ma linii zamykającej. Pominięto go; tytuł pochodzi z nazwy, a opis z pierwszego akapitu po nim.',
       },
     ]);
   }

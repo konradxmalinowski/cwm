@@ -128,6 +128,19 @@ export function describeAdapterContract(spec: ContractSpec): void {
       }
     });
 
+    it('finalize, jesli jest, zwraca tyle wynikow co dostal i nie psuje sladu', async () => {
+      const reader = new InstrumentedReader(readerFor());
+      const scans = await scanAll(reader);
+      if (adapter.finalize === undefined) return;
+      const done = await adapter.finalize(scans, reader);
+      expect(done).toHaveLength(scans.length);
+      for (const call of reader.calls) expect(READ_METHODS.has(call)).toBe(true);
+      for (const r of done) {
+        for (const c of r.candidates) expect(c.tool).toBe(adapter.id);
+        for (const s of r.skipped) expect(isRelative(s.relPath) || s.relPath === '').toBe(true);
+      }
+    });
+
     it('wynik nie niesie sciezek bezwzglednych', async () => {
       const scans = await scanAll(new InstrumentedReader(readerFor()));
       const json = JSON.stringify(plain(scans.map((s) => s.result)));

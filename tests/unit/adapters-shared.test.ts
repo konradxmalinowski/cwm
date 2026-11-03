@@ -124,7 +124,7 @@ describe('parseFrontmatter', () => {
   it('niezamkniete ogrodzenie: cala tresc zostaje trescia i jest ostrzezenie', () => {
     const r = parseFrontmatter('---\nname: x\n\nbody\n');
     expect(r.present).toBe(false);
-    expect(r.body).toBe('---\nname: x\n\nbody\n');
+    expect(r.body).toBe('body\n');
     expect(r.issues.map((i) => i.code)).toEqual(['frontmatter-unclosed']);
   });
 
@@ -346,6 +346,11 @@ describe('deriveDescription i firstHeading', () => {
     const long = deriveDescription('slowo '.repeat(200));
     expect(long.length).toBeLessThanOrEqual(303);
     expect(long.endsWith('...')).toBe(true);
+  });
+
+  it('tytul z naglowka bez znacznikow Markdowna', () => {
+    expect(firstHeading('# **Bold** [link](http://x) `code` <b>t</b> ##')).toBe('Bold link code t');
+    expect(firstHeading('# ***')).toBeNull();
   });
 
   it('naglowek w bloku kodu nie jest tytulem', () => {

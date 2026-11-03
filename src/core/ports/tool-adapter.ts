@@ -56,6 +56,12 @@ export interface ScanResult {
   readonly skipped: readonly ImportSkip[];
 }
 
+/** Wynik skanu jednego roota razem z rootem, z ktorego pochodzi. */
+export interface RootScan {
+  readonly root: DetectedRoot;
+  readonly result: ScanResult;
+}
+
 export interface ToolAdapter {
   readonly id: ToolId;
   readonly displayName: string;
@@ -63,6 +69,12 @@ export interface ToolAdapter {
   readonly rootKinds: readonly RootKind[];
   /** Skan jednego roota. Nie modyfikuje zrodla; blad jednego pliku nie przerywa skanu. */
   scan(root: DetectedRoot, reader: SourceReader): Promise<ScanResult>;
+  /**
+   * Opcjonalny krok po skanie wszystkich rootow jednego narzedzia, dla zaleznosci miedzy rootami
+   * (np. agent w jednym roocie, rejestracja w drugim). Zwraca tyle wynikow, ile dostal, w tej
+   * samej kolejnosci. Czyta wylacznie przez `reader`.
+   */
+  finalize?(scans: readonly RootScan[], reader: SourceReader): Promise<readonly ScanResult[]>;
 }
 
 /** Warstwa wykrywania lokalizacji (ADR 0022). Jedyne miejsce, ktore zna sciezki narzedzi. */
