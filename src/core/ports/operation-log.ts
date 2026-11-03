@@ -1,6 +1,13 @@
 import type { ItemId, ItemKind, Sha256, Timestamp } from '../model/item';
 
-export type OperationType = 'create' | 'update' | 'delete' | 'adopt-disk' | 'restore';
+export type OperationType =
+  | 'create'
+  | 'update'
+  | 'delete'
+  | 'adopt-disk'
+  | 'restore'
+  /** Eksport do konfiguracji narzedzia przez WriteGate (ADR 0012). */
+  | 'export';
 
 export interface OperationState {
   readonly revision: number;

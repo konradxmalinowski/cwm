@@ -139,7 +139,10 @@ function start(): void {
       console.error('[uasm] biblioteka niedostepna:', library.failure);
     if (library.service !== null) {
       importService = startImport(library.service, logImportError);
-      exportService = startExport(library.service, logExportError);
+      exportService = startExport(library.service, logExportError, {
+        userDataDir: userData,
+        indexStore: () => indexState.store,
+      });
     }
 
     const dbPath = databaseFile(userData);
