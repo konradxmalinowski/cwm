@@ -54,6 +54,8 @@ export const IMPLEMENTED_CHANNELS = [
   'import:detect',
   'import:scan',
   'import:apply',
+  'export:plan',
+  'export:apply',
   'diagnostics:report',
 ] as const;
 

@@ -1,6 +1,7 @@
 import { app, ipcMain, BrowserWindow } from 'electron';
 
 import type { IndexStartupInfo } from '../core/model/index-health';
+import type { ExportService } from '../core/services/export/export-service';
 import type { ImportService } from '../core/services/import/import-service';
 import type { LibraryService } from '../core/services/library/library-service';
 import { IndexStoreOpenError, SqliteIndexStore } from '../infra/db/index-store';
@@ -11,9 +12,11 @@ import { startIndex, type IndexOpenFailure } from './bootstrap/index-startup';
 import { handleAppScheme, registerAppScheme } from './bootstrap/protocol';
 import { blockOutboundNetwork, denyAllPermissions, hardenWebContents } from './bootstrap/security';
 import { createMainWindow } from './bootstrap/window';
+import { startExport } from './bootstrap/export';
 import { startImport } from './bootstrap/import';
 import { startLibrary } from './bootstrap/library';
 import { registerDiagnosticsHandler, type IndexState } from './ipc/handlers/diagnostics';
+import { registerExportHandlers } from './ipc/handlers/export';
 import { registerImportHandlers } from './ipc/handlers/import';
 import { registerLibraryHandlers } from './ipc/handlers/library';
 import { IpcRegistry } from './ipc/registry';
@@ -25,10 +28,18 @@ app.enableSandbox();
 let indexState: IndexState = { store: null, info: { outcome: 'refused' } };
 let libraryService: LibraryService | null = null;
 let importService: ImportService | null = null;
+let exportService: ExportService | null = null;
 
 function logImportError(error: unknown): void {
   console.error(
     '[uasm] nieoczekiwany blad importu:',
+    error instanceof Error ? error.name : 'nieznany',
+  );
+}
+
+function logExportError(error: unknown): void {
+  console.error(
+    '[uasm] nieoczekiwany blad eksportu:',
     error instanceof Error ? error.name : 'nieznany',
   );
 }
@@ -107,6 +118,10 @@ function start(): void {
       service: () => importService,
       logUnexpected: logImportError,
     });
+    registerExportHandlers(registry, {
+      service: () => exportService,
+      logUnexpected: logExportError,
+    });
     registry.assertImplementedRegistered();
 
     // Okno powstaje PRZED otwarciem indeksu (ADR 0029 punkt 3). Odmowa startu
@@ -124,6 +139,7 @@ function start(): void {
       console.error('[uasm] biblioteka niedostepna:', library.failure);
     if (library.service !== null) {
       importService = startImport(library.service, logImportError);
+      exportService = startExport(library.service, logExportError);
     }
 
     const dbPath = databaseFile(userData);

@@ -112,10 +112,10 @@ test('kanal z listy bez handlera odrzuca blad, zamiast udawac wynik', async () =
   try {
     const result = await page.evaluate(async () => {
       const bridge = (globalThis as Record<string, unknown>)['uasm'] as {
-        export: { plan: () => Promise<unknown> };
+        sync: { plan: () => Promise<unknown> };
       };
       try {
-        await bridge.export.plan();
+        await bridge.sync.plan();
         return 'resolved';
       } catch (error: unknown) {
         return error instanceof Error ? error.message : 'unknown';
