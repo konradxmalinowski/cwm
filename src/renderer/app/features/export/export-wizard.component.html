@@ -1,0 +1,724 @@
+<section
+  class="view"
+  aria-labelledby="export-heading"
+  [attr.aria-busy]="phase() === 'planning' || phase() === 'applying' || refreshing()"
+>
+  <header class="view__head">
+    <p class="view__context">{{ stepLabel() }}</p>
+    <h1 class="view__sentence" id="export-heading" tabindex="-1">{{ sentence() }}</h1>
+    @switch (phase()) {
+      @case ('select') {
+        @if (items().status === 'ready') {
+          <p class="view__sub">
+            Na tym kroku nic się nie zapisuje. Najpierw zobaczysz plan: każdy plik, który powstanie
+            albo zostanie nadpisany.
+          </p>
+        }
+      }
+      @case ('plan') {
+        <p class="view__sub">
+          Eksport nigdy niczego nie usuwa z narzędzia. Pliki, których nie ma w planie, zostają tak,
+          jak są.
+        </p>
+      }
+    }
+  </header>
+
+  @switch (phase()) {
+    <!-- Krok 1: wybor -->
+    @case ('select') {
+      @if (planError(); as message) {
+        <div class="notice" role="alert" data-testid="export-plan-error">
+          <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+          <p class="notice__text">Wybór został zachowany. Możesz spróbować jeszcze raz.</p>
+          <p class="row-actions">
+            <button type="button" class="btn" (click)="preparePlan()">Spróbuj ponownie</button>
+          </p>
+        </div>
+      }
+
+      @let state = items();
+      @if (state.status === 'loading') {
+        <div class="skeleton" aria-hidden="true" data-testid="export-items-loading">
+          @for (row of [1, 2, 3, 4, 5]; track row) {
+            <div class="skeleton__row">
+              <span class="skeleton__bar skeleton__bar--s"></span>
+              <span class="skeleton__bar skeleton__bar--m"></span>
+              <span class="skeleton__bar skeleton__bar--l"></span>
+            </div>
+          }
+        </div>
+        <p class="sr-only" role="status">Wczytuję elementy biblioteki.</p>
+      } @else if (state.status === 'error') {
+        <div class="notice" role="alert" data-testid="export-items-error">
+          <p class="notice__text"><span class="notice__label">Błąd.</span> {{ state.message }}</p>
+          <p class="row-actions">
+            <button type="button" class="btn" (click)="retryItems()">Spróbuj ponownie</button>
+          </p>
+        </div>
+      } @else if (state.total === 0 && !filtered()) {
+        <div class="empty" data-testid="export-empty-library">
+          <p class="section__title">Nie ma tu jeszcze żadnego elementu.</p>
+          <p>
+            Eksport przenosi elementy biblioteki do konfiguracji narzędzia. Zaimportuj je z Claude
+            Code albo Codeksa, albo utwórz pierwszy ręcznie.
+          </p>
+          <p class="row-actions">
+            <a class="btn btn--primary" [href]="importHref">Zaimportuj elementy</a>
+            <a class="btn" [href]="newHref">Utwórz pierwszy element</a>
+          </p>
+        </div>
+      } @else {
+        <fieldset class="export-tool">
+          <legend class="section__title">Narzędzie docelowe</legend>
+          <div class="export-tool__options">
+            @for (option of tools; track option.value) {
+              <label class="export-tool__option">
+                <input
+                  type="radio"
+                  name="export-tool"
+                  [value]="option.value"
+                  [checked]="tool() === option.value"
+                  [attr.data-testid]="'export-tool-' + option.value"
+                  (change)="onTool(option.value)"
+                />
+                <span>{{ option.label }}</span>
+              </label>
+            }
+          </div>
+        </fieldset>
+
+        <section class="section" aria-labelledby="export-items-heading">
+          <h2 class="section__title" id="export-items-heading">
+            Elementy
+            <span class="group__count">{{ state.total }}</span>
+          </h2>
+
+          <div class="toolbar" role="search">
+            <div class="field toolbar__grow">
+              <label class="field__label" for="export-query">Szukaj w bibliotece</label>
+              <input
+                id="export-query"
+                class="control"
+                type="search"
+                autocomplete="off"
+                [value]="query()"
+                (input)="onQuery($any($event.target).value)"
+              />
+            </div>
+            @if (filtered()) {
+              <button type="button" class="btn" (click)="clearQuery()">Wyczyść filtr</button>
+            }
+            <div class="row-actions">
+              <button
+                type="button"
+                class="btn"
+                data-testid="export-select-all"
+                [disabled]="state.items.length === 0 || allVisibleSelected()"
+                (click)="selectAllVisible()"
+              >
+                Zaznacz wszystkie
+              </button>
+              <button
+                type="button"
+                class="btn"
+                [disabled]="selectedCount() === 0"
+                (click)="clearSelection()"
+              >
+                Odznacz wszystkie
+              </button>
+            </div>
+          </div>
+          <p class="hints">
+            <span><kbd>/</kbd> szukaj</span>
+            <span><kbd>j</kbd> <kbd>k</kbd> następny i poprzedni element</span>
+            <span><kbd>Spacja</kbd> zaznacz albo odznacz</span>
+          </p>
+
+          @if (state.items.length === 0) {
+            <div class="empty" data-testid="export-no-match">
+              <p>Nic nie pasuje do tego zapytania. Zmień je albo wyczyść filtr.</p>
+            </div>
+          } @else {
+            <ul class="cands" data-testid="export-items">
+              @for (item of state.items; track item.id) {
+                <li class="cand" data-testid="export-item" [attr.data-slug]="item.slug">
+                  <div class="cand__box">
+                    <input
+                      type="checkbox"
+                      data-export-nav
+                      [id]="'export-pick-' + item.id"
+                      [checked]="selected().has(item.id)"
+                      [attr.aria-labelledby]="'export-title-' + item.id"
+                      (change)="toggleItem(item.id, $any($event.target).checked)"
+                    />
+                  </div>
+                  <div class="cand__body">
+                    <p class="cand__title">
+                      <label [id]="'export-title-' + item.id" [for]="'export-pick-' + item.id">{{
+                        item.title
+                      }}</label>
+                    </p>
+                    <p class="cand__meta">
+                      <span>{{ kindLabel(item.kind) }}</span>
+                      <span class="mono">{{ item.slug }}</span>
+                    </p>
+                    @if (item.description !== '') {
+                      <p class="cand__desc">{{ item.description }}</p>
+                    }
+                  </div>
+                </li>
+              }
+            </ul>
+          }
+        </section>
+
+        <div class="import-total" data-testid="export-select-total">
+          <p class="import-total__count">
+            <span
+              class="import-total__num"
+              [class.import-total__num--zero]="selectedCount() === 0"
+              >{{ selectedCount() }}</span
+            >
+            <span>
+              {{
+                plural(
+                  selectedCount(),
+                  'wybrany element',
+                  'wybrane elementy',
+                  'wybranych elementów'
+                )
+              }}
+              @if (hiddenSelected() > 0) {
+                (w tym {{ hiddenSelected() }} poza bieżącym wynikiem wyszukiwania)
+              }
+            </span>
+          </p>
+          <p class="sr-only" role="status">Wybrano {{ selectedCount() }}.</p>
+          <div class="row-actions">
+            <button
+              type="button"
+              class="btn btn--primary"
+              data-testid="export-prepare"
+              [disabled]="!canPlan()"
+              [attr.aria-describedby]="canPlan() ? null : 'export-prepare-hint'"
+              (click)="preparePlan()"
+            >
+              Przygotuj plan
+            </button>
+            @if (!canPlan()) {
+              <span class="view__sub" id="export-prepare-hint">
+                @if (tool() === null && selectedCount() === 0) {
+                  Wybierz narzędzie i co najmniej jeden element.
+                } @else if (tool() === null) {
+                  Wybierz narzędzie docelowe.
+                } @else {
+                  Zaznacz co najmniej jeden element.
+                }
+              </span>
+            } @else {
+              <span class="view__sub">Plan pokaże, co się stanie. Nic nie zostanie zapisane.</span>
+            }
+          </div>
+        </div>
+      }
+    }
+
+    @case ('planning') {
+      <div class="skeleton" aria-hidden="true" data-testid="export-plan-loading">
+        @for (row of [1, 2, 3, 4]; track row) {
+          <div class="skeleton__row">
+            <span class="skeleton__bar skeleton__bar--s"></span>
+            <span class="skeleton__bar skeleton__bar--l"></span>
+          </div>
+        }
+      </div>
+      <p role="status">
+        Porównuję bibliotekę z plikami w {{ toolLocative() }}. Niczego nie zapisuję.
+      </p>
+      <p class="row-actions">
+        <button type="button" class="btn" (click)="cancelPlanning()">Anuluj</button>
+      </p>
+    }
+
+    <!-- Krok 2: plan -->
+    @case ('plan') {
+      @if (plan(); as p) {
+        @if (counts(); as c) {
+          @if (applyError(); as message) {
+            <div class="notice" role="alert" data-testid="export-apply-error">
+              <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+              <p class="notice__text">
+                Zapis nie został potwierdzony. Przygotuj plan od nowa, żeby zobaczyć aktualny stan
+                plików, zanim spróbujesz jeszcze raz.
+              </p>
+              <p class="row-actions">
+                <button type="button" class="btn" (click)="backToSelection()">
+                  Wróć do wyboru
+                </button>
+              </p>
+            </div>
+          }
+
+          @if (p.toolMissing) {
+            <div class="notice" role="alert" data-testid="export-tool-missing">
+              <p class="notice__text">
+                <span class="notice__label">Zablokowane.</span> Nie znaleziono katalogu narzędzia
+                {{ planTool() }} na tym komputerze. Zainstaluj albo uruchom narzędzie przynajmniej
+                raz, a potem przygotuj plan jeszcze raz. Aplikacja nie tworzy konfiguracji narzędzia
+                od zera.
+              </p>
+            </div>
+          }
+
+          <div class="stats" data-testid="export-stats">
+            <p class="stat" [class.stat--zero]="c.create === 0">
+              <span class="stat__num">{{ c.create }}</span>
+              <span class="stat__label">Utworzy</span>
+            </p>
+            <p
+              class="stat"
+              [class.stat--zero]="c.modify === 0"
+              [class.stat--overwrite]="c.modify > 0"
+            >
+              <span class="stat__num">{{ c.modify }}</span>
+              <span class="stat__label">Nadpisze</span>
+            </p>
+            <p class="stat" [class.stat--zero]="c.link === 0">
+              <span class="stat__num">{{ c.link }}</span>
+              <span class="stat__label">Dowiąże</span>
+            </p>
+            <p class="stat" [class.stat--zero]="c.unchanged === 0">
+              <span class="stat__num">{{ c.unchanged }}</span>
+              <span class="stat__label">Bez zmian</span>
+            </p>
+          </div>
+
+          @if (p.verdicts.length > 0) {
+            <section class="section" aria-labelledby="plan-compat" data-testid="export-verdicts">
+              <h2 class="section__title" id="plan-compat">
+                Zgodność
+                <span class="group__count">{{ p.verdicts.length }}</span>
+              </h2>
+              <p class="view__sub">
+                Wynik dla każdego elementu: co przejdzie bez zmian, co zginie przy konwersji i co
+                aplikacja dopisze.
+              </p>
+              <ul class="verdicts">
+                @for (v of p.verdicts; track v.itemId) {
+                  <li class="verdict" data-testid="export-verdict" [attr.data-level]="v.level">
+                    <div class="verdict__head">
+                      <p class="verdict__title">{{ v.title }}</p>
+                      <span class="lvl" [attr.data-level]="v.level">
+                        <span class="segs" aria-hidden="true">
+                          @for (slot of segmentSlots; track slot) {
+                            <i [class.on]="slot < levels[v.level].segments"></i>
+                          }
+                        </span>
+                        <span class="lvl__word">{{ levels[v.level].label }}</span>
+                        <span class="sr-only">, {{ levels[v.level].segments }} z 4</span>
+                      </span>
+                    </div>
+                    <p class="cand__meta">
+                      <span>{{ kindLabel(v.kind) }}</span>
+                      <span class="mono">{{ v.slug }}</span>
+                    </p>
+                    @if (v.reasons.length > 0) {
+                      <ul class="notice__list">
+                        @for (reason of v.reasons; track $index) {
+                          <li>{{ reason }}</li>
+                        }
+                      </ul>
+                    }
+                    @if (v.lostAttributes.length > 0) {
+                      <p class="verdict__line">
+                        <span class="verdict__k">Zginie przy eksporcie</span>
+                        <span class="mono">{{ v.lostAttributes.join(', ') }}</span>
+                      </p>
+                    }
+                    @if (v.addedAttributes.length > 0) {
+                      <p class="verdict__line">
+                        <span class="verdict__k">Aplikacja dopisze</span>
+                        <span class="mono">{{ v.addedAttributes.join(', ') }}</span>
+                      </p>
+                    }
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          @if (p.entries.length > 0) {
+            <section class="section" aria-labelledby="plan-entries" data-testid="export-entries">
+              <h2 class="section__title" id="plan-entries">
+                Pliki
+                <span class="group__count">{{ p.entries.length }}</span>
+              </h2>
+              <p class="hints">
+                <span><kbd>j</kbd> <kbd>k</kbd> następny i poprzedni podgląd</span>
+                <span><kbd>Enter</kbd> rozwiń albo zwiń</span>
+              </p>
+              <ul class="entries">
+                @for (e of p.entries; track e.entryId) {
+                  <li
+                    class="entry"
+                    data-testid="export-entry"
+                    [style.--i]="$index"
+                    [attr.data-action]="e.action"
+                    [attr.data-blocked]="e.recoverability === 'blocked'"
+                    [class.entry--overwrite]="
+                      e.action === 'modify' && e.recoverability !== 'blocked'
+                    "
+                    [class.entry--blocked]="e.recoverability === 'blocked'"
+                    [class.entry--unchanged]="e.action === 'unchanged'"
+                  >
+                    <span class="entry__mark" aria-hidden="true">{{ actionMark[e.action] }}</span>
+                    <div class="entry__body">
+                      <p class="entry__path mono">
+                        <span class="sr-only">{{ actionLabel[e.action] }}: </span>{{ pathOf(e) }}
+                      </p>
+                      <p class="cand__meta">
+                        <span class="entry__action">{{ actionLabel[e.action] }}</span>
+                        <span>{{ titlesOf(e.itemIds) }}</span>
+                      </p>
+
+                      @if (e.recoverability === 'blocked') {
+                        <div class="entry__blocked" data-testid="export-entry-blocked">
+                          <p>
+                            <span class="notice__label">Zablokowane.</span>
+                            {{
+                              e.blockedReason ??
+                                'Aplikacja nie potrafi zabezpieczyć tego pliku kopią.'
+                            }}
+                          </p>
+                          <p class="view__sub">
+                            Aplikacja odmawia zapisu zamiast ryzykować plik bez kopii.
+                          </p>
+                        </div>
+                      } @else if (e.action === 'modify') {
+                        <p class="signal-overwrite" data-testid="export-overwrite">
+                          <span><strong>Nadpisze</strong> istniejący plik.</span>
+                          <span>Poprzednia treść trafi najpierw do kopii zapasowej.</span>
+                        </p>
+                      }
+
+                      @if (e.action !== 'unchanged') {
+                        <p class="entry__line">
+                          <span class="entry__k">Zakres edycji</span>
+                          <span>{{ scopeLabel[e.scope] }}</span>
+                        </p>
+                      }
+                      @if (e.materialization !== null) {
+                        @let m = materialization[e.materialization];
+                        <p class="entry__line" data-testid="export-materialization">
+                          <span class="entry__k">Tryb</span>
+                          <span
+                            ><strong>{{ m.label }}.</strong> {{ m.effect }}</span
+                          >
+                        </p>
+                      }
+
+                      @if (e.warnings.length > 0) {
+                        <div class="entry__warn">
+                          <p><span class="notice__label">Ostrzeżenia:</span></p>
+                          <ul class="notice__list">
+                            @for (w of e.warnings; track $index) {
+                              <li>{{ w }}</li>
+                            }
+                          </ul>
+                        </div>
+                      }
+
+                      @if (e.files.length > 0) {
+                        <details class="entry__files">
+                          <summary>
+                            {{ e.files.length }}
+                            {{
+                              plural(
+                                e.files.length,
+                                'plik w tym wpisie',
+                                'pliki w tym wpisie',
+                                'plików w tym wpisie'
+                              )
+                            }}
+                          </summary>
+                          <ul class="mono">
+                            @for (f of e.files; track $index) {
+                              <li>{{ f }}</li>
+                            }
+                          </ul>
+                        </details>
+                      }
+
+                      @if (hasDiff(e)) {
+                        <details
+                          class="entry__diff"
+                          [open]="isOpen(e.entryId)"
+                          (toggle)="onToggle(e.entryId, $event)"
+                        >
+                          <summary data-export-nav>Podgląd zmian</summary>
+                          @if (isOpen(e.entryId)) {
+                            @if (e.after !== null && diffBefore(e) !== null) {
+                              <app-diff-view
+                                [before]="diffBefore(e) ?? ''"
+                                [after]="e.after"
+                                [path]="pathOf(e)"
+                              />
+                            } @else {
+                              <p class="entry__nopreview" data-testid="export-no-preview">
+                                podgląd niedostępny (plik binarny albo za duży)
+                              </p>
+                            }
+                          }
+                        </details>
+                      }
+                    </div>
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          @if (p.refusals.length > 0) {
+            <section class="section" aria-labelledby="plan-refusals" data-testid="export-refusals">
+              <h2 class="section__title" id="plan-refusals">
+                Odmowy
+                <span class="group__count">{{ p.refusals.length }}</span>
+              </h2>
+              <p class="view__sub">
+                Z tych elementów nie powstanie żaden plik w narzędziu {{ planTool() }}.
+              </p>
+              <ul class="skipped">
+                @for (r of p.refusals; track r.itemId) {
+                  <li class="skipped__row" data-testid="export-refusal">
+                    <p>
+                      <strong>{{ titleOf(r.itemId) }}</strong>
+                      <span class="view__sub">
+                        ({{ kindLabel(r.kind) }}, <span class="mono">{{ r.slug }}</span
+                        >)</span
+                      >
+                    </p>
+                    <p>
+                      <span class="notice__label">Nie powstanie żaden plik.</span> {{ r.reason }}
+                    </p>
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          @if (p.conflicts.length > 0) {
+            <section
+              class="section"
+              aria-labelledby="plan-conflicts"
+              data-testid="export-conflicts"
+            >
+              <h2 class="section__title" id="plan-conflicts">
+                Konflikty
+                <span class="group__count">{{ p.conflicts.length }}</span>
+              </h2>
+              <p class="view__sub">
+                Dwa elementy chcą zapisać ten sam plik. Plan z konfliktem nie jest zapisywany.
+              </p>
+              <ul class="skipped">
+                @for (k of p.conflicts; track $index) {
+                  <li class="skipped__row entry--blocked-row" data-testid="export-conflict">
+                    <p class="mono">{{ k.relPath }}</p>
+                    <p>{{ titlesOf(k.itemIds) }}</p>
+                    <p>{{ k.reason }}</p>
+                  </li>
+                }
+              </ul>
+              <div class="notice" data-testid="export-conflict-help">
+                <p class="notice__text">
+                  <span class="notice__label">Co zrobić.</span> Wróć do wyboru i odznacz jeden z
+                  elementów z każdego konfliktu, a potem przygotuj plan jeszcze raz. Drugi element
+                  możesz wyeksportować osobno.
+                </p>
+              </div>
+            </section>
+          }
+
+          @if (p.orphans.length > 0) {
+            <section class="section" aria-labelledby="plan-orphans" data-testid="export-orphans">
+              <h2 class="section__title" id="plan-orphans">
+                Pliki bez odpowiednika w bibliotece
+                <span class="group__count">{{ p.orphans.length }}</span>
+              </h2>
+              <p class="view__sub">
+                Tylko informacja. Aplikacja nie usuwa tych plików i niczego w nich nie zmienia.
+              </p>
+              <ul class="skipped">
+                @for (o of p.orphans; track $index) {
+                  <li class="skipped__row" data-testid="export-orphan">
+                    <p class="mono">{{ pathOf(o) }}</p>
+                    <p>{{ o.reason }}</p>
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          <div class="import-total" data-testid="export-total">
+            <p class="import-total__count">
+              <span class="import-total__num" [class.import-total__num--zero]="c.changes === 0">{{
+                c.changes
+              }}</span>
+              <span
+                >{{
+                  plural(
+                    c.changes,
+                    'plik do zapisania',
+                    'pliki do zapisania',
+                    'plików do zapisania'
+                  )
+                }}
+                w {{ planToolLocative() }}</span
+              >
+            </p>
+            @if (c.modify > 0) {
+              <p class="signal-overwrite" data-testid="export-overwrite-total">
+                <span
+                  ><strong>Nadpisze</strong> {{ c.modify }}
+                  {{
+                    plural(c.modify, 'istniejący plik', 'istniejące pliki', 'istniejących plików')
+                  }}.</span
+                >
+                <span>Przed zapisem aplikacja zrobi kopię zapasową każdego z nich.</span>
+              </p>
+            }
+            @if (blockerList().length > 0) {
+              <div id="export-blockers" data-testid="export-blockers">
+                <p class="notice__label">Dlaczego zapis jest nieaktywny:</p>
+                <ul class="notice__list">
+                  @for (reason of blockerList(); track $index) {
+                    <li>{{ reason }}</li>
+                  }
+                </ul>
+              </div>
+            }
+            <div class="row-actions">
+              <button
+                type="button"
+                class="btn btn--primary"
+                data-testid="export-apply"
+                [disabled]="!p.applicable"
+                [attr.aria-describedby]="p.applicable ? null : 'export-blockers'"
+                (click)="openConfirm()"
+              >
+                Zapisz zmiany w {{ planToolLocative() }}
+              </button>
+              <button
+                type="button"
+                class="btn"
+                data-testid="export-back"
+                (click)="backToSelection()"
+              >
+                Wróć do wyboru
+              </button>
+            </div>
+          </div>
+        }
+      }
+    }
+
+    @case ('applying') {
+      <div class="skeleton" aria-hidden="true" data-testid="export-apply-loading">
+        @for (row of [1, 2, 3]; track row) {
+          <div class="skeleton__row">
+            <span class="skeleton__bar skeleton__bar--m"></span>
+            <span class="skeleton__bar skeleton__bar--l"></span>
+          </div>
+        }
+      </div>
+      <p role="status">
+        Zapisuję pliki w {{ planToolLocative() }}. Nie zamykaj aplikacji, dopóki zapis się nie
+        skończy.
+      </p>
+    }
+
+    <!-- Krok 3: wynik -->
+    @case ('result') {
+      @if (result(); as r) {
+        <div class="report" data-testid="export-result">
+          @if (r.rolledBack) {
+            <div class="notice" role="alert" data-testid="export-rolled-back">
+              <p class="notice__text">
+                <span class="notice__label">Błąd.</span> Zapis nie przeszedł do końca. Aplikacja
+                wycofała zmiany i przywróciła pliki do stanu sprzed zapisu.
+              </p>
+              <p class="notice__text">
+                Błąd jest odwracalny: nic nie zostało po drodze. Możesz przygotować plan od nowa.
+              </p>
+            </div>
+          } @else if (resultUnrestored()) {
+            <div class="notice notice--destructive" role="alert" data-testid="export-not-restored">
+              <p class="notice__text">
+                <span class="notice__label notice__label--destructive">Błąd.</span> Aplikacja nie
+                przywróciła w pełni poprzedniego stanu plików. Część plików mogła zostać zmieniona.
+              </p>
+              <p class="notice__text">
+                Poprzednią treść zabezpieczono w kopii zapasowej. Przywrócenie wymaga osobnego kroku
+                z Twojej strony.
+              </p>
+            </div>
+          }
+
+          <p class="verify" data-testid="export-verified">
+            <span class="notice__label">Weryfikacja.</span>
+            @if (r.verified) {
+              Aplikacja przeczytała zapisane pliki jeszcze raz i zgadzają się z planem.
+            } @else {
+              Aplikacja nie potwierdziła, że pliki na dysku zgadzają się z planem. Sprawdź je
+              ręcznie.
+            }
+          </p>
+
+          <section class="section" aria-labelledby="res-entries">
+            <h2 class="section__title" id="res-entries">
+              Wpisy
+              <span class="group__count">{{ r.entries.length }}</span>
+            </h2>
+            <ul class="results">
+              @for (entry of r.entries; track entry.entryId) {
+                <li
+                  class="results__row"
+                  data-testid="export-result-entry"
+                  [attr.data-outcome]="entry.outcome"
+                >
+                  <span class="results__word">{{ outcomeLabel[entry.outcome] }}</span>
+                  <span class="mono">{{ entryPath(entry.entryId) }}</span>
+                  @if (entry.message !== null) {
+                    <span class="view__sub">{{ entry.message }}</span>
+                  }
+                </li>
+              }
+            </ul>
+          </section>
+
+          <p class="view__sub" data-testid="export-backup">
+            Identyfikator kopii zapasowej: <span class="mono">{{ r.backupId }}</span>
+          </p>
+        </div>
+
+        <p class="row-actions">
+          <a class="btn btn--primary" data-testid="export-to-library" [href]="libraryHref"
+            >Wróć do biblioteki</a
+          >
+          <button type="button" class="btn" (click)="restart()">Przygotuj kolejny eksport</button>
+        </p>
+      }
+    }
+  }
+</section>
+
+@if (confirming()) {
+  @if (counts(); as c) {
+    <app-export-confirm-dialog
+      [toolName]="planToolLocative()"
+      [counts]="c"
+      (confirmed)="apply()"
+      (cancelled)="cancelConfirm()"
+    />
+  }
+}

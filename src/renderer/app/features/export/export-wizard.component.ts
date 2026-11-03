@@ -1,0 +1,488 @@
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  effect,
+  inject,
+  input,
+  signal,
+} from '@angular/core';
+
+import type {
+  ExportApplyDto,
+  ExportPlanDto,
+  PlanEntryDto,
+} from '../../../../shared/ipc/export-contract';
+import type { ToolIdDto } from '../../../../shared/ipc/import-contract';
+import type { ItemSummaryDto } from '../../../../shared/ipc/library-contract';
+import { ExportApiService } from '../../core/ipc/export-api.service';
+import { LibraryApiService } from '../../core/ipc/library-api.service';
+import { kindLabel, plural } from '../../core/labels';
+import { ROUTES } from '../../core/routing/route';
+import { ExportSelectionService } from '../../core/state/export-selection.service';
+import { joinRootPath, toolLabel } from '../import/import-model';
+import { DiffViewComponent } from './diff-view.component';
+import { ExportConfirmDialogComponent } from './export-confirm-dialog.component';
+import {
+  ACTION_LABEL,
+  ACTION_MARK,
+  LEVELS,
+  MATERIALIZATION,
+  OUTCOME_LABEL,
+  SCOPE_LABEL,
+  SEGMENT_SLOTS,
+  TOOLS,
+  blockers,
+  countPlan,
+  toolLocative,
+} from './export-model';
+
+type ItemsState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'error'; readonly message: string }
+  | { readonly status: 'ready'; readonly items: readonly ItemSummaryDto[]; readonly total: number };
+
+type Phase = 'select' | 'planning' | 'plan' | 'applying' | 'result';
+
+const SEARCH_DEBOUNCE_MS = 250;
+
+@Component({
+  selector: 'app-export-wizard',
+  imports: [DiffViewComponent, ExportConfirmDialogComponent],
+  templateUrl: './export-wizard.component.html',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { '(document:keydown)': 'onKeydown($event)' },
+})
+export class ExportWizardComponent {
+  private readonly exportApi = inject(ExportApiService);
+  private readonly libraryApi = inject(LibraryApiService);
+  private readonly selection = inject(ExportSelectionService);
+
+  /** Z trasy `#/eksport/<id>`: element, od ktorego uzytkownik zaczal. */
+  readonly itemId = input<string | null>(null);
+
+  protected readonly libraryHref = `#${ROUTES.library}`;
+  protected readonly importHref = `#${ROUTES.import}`;
+  protected readonly newHref = `#${ROUTES.libraryNew}`;
+
+  protected readonly tools = TOOLS;
+  protected readonly levels = LEVELS;
+  protected readonly segmentSlots = SEGMENT_SLOTS;
+  protected readonly actionLabel = ACTION_LABEL;
+  protected readonly actionMark = ACTION_MARK;
+  protected readonly scopeLabel = SCOPE_LABEL;
+  protected readonly materialization = MATERIALIZATION;
+  protected readonly outcomeLabel = OUTCOME_LABEL;
+  protected readonly kindLabel = kindLabel;
+  protected readonly toolLabel = toolLabel;
+  protected readonly plural = plural;
+
+  protected readonly phase = signal<Phase>('select');
+  protected readonly tool = signal<ToolIdDto | null>(null);
+  protected readonly items = signal<ItemsState>({ status: 'loading' });
+  protected readonly refreshing = signal(false);
+  protected readonly query = signal('');
+  protected readonly selected = signal<ReadonlySet<string>>(new Set());
+  protected readonly plan = signal<ExportPlanDto | null>(null);
+  protected readonly planError = signal<string | null>(null);
+  protected readonly applyError = signal<string | null>(null);
+  protected readonly result = signal<ExportApplyDto | null>(null);
+  protected readonly confirming = signal(false);
+  protected readonly openEntries = signal<ReadonlySet<string>>(new Set());
+
+  private seq = 0;
+  private itemsSeq = 0;
+  private debounce: ReturnType<typeof setTimeout> | undefined;
+  private preselect: readonly string[] = [];
+  private firstLoadDone = false;
+
+  protected readonly filtered = computed(() => this.query().trim() !== '');
+
+  protected readonly visibleItems = computed(() => {
+    const state = this.items();
+    return state.status === 'ready' ? state.items : [];
+  });
+
+  protected readonly selectedCount = computed(() => this.selected().size);
+
+  protected readonly selectedVisible = computed(
+    () => this.visibleItems().filter((item) => this.selected().has(item.id)).length,
+  );
+
+  protected readonly hiddenSelected = computed(() => this.selectedCount() - this.selectedVisible());
+
+  protected readonly allVisibleSelected = computed(
+    () => this.visibleItems().length > 0 && this.selectedVisible() === this.visibleItems().length,
+  );
+
+  protected readonly canPlan = computed(
+    () => this.tool() !== null && this.selectedCount() > 0 && this.phase() === 'select',
+  );
+
+  protected readonly toolLocative = computed(() => {
+    const tool = this.tool();
+    return tool === null ? '' : toolLocative(tool);
+  });
+
+  protected readonly planTool = computed(() => {
+    const plan = this.plan();
+    return plan === null ? '' : toolLabel(plan.tool);
+  });
+
+  protected readonly planToolLocative = computed(() => {
+    const plan = this.plan();
+    return plan === null ? '' : toolLocative(plan.tool);
+  });
+
+  protected readonly counts = computed(() => {
+    const plan = this.plan();
+    return plan === null ? null : countPlan(plan);
+  });
+
+  protected readonly blockerList = computed(() => {
+    const plan = this.plan();
+    const counts = this.counts();
+    return plan === null || counts === null ? [] : blockers(plan, counts);
+  });
+
+  private readonly titlesById = computed(() => {
+    const map = new Map<string, string>();
+    for (const item of this.visibleItems()) map.set(item.id, item.title);
+    for (const verdict of this.plan()?.verdicts ?? []) map.set(verdict.itemId, verdict.title);
+    for (const refusal of this.plan()?.refusals ?? []) {
+      if (!map.has(refusal.itemId)) map.set(refusal.itemId, refusal.slug);
+    }
+    return map;
+  });
+
+  private readonly entriesById = computed(
+    () => new Map((this.plan()?.entries ?? []).map((entry) => [entry.entryId, entry])),
+  );
+
+  protected readonly sentence = computed(() => {
+    switch (this.phase()) {
+      case 'select': {
+        const state = this.items();
+        if (state.status === 'loading') return 'Wczytuję bibliotekę.';
+        if (state.status === 'error') return 'Nie udało się wczytać biblioteki.';
+        if (state.total === 0 && !this.filtered())
+          return 'Biblioteka jest pusta, więc nie ma czego eksportować.';
+        return 'Wybierz narzędzie i elementy, które trafią do jego konfiguracji.';
+      }
+      case 'planning':
+        return 'Przygotowuję plan zapisu. Niczego jeszcze nie zapisuję.';
+      case 'plan': {
+        const plan = this.plan();
+        const counts = this.counts();
+        if (plan === null || counts === null) return '';
+        if (plan.toolMissing) {
+          return `Nie ma narzędzia ${this.planTool()} na tym komputerze, więc eksport jest niemożliwy.`;
+        }
+        if (plan.conflicts.length > 0) {
+          return 'Plan ma konflikty, więc nie da się go zapisać.';
+        }
+        if (plan.applicable) {
+          const n = counts.changes;
+          return `Zapis zmieni ${n} ${plural(n, 'plik', 'pliki', 'plików')} w ${this.planToolLocative()}.`;
+        }
+        if (counts.blocked > 0)
+          return 'Część plików jest zablokowana, więc nie da się zapisać planu.';
+        if (plan.entries.length > 0 && counts.changes === 0) {
+          return 'Cel jest zgodny z biblioteką, więc zapis nie zmieni żadnego pliku.';
+        }
+        return 'Z tego wyboru nie powstanie żaden plik.';
+      }
+      case 'applying':
+        return `Zapisuję zmiany w ${this.planToolLocative()}.`;
+      case 'result': {
+        const r = this.result();
+        if (r === null) return '';
+        const failed = r.entries.some((e) => e.outcome === 'failed');
+        if (r.rolledBack)
+          return 'Zapis się nie udał, a aplikacja przywróciła poprzedni stan plików.';
+        if (failed)
+          return 'Zapis się nie udał, a aplikacja nie przywróciła w pełni poprzedniego stanu.';
+        const written = r.entries.filter((e) => e.outcome === 'written').length;
+        if (written === 0) return 'Nic nie zostało zapisane.';
+        return `Zapisano ${written} ${plural(written, 'plik', 'pliki', 'plików')} w ${this.planToolLocative()}.`;
+      }
+    }
+  });
+
+  protected readonly stepLabel = computed(() => {
+    switch (this.phase()) {
+      case 'select':
+      case 'planning':
+        return 'Eksport, krok 1 z 3: wybór';
+      case 'plan':
+      case 'applying':
+        return 'Eksport, krok 2 z 3: plan';
+      case 'result':
+        return 'Eksport, krok 3 z 3: wynik';
+    }
+  });
+
+  /** Wynik w trybie "blad bez wycofania": aplikacja zostawila czesciowy stan. */
+  protected readonly resultUnrestored = computed(() => {
+    const r = this.result();
+    return r !== null && !r.rolledBack && r.entries.some((e) => e.outcome === 'failed');
+  });
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      clearTimeout(this.debounce);
+      this.seq++;
+      this.itemsSeq++;
+    });
+
+    this.preselect = this.selection.take();
+
+    effect(() => {
+      const id = this.itemId();
+      if (id !== null && !this.preselect.includes(id)) this.preselect = [...this.preselect, id];
+    });
+
+    // Po zmianie kroku fokus idzie na zdanie, zeby czytnik ekranu i klawiatura wiedzialy, ze tresc sie zmienila.
+    let first = true;
+    effect(() => {
+      this.phase();
+      if (first) {
+        first = false;
+        return;
+      }
+      setTimeout(() => document.getElementById('export-heading')?.focus(), 0);
+    });
+
+    void this.loadItems();
+  }
+
+  // ---- Krok 1 ----
+
+  protected async loadItems(): Promise<void> {
+    const seq = ++this.itemsSeq;
+    this.refreshing.set(true);
+    const query = this.query().trim();
+    const result = await this.libraryApi.list(query === '' ? {} : { query });
+    if (seq !== this.itemsSeq) return;
+    this.refreshing.set(false);
+    if (!result.ok) {
+      this.items.set({ status: 'error', message: result.error.message });
+      return;
+    }
+    const items = result.value.items;
+    if (!this.firstLoadDone && query === '') {
+      this.firstLoadDone = true;
+      const known = new Set(items.map((item) => item.id));
+      const initial = this.preselect.filter((id) => known.has(id));
+      if (initial.length > 0) this.selected.set(new Set(initial));
+    }
+    this.items.set({ status: 'ready', items, total: items.length });
+  }
+
+  protected retryItems(): void {
+    this.items.set({ status: 'loading' });
+    void this.loadItems();
+  }
+
+  protected onQuery(value: string): void {
+    this.query.set(value);
+    clearTimeout(this.debounce);
+    this.debounce = setTimeout(() => void this.loadItems(), SEARCH_DEBOUNCE_MS);
+  }
+
+  protected clearQuery(): void {
+    this.query.set('');
+    void this.loadItems();
+  }
+
+  protected onTool(value: ToolIdDto): void {
+    this.tool.set(value);
+  }
+
+  protected toggleItem(id: string, checked: boolean): void {
+    const next = new Set(this.selected());
+    if (checked) next.add(id);
+    else next.delete(id);
+    this.selected.set(next);
+  }
+
+  protected selectAllVisible(): void {
+    const next = new Set(this.selected());
+    for (const item of this.visibleItems()) next.add(item.id);
+    this.selected.set(next);
+  }
+
+  protected clearSelection(): void {
+    this.selected.set(new Set());
+  }
+
+  protected itemHref(id: string): string {
+    return `#${ROUTES.libraryItem(id)}`;
+  }
+
+  protected async preparePlan(): Promise<void> {
+    const tool = this.tool();
+    if (tool === null || this.selectedCount() === 0 || this.phase() !== 'select') return;
+    const seq = ++this.seq;
+    this.planError.set(null);
+    this.phase.set('planning');
+    const result = await this.exportApi.plan({ tool, itemIds: [...this.selected()] });
+    if (seq !== this.seq) return;
+    if (!result.ok) {
+      this.planError.set(result.error.message);
+      this.phase.set('select');
+      return;
+    }
+    this.plan.set(result.value);
+    this.applyError.set(null);
+    // Wpisy nadpisujace z podgladem sa od razu rozwiniete: uzytkownik ma zobaczyc, co zniknie.
+    this.openEntries.set(
+      new Set(
+        result.value.entries
+          .filter((e) => e.action === 'modify' && e.before !== null && e.after !== null)
+          .slice(0, 5)
+          .map((e) => e.entryId),
+      ),
+    );
+    this.phase.set('plan');
+  }
+
+  protected cancelPlanning(): void {
+    this.seq++;
+    this.phase.set('select');
+  }
+
+  // ---- Krok 2 ----
+
+  protected backToSelection(): void {
+    this.seq++;
+    this.plan.set(null);
+    this.applyError.set(null);
+    this.confirming.set(false);
+    this.phase.set('select');
+  }
+
+  protected titleOf(itemId: string): string {
+    return this.titlesById().get(itemId) ?? 'Element spoza planu';
+  }
+
+  protected titlesOf(itemIds: readonly string[]): string {
+    return itemIds.map((id) => this.titleOf(id)).join(', ');
+  }
+
+  protected pathOf(entry: { rootLabel: string; relPath: string }): string {
+    return joinRootPath(entry.rootLabel, entry.relPath);
+  }
+
+  protected entryPath(entryId: string): string {
+    const entry = this.entriesById().get(entryId);
+    return entry === undefined ? 'Plik spoza planu' : this.pathOf(entry);
+  }
+
+  protected hasDiff(entry: PlanEntryDto): boolean {
+    return entry.action !== 'link' && entry.action !== 'unchanged';
+  }
+
+  protected diffBefore(entry: PlanEntryDto): string | null {
+    if (entry.before === null && entry.after !== null && entry.action === 'create') return '';
+    return entry.before;
+  }
+
+  protected isOpen(entryId: string): boolean {
+    return this.openEntries().has(entryId);
+  }
+
+  protected onToggle(entryId: string, event: Event): void {
+    const open = (event.target as HTMLDetailsElement).open;
+    const next = new Set(this.openEntries());
+    if (open) next.add(entryId);
+    else next.delete(entryId);
+    this.openEntries.set(next);
+  }
+
+  protected openConfirm(): void {
+    const plan = this.plan();
+    if (plan === null || !plan.applicable || this.phase() !== 'plan') return;
+    this.confirming.set(true);
+  }
+
+  protected cancelConfirm(): void {
+    this.confirming.set(false);
+    setTimeout(
+      () => document.querySelector<HTMLElement>('[data-testid="export-apply"]')?.focus(),
+      0,
+    );
+  }
+
+  protected async apply(): Promise<void> {
+    const plan = this.plan();
+    this.confirming.set(false);
+    if (plan === null || !plan.applicable || this.phase() !== 'plan') return;
+    const seq = ++this.seq;
+    this.applyError.set(null);
+    this.phase.set('applying');
+    const result = await this.exportApi.apply({ planId: plan.planId, approved: true });
+    if (seq !== this.seq) return;
+    if (!result.ok) {
+      this.applyError.set(result.error.message);
+      this.phase.set('plan');
+      return;
+    }
+    this.result.set(result.value);
+    this.phase.set('result');
+  }
+
+  // ---- Krok 3 ----
+
+  protected restart(): void {
+    this.seq++;
+    this.plan.set(null);
+    this.result.set(null);
+    this.applyError.set(null);
+    this.planError.set(null);
+    this.selected.set(new Set());
+    this.confirming.set(false);
+    this.query.set('');
+    this.phase.set('select');
+    void this.loadItems();
+  }
+
+  /** j / k przesuwaja fokus po elementach i wpisach planu (DESIGN.md, Klawiatura). Spacja zaznacza natywnie. */
+  protected onKeydown(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+    const phase = this.phase();
+    if (phase !== 'select' && phase !== 'plan') return;
+    if (document.querySelector('dialog[open]') !== null) return;
+    const target = event.target;
+    if (event.key === '/' && phase === 'select') {
+      if (target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+        return;
+      event.preventDefault();
+      document.getElementById('export-query')?.focus();
+      return;
+    }
+    if (event.key !== 'j' && event.key !== 'k') return;
+    if (target instanceof HTMLElement) {
+      const isTextEntry =
+        target.isContentEditable ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        (target.tagName === 'INPUT' &&
+          !['checkbox', 'radio'].includes((target as HTMLInputElement).type));
+      if (isTextEntry) return;
+    }
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-export-nav]'));
+    if (rows.length === 0) return;
+    event.preventDefault();
+    const current = rows.indexOf(document.activeElement as HTMLElement);
+    const step = event.key === 'j' ? 1 : -1;
+    const next =
+      current === -1
+        ? step === 1
+          ? 0
+          : rows.length - 1
+        : Math.min(rows.length - 1, Math.max(0, current + step));
+    rows[next]?.focus();
+  }
+}

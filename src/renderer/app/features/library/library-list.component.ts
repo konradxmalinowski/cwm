@@ -17,6 +17,8 @@ import type {
 import { LibraryApiService } from '../../core/ipc/library-api.service';
 import { ITEM_KINDS, fileProblemLabel, formatDate, kindLabel, plural } from '../../core/labels';
 import { ROUTES } from '../../core/routing/route';
+import { RouterService } from '../../core/routing/router.service';
+import { ExportSelectionService } from '../../core/state/export-selection.service';
 import { FlashService } from '../../core/state/flash.service';
 import { DeleteDialogComponent } from './delete-dialog.component';
 
@@ -36,6 +38,8 @@ const SEARCH_DEBOUNCE_MS = 250;
 })
 export class LibraryListComponent {
   private readonly api = inject(LibraryApiService);
+  private readonly router = inject(RouterService);
+  private readonly exportSelection = inject(ExportSelectionService);
   protected readonly flash = inject(FlashService);
 
   protected readonly kinds = ITEM_KINDS;
@@ -52,6 +56,7 @@ export class LibraryListComponent {
   protected readonly repairing = signal<string | null>(null);
   protected readonly repairError = signal<{ id: string; message: string } | null>(null);
   protected readonly deleting = signal<string | null>(null);
+  protected readonly exportPicked = signal<ReadonlySet<string>>(new Set());
 
   private requestSeq = 0;
   private debounce: ReturnType<typeof setTimeout> | undefined;
@@ -86,6 +91,17 @@ export class LibraryListComponent {
     return { n, sentence, attention, attentionText: parts.join(', ') };
   });
 
+  protected readonly allPicked = computed(() => {
+    const state = this.state();
+    return (
+      state.status === 'ready' &&
+      state.data.items.length > 0 &&
+      state.data.items.every((item) => this.exportPicked().has(item.id))
+    );
+  });
+
+  protected readonly somePicked = computed(() => this.exportPicked().size > 0 && !this.allPicked());
+
   protected readonly isEmptyLibrary = computed(() => {
     const state = this.state();
     return (
@@ -109,6 +125,25 @@ export class LibraryListComponent {
     return `#${ROUTES.libraryItem(id)}`;
   }
 
+  protected togglePick(id: string, checked: boolean): void {
+    const next = new Set(this.exportPicked());
+    if (checked) next.add(id);
+    else next.delete(id);
+    this.exportPicked.set(next);
+  }
+
+  protected togglePickAll(checked: boolean): void {
+    const state = this.state();
+    if (state.status !== 'ready') return;
+    this.exportPicked.set(checked ? new Set(state.data.items.map((item) => item.id)) : new Set());
+  }
+
+  protected exportPickedItems(): void {
+    if (this.exportPicked().size === 0) return;
+    this.exportSelection.hand([...this.exportPicked()]);
+    this.router.navigate(ROUTES.export);
+  }
+
   protected inconsistentTitle(entry: InconsistentDto): string {
     return entry.slug ?? 'Element bez odczytanej nazwy';
   }
@@ -128,6 +163,12 @@ export class LibraryListComponent {
     });
     if (seq !== this.requestSeq) return;
     this.refreshing.set(false);
+    if (result.ok) {
+      // Zaznaczenie dotyczy tego, co widac: element, ktory zniknal z listy, przestaje byc zaznaczony.
+      const visible = new Set(result.value.items.map((item) => item.id));
+      const kept = [...this.exportPicked()].filter((id) => visible.has(id));
+      if (kept.length !== this.exportPicked().size) this.exportPicked.set(new Set(kept));
+    }
     this.state.set(
       result.ok
         ? { status: 'ready', data: result.value }
@@ -199,6 +240,18 @@ export class LibraryListComponent {
     if (event.key === '/') {
       event.preventDefault();
       document.getElementById('library-query')?.focus();
+      return;
+    }
+    if (
+      event.key === ' ' &&
+      target instanceof HTMLElement &&
+      target.hasAttribute('data-row-link')
+    ) {
+      const id = target.getAttribute('data-item-id');
+      if (id !== null) {
+        event.preventDefault();
+        this.togglePick(id, !this.exportPicked().has(id));
+      }
       return;
     }
     if (event.key !== 'j' && event.key !== 'k') return;

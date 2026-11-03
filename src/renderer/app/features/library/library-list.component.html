@@ -65,12 +65,30 @@
       @if (filtered()) {
         <button type="button" class="btn" (click)="clearFilters()">Wyczyść filtry</button>
       }
-      <a class="btn btn--primary toolbar__end" [href]="newHref">Nowy element</a>
+      <button
+        type="button"
+        class="btn toolbar__end"
+        data-testid="library-export-selected"
+        [disabled]="exportPicked().size === 0"
+        (click)="exportPickedItems()"
+      >
+        Eksportuj zaznaczone
+        @if (exportPicked().size > 0) {
+          ({{ exportPicked().size }})
+        }
+      </button>
+      <a class="btn btn--primary" [href]="newHref">Nowy element</a>
     </div>
     <p class="hints">
       <span><kbd>/</kbd> szukaj</span>
       <span><kbd>j</kbd> <kbd>k</kbd> następny i poprzedni wiersz</span>
       <span><kbd>Enter</kbd> otwórz</span>
+      <span><kbd>Spacja</kbd> zaznacz do eksportu</span>
+    </p>
+    <p class="sr-only" role="status">
+      @if (exportPicked().size > 0) {
+        Zaznaczono do eksportu: {{ exportPicked().size }}.
+      }
     </p>
   }
 
@@ -215,6 +233,17 @@
                 </caption>
                 <thead>
                   <tr>
+                    <th scope="col" class="col-pick">
+                      <input
+                        type="checkbox"
+                        class="pick"
+                        data-testid="library-pick-all"
+                        aria-label="Zaznacz wszystkie widoczne elementy do eksportu"
+                        [checked]="allPicked()"
+                        [indeterminate]="somePicked()"
+                        (change)="togglePickAll($any($event.target).checked)"
+                      />
+                    </th>
                     <th scope="col">Typ</th>
                     <th scope="col">Nazwa</th>
                     <th scope="col" class="col-slug">Slug</th>
@@ -225,12 +254,26 @@
                 </thead>
                 <tbody>
                   @for (item of ready.data.items; track item.id) {
-                    <tr>
+                    <tr [class.register__row--picked]="exportPicked().has(item.id)">
+                      <td class="col-pick">
+                        <input
+                          type="checkbox"
+                          class="pick"
+                          data-testid="library-pick"
+                          [attr.aria-label]="'Zaznacz do eksportu: ' + item.title"
+                          [checked]="exportPicked().has(item.id)"
+                          (change)="togglePick(item.id, $any($event.target).checked)"
+                        />
+                      </td>
                       <td>{{ kindLabel(item.kind) }}</td>
                       <td>
-                        <a class="register__title" data-row-link [href]="itemHref(item.id)">{{
-                          item.title
-                        }}</a>
+                        <a
+                          class="register__title"
+                          data-row-link
+                          [attr.data-item-id]="item.id"
+                          [href]="itemHref(item.id)"
+                          >{{ item.title }}</a
+                        >
                       </td>
                       <td class="col-slug">
                         <span class="register__slug">{{ item.slug }}</span>

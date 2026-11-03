@@ -25,9 +25,17 @@
         <li>
           <a
             class="toc__link"
+            [href]="'#' + paths.export"
+            [attr.aria-current]="section() === 'export' ? 'page' : null"
+            ><span class="toc__num" aria-hidden="true">3.</span>Eksport</a
+          >
+        </li>
+        <li>
+          <a
+            class="toc__link"
             [href]="'#' + paths.diagnostics"
             [attr.aria-current]="section() === 'diagnostics' ? 'page' : null"
-            ><span class="toc__num" aria-hidden="true">3.</span>Diagnostyka</a
+            ><span class="toc__num" aria-hidden="true">4.</span>Diagnostyka</a
           >
         </li>
       </ul>
@@ -65,6 +73,8 @@
         <app-library-form [id]="current.id" />
       } @else if (current.name === 'import') {
         <app-import-wizard />
+      } @else if (current.name === 'export') {
+        <app-export-wizard [itemId]="current.itemId" />
       } @else if (current.name === 'diagnostics') {
         <app-diagnostics />
       } @else {
@@ -72,7 +82,7 @@
           <header class="view__head">
             <h1 class="view__sentence" tabindex="-1">Nie ma takiego widoku.</h1>
             <p class="view__sub">
-              Wróć do biblioteki, zaimportuj elementy albo otwórz diagnostykę.
+              Wróć do biblioteki, zaimportuj albo wyeksportuj elementy, albo otwórz diagnostykę.
             </p>
           </header>
           <p class="row-actions">

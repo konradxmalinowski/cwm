@@ -62,6 +62,7 @@
 
     <div class="row-actions">
       <a class="btn btn--primary" [href]="editHref()" data-testid="edit-link">Edytuj</a>
+      <a class="btn" [href]="exportHref()" data-testid="export-link">Eksportuj</a>
       <button type="button" class="btn" data-testid="delete-open" (click)="deleting.set(true)">
         Usuń…
       </button>

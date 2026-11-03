@@ -1,0 +1,488 @@
+// Widok eksportu. Kolor tylko tam, gdzie DESIGN.md go przyznaje: zaznaczenie (kobalt) i sygnal
+// "nadpisze" (.signal-overwrite, cobalt-200 plus slowo, waga, pasek i tlo). Eksport niczego nie
+// usuwa, wiec czerwien pojawia sie jedynie w bledzie, po ktorym aplikacja nie przywrocila stanu.
+// Poziom zgodnosci i "Zablokowane" sa bez koloru: slowo, segmenty, pasek 4 px w kolorze tekstu.
+
+.export-tool {
+  display: grid;
+  gap: var(--s3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.export-tool legend {
+  padding: 0;
+  margin-bottom: var(--s3);
+}
+
+.export-tool__options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s3);
+}
+
+.export-tool__option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 40px;
+  padding: 0 var(--s4) 0 var(--s3);
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.export-tool__option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--cobalt-300);
+}
+
+.export-tool__option:has(input:checked) {
+  border-color: var(--cobalt-300);
+  box-shadow: inset 0 0 0 1px var(--cobalt-300);
+}
+
+.export-tool__option:has(input:focus-visible) {
+  outline: 2px solid var(--cobalt-300);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--background);
+}
+
+.export-tool__option input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+// Liczby planu: najwieksze elementy ekranu. Zero jest wyciszone, nadpisanie w cobalt-200.
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s4) var(--s7);
+  padding: var(--s4) 0;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.stat {
+  display: grid;
+  gap: var(--s1);
+  min-width: 0;
+}
+
+.stat__num {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 96px;
+  line-height: 96px;
+}
+
+.stat__label {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.stat--zero .stat__num {
+  color: var(--text-muted);
+}
+
+.stat--overwrite .stat__num,
+.stat--overwrite .stat__label {
+  color: var(--cobalt-200);
+  font-weight: 700;
+}
+
+// ---- Zgodnosc ----
+.verdicts {
+  display: grid;
+  border-top: 1px solid var(--hairline);
+}
+
+.verdict {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s3) var(--s2);
+  border-bottom: 1px solid var(--hairline);
+  border-left: 3px solid transparent;
+  min-width: 0;
+}
+
+.verdict__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s1) var(--s4);
+}
+
+.verdict__title {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.lvl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  white-space: nowrap;
+}
+
+.lvl__word {
+  font-weight: 500;
+}
+
+.segs {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.segs i {
+  display: block;
+  width: 6px;
+  height: 10px;
+  border: 1px solid var(--text-muted);
+}
+
+.segs i.on {
+  background: var(--text);
+  border-color: var(--text);
+}
+
+.verdict__line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s3);
+  max-width: 72ch;
+}
+
+.verdict__k,
+.entry__k {
+  font-size: 12px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.verdict .notice__list {
+  max-width: 72ch;
+}
+
+// ---- Wpisy planu ----
+.entries {
+  display: grid;
+  border-top: 1px solid var(--hairline);
+}
+
+.entry {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: var(--s2);
+  padding: var(--s3) var(--s2);
+  border-bottom: 1px solid var(--hairline);
+  border-left: 3px solid transparent;
+}
+
+.entry:hover,
+.entry:focus-within {
+  background: var(--surface-raised);
+}
+
+// Nadpisanie: pasek 3 px w cobalt-200, tlo cobalt-600, znak zamiany w marginesie (DESIGN.md).
+.entry--overwrite,
+.entry--overwrite:hover,
+.entry--overwrite:focus-within {
+  background: var(--cobalt-600);
+  border-left-color: var(--cobalt-200);
+}
+
+.entry--overwrite .entry__mark,
+.entry--overwrite .entry__action {
+  color: var(--cobalt-200);
+  font-weight: 700;
+}
+
+.entry--overwrite .signal-overwrite {
+  background: transparent;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.entry--blocked {
+  border-left: 4px solid var(--text);
+}
+
+.entry--unchanged .entry__path,
+.entry--unchanged .entry__mark,
+.entry--unchanged .cand__meta {
+  color: var(--text-muted);
+}
+
+.entry__mark {
+  display: grid;
+  place-items: start center;
+  padding-top: 1px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.entry__body {
+  display: grid;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.entry__path {
+  overflow-wrap: anywhere;
+  font-weight: 400;
+}
+
+.entry__action {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.entry--unchanged .entry__action {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.entry__line {
+  display: grid;
+  gap: 0;
+  max-width: 72ch;
+}
+
+.entry__blocked,
+.entry__warn {
+  display: grid;
+  gap: var(--s1);
+  max-width: 72ch;
+}
+
+.entry__blocked {
+  padding: var(--s2) var(--s3);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-left: 4px solid var(--text);
+}
+
+.entry__files summary,
+.entry__diff summary {
+  display: inline-block;
+  min-height: 24px;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--cobalt-300);
+}
+
+.entry__files ul {
+  display: grid;
+  gap: var(--s1);
+  margin-top: var(--s1);
+  padding-left: var(--s4);
+  overflow-wrap: anywhere;
+  list-style: none;
+}
+
+.entry__nopreview {
+  margin-top: var(--s2);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--text-muted);
+}
+
+.entry--blocked-row {
+  border-left: 4px solid var(--text);
+}
+
+// ---- Diff liniowy: tla neutralne, kolor nie opisuje linijek (DESIGN.md, ryzyko 1) ----
+.diff {
+  margin-top: var(--s2);
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+}
+
+.diff__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--s1) var(--s4);
+  padding: var(--s2) var(--s3);
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.diff__legend {
+  display: inline-flex;
+  gap: var(--s4);
+}
+
+.diff__mark {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.diff__note {
+  padding: var(--s2) var(--s3);
+  color: var(--text-muted);
+}
+
+.diff__body {
+  max-height: 480px;
+  overflow: auto;
+}
+
+.dl {
+  display: grid;
+  grid-template-columns: 36px 36px 28px minmax(0, 1fr);
+  min-height: 24px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dl__no {
+  padding-right: var(--s2);
+  text-align: right;
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: none;
+}
+
+.dl__mk {
+  text-align: center;
+  color: var(--text);
+}
+
+.dl__tx {
+  padding-right: var(--s3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dl--del .dl__tx {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.dl--add .dl__tx {
+  text-decoration: underline;
+  text-decoration-color: var(--cobalt-300);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.dl--gap {
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.dl--gap .dl__mk {
+  color: var(--text-muted);
+}
+
+// ---- Okno potwierdzenia ----
+.confirm-facts {
+  display: grid;
+  gap: var(--s1);
+  list-style: none;
+}
+
+.confirm-facts li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+}
+
+.confirm-facts__num {
+  min-width: 2ch;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 28px;
+  line-height: 36px;
+}
+
+// ---- Wynik ----
+.notice--destructive {
+  border-left-color: var(--destructive);
+}
+
+.notice__label--destructive {
+  color: var(--destructive);
+}
+
+.verify {
+  max-width: 72ch;
+}
+
+.results__word {
+  min-width: 10ch;
+  font-weight: 700;
+}
+
+.results__row[data-outcome='unchanged'] .results__word {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+// ---- Zaznaczanie na liscie biblioteki ----
+.col-pick {
+  width: 32px;
+  padding-right: 0;
+}
+
+.pick {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--cobalt-300);
+}
+
+.register__row--picked,
+.register__row--picked:hover {
+  background: var(--surface-raised);
+}
+
+@container frame (max-width: 720px) {
+  .stat__num {
+    font-size: 56px;
+    line-height: 56px;
+  }
+
+  .stats {
+    gap: var(--s3) var(--s5);
+  }
+
+  .dl {
+    grid-template-columns: 28px 28px 20px minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .entry {
+    animation: entry-in 120ms ease-out both;
+    animation-delay: calc(min(var(--i, 0), 11) * 40ms);
+  }
+}
+
+@keyframes entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}

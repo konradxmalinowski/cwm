@@ -44,6 +44,7 @@ export class LibraryDetailComponent {
   protected readonly formatDate = formatDate;
   protected readonly formatBytes = formatBytes;
 
+  protected readonly exportHref = computed(() => `#${ROUTES.exportItem(this.id())}`);
   protected readonly editHref = computed(() => `#${ROUTES.libraryEdit(this.id())}`);
 
   private seq = 0;

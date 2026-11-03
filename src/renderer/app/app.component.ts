@@ -5,6 +5,7 @@ import { ROUTES } from './core/routing/route';
 import { FlashService } from './core/state/flash.service';
 import { StartupService } from './core/state/startup.service';
 import { ThemeService, type ThemePreference } from './core/theme/theme.service';
+import { ExportWizardComponent } from './features/export/export-wizard.component';
 import { ImportWizardComponent } from './features/import/import-wizard.component';
 import { DiagnosticsComponent } from './features/diagnostics/diagnostics.component';
 import { LibraryDetailComponent } from './features/library/library-detail.component';
@@ -20,6 +21,7 @@ import { StartupBannerComponent } from './startup-banner.component';
     LibraryDetailComponent,
     LibraryFormComponent,
     ImportWizardComponent,
+    ExportWizardComponent,
     DiagnosticsComponent,
   ],
   templateUrl: './app.component.html',
@@ -35,6 +37,7 @@ export class AppComponent {
     const name = this.route().name;
     if (name.startsWith('library')) return 'library';
     if (name === 'import') return 'import';
+    if (name === 'export') return 'export';
     if (name === 'diagnostics') return 'diagnostics';
     return null;
   });

@@ -4,6 +4,7 @@ export type Route =
   | { readonly name: 'library-item'; readonly id: string }
   | { readonly name: 'library-edit'; readonly id: string }
   | { readonly name: 'import' }
+  | { readonly name: 'export'; readonly itemId: string | null }
   | { readonly name: 'diagnostics' }
   | { readonly name: 'not-found'; readonly path: string };
 
@@ -11,6 +12,8 @@ export const ROUTES = {
   library: '/biblioteka',
   libraryNew: '/biblioteka/nowy',
   import: '/import',
+  export: '/eksport',
+  exportItem: (id: string): string => `/eksport/${encodeURIComponent(id)}`,
   diagnostics: '/diagnostyka',
   libraryItem: (id: string): string => `/biblioteka/${encodeURIComponent(id)}`,
   libraryEdit: (id: string): string => `/biblioteka/${encodeURIComponent(id)}/edycja`,
@@ -33,6 +36,12 @@ export function parseRoute(hash: string): Route {
   const [head, second, third] = segments;
 
   if (head === 'import' && segments.length === 1) return { name: 'import' };
+  if (head === 'eksport') {
+    if (segments.length === 1) return { name: 'export', itemId: null };
+    const id = second === undefined ? null : decode(second);
+    if (id !== null && id.length > 0 && segments.length === 2)
+      return { name: 'export', itemId: id };
+  }
   if (head === 'diagnostyka' && segments.length === 1) return { name: 'diagnostics' };
 
   if (head === 'biblioteka') {
