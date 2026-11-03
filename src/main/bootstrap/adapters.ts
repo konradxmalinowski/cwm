@@ -1,3 +1,5 @@
+import { createClaudeCodeAdapter } from '../../adapters/claude-code';
+import { createCodexAdapter } from '../../adapters/codex';
 import type { ToolAdapter } from '../../core/ports/tool-adapter';
 
 /**
@@ -5,6 +7,5 @@ import type { ToolAdapter } from '../../core/ports/tool-adapter';
  * serwis importu dostaje liste i nie wie, ktore narzedzia istnieja.
  */
 export function createAdapters(): readonly ToolAdapter[] {
-  // Adaptery Claude Code i Codeksa powstaja rownolegle w src/adapters; wpisz je tutaj po ich zmergowaniu.
-  return [];
+  return [createClaudeCodeAdapter(), createCodexAdapter()];
 }

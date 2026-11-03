@@ -1,0 +1,8 @@
+name = "acme-reviewer"
+model_reasoning_effort = "high"
+description = "Reviews Acme changes"
+sandbox_mode = "read-only"
+developer_instructions = """
+You review changes.
+Be brief.
+"""

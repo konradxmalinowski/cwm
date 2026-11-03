@@ -1,0 +1,35 @@
+# Synthetic Codex configuration
+model = "acme-model"
+acme.dotted = 1
+
+[features]
+acme_flag = true
+
+# Registered agent with a matching file
+[agents.acme-reviewer]
+description = "Reviews Acme changes"
+config_file = "agents/acme-reviewer.toml"
+
+# Registered agent whose file does not exist
+[agents.acme-ghost]
+description = "Registered but the file is missing"
+config_file = "~/.codex/agents/acme-ghost.toml"
+
+[mcp_servers.acme-server]
+command = "acme-mcp"
+args = ["--serve", "--port", "0"]
+
+[mcp_servers.acme-server.env]
+ACME_TOKEN = "acme-fake-token-0000"
+
+[projects."/tmp/acme-project"]
+trust_level = "trusted"
+
+[[acme_tables]]
+note = """multi
+[agents.not-a-table]
+description = "inside a string"
+"""
+
+[notice]
+dotted.key = 1

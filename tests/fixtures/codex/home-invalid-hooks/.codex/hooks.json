@@ -1,0 +1,9 @@
+{
+  "description": "Event key placed in the root silently invalidates the file",
+  "SessionStart": [
+    { "hooks": [{ "type": "command", "command": "/opt/acme/start.sh" }] }
+  ],
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "/opt/acme/stop.sh" }] }]
+  }
+}

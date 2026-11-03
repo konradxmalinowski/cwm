@@ -1,0 +1,8 @@
+{
+  "description": "Synthetic hooks",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "/opt/acme/start.sh", "timeout": 5 }] }
+    ]
+  }
+}

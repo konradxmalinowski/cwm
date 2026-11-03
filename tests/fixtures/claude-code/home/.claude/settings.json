@@ -1,0 +1,14 @@
+{
+  "env": { "ACME_API_TOKEN": "acme-fake-token-0000" },
+  "permissions": { "allow": ["Bash(echo:*)"] },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "$HOME/acme/check.sh", "timeout": 10, "statusMessage": "checking" }]
+      }
+    ],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "/opt/acme/stop.sh" }] }],
+    "SessionStart": [{ "hooks": [{ "type": "prompt", "prompt": "hello" }] }]
+  }
+}

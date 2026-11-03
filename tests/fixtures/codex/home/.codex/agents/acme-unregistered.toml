@@ -1,0 +1,3 @@
+name = "acme-unregistered"
+description = "Has a file but no registry entry"
+developer_instructions = "Do nothing in particular."
