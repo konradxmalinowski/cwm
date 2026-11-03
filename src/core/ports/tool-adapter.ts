@@ -1,4 +1,5 @@
-import type { ItemDraft, ItemKind, RootId, ToolId } from '../model/item';
+import type { ItemDraft, ItemKind, LibraryItem, LoadedItem, RootId, ToolId } from '../model/item';
+import type { CompatibilityVerdict, MaterializationMode, WritePlan } from '../model/plan';
 import type { SourceReader } from './source-reader';
 
 /**
@@ -80,4 +81,31 @@ export interface ToolAdapter {
 /** Warstwa wykrywania lokalizacji (ADR 0022). Jedyne miejsce, ktore zna sciezki narzedzi. */
 export interface LocationCatalog {
   detect(): Promise<readonly DetectedRoot[]>;
+}
+
+/**
+ * Czesc eksportowa adaptera (Etap 4, ARCHITECTURE 5). Adapter nie pisze: zwraca plan, ktory
+ * `WriteGate` sonduje, a uzytkownik zatwierdza. Stan celu czyta wylacznie przez `reader`.
+ */
+export interface ExportContext {
+  /** Rooty tego narzedzia z warstwy lokalizacji; eksport tylko do istniejacych (decyzja 2026-11-03). */
+  readonly roots: readonly DetectedRoot[];
+  readonly reader: SourceReader;
+  /** Najlepszy tryb dostepny na tym systemie dla katalogu i dla pliku (ADR 0015). */
+  readonly materialization: {
+    readonly directory: MaterializationMode;
+    readonly file: MaterializationMode;
+  };
+}
+
+export interface ToolExporter {
+  readonly id: ToolId;
+  /** Czysta, bez I/O: verdykt dla konkretnego elementu, nie dla typu (ARCHITECTURE 4.3). */
+  capabilities(item: LibraryItem): CompatibilityVerdict;
+  /**
+   * Plan dla calego zbioru: plik wspolny (`config.toml`, `CLAUDE.md`) powstaje raz dla wielu
+   * elementow. Odmowy (`unsupported`) i konflikty sa w planie, nie jako wyjatki. `recoverability`
+   * zostaje null, uzupelnia je `WriteGate.probe`.
+   */
+  plan(items: readonly LoadedItem[], ctx: ExportContext): Promise<WritePlan>;
 }
