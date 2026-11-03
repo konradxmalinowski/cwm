@@ -15,7 +15,6 @@ export const IPC_CHANNELS = [
   'library:repair',
   'import:detect',
   'import:scan',
-  'import:plan',
   'import:apply',
   'export:plan',
   'export:apply',
@@ -52,6 +51,9 @@ export const IMPLEMENTED_CHANNELS = [
   'library:delete-plan',
   'library:delete-apply',
   'library:repair',
+  'import:detect',
+  'import:scan',
+  'import:apply',
   'diagnostics:report',
 ] as const;
 

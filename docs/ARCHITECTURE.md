@@ -603,9 +603,8 @@ poza anulowaniem operacji. Lista jest jawna i zamknięta; brak kanału ogólnego
 | `library:save` | szkic elementu | element zapisany albo błędy walidacji |
 | `library:delete` | `ItemId`, potwierdzenie | raport usunięcia |
 | `import:detect` | `ToolId?` | lista `DetectedRoot` z `rootId` |
-| `import:scan` | `rootId`, opcje | podgląd elementów |
-| `import:plan` | wybór | plan importu |
-| `import:apply` | `planId`, potwierdzenie | raport |
+| `import:scan` | `rootIds` | podgląd elementów ze statusami, trafieniami klasyfikatora sekretów i `scanToken` (zastępuje osobny plan) |
+| `import:apply` | `scanToken`, wybrani kandydaci, `confirmedSecrets`, `replaceChanged` | raport: zaimportowane, pominięte, błędy |
 | `export:plan` | elementy, `ToolId`, `rootId` | `WritePlan` plus verdykty zgodności |
 | `export:apply` | `planId`, potwierdzenie | raport |
 | `sync:plan` | elementy, cele | plan plus konflikty |

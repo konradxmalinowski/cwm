@@ -1,6 +1,7 @@
 import { app, ipcMain, BrowserWindow } from 'electron';
 
 import type { IndexStartupInfo } from '../core/model/index-health';
+import type { ImportService } from '../core/services/import/import-service';
 import type { LibraryService } from '../core/services/library/library-service';
 import { IndexStoreOpenError, SqliteIndexStore } from '../infra/db/index-store';
 import { quarantineIndex } from '../infra/db/quarantine';
@@ -10,8 +11,10 @@ import { startIndex, type IndexOpenFailure } from './bootstrap/index-startup';
 import { handleAppScheme, registerAppScheme } from './bootstrap/protocol';
 import { blockOutboundNetwork, denyAllPermissions, hardenWebContents } from './bootstrap/security';
 import { createMainWindow } from './bootstrap/window';
+import { startImport } from './bootstrap/import';
 import { startLibrary } from './bootstrap/library';
 import { registerDiagnosticsHandler, type IndexState } from './ipc/handlers/diagnostics';
+import { registerImportHandlers } from './ipc/handlers/import';
 import { registerLibraryHandlers } from './ipc/handlers/library';
 import { IpcRegistry } from './ipc/registry';
 import { homedir } from 'node:os';
@@ -21,6 +24,14 @@ app.enableSandbox();
 
 let indexState: IndexState = { store: null, info: { outcome: 'refused' } };
 let libraryService: LibraryService | null = null;
+let importService: ImportService | null = null;
+
+function logImportError(error: unknown): void {
+  console.error(
+    '[uasm] nieoczekiwany blad importu:',
+    error instanceof Error ? error.name : 'nieznany',
+  );
+}
 
 function describeFailure(error: unknown): IndexOpenFailure | null {
   return error instanceof IndexStoreOpenError
@@ -92,6 +103,10 @@ function start(): void {
         );
       },
     });
+    registerImportHandlers(registry, {
+      service: () => importService,
+      logUnexpected: logImportError,
+    });
     registry.assertImplementedRegistered();
 
     // Okno powstaje PRZED otwarciem indeksu (ADR 0029 punkt 3). Odmowa startu
@@ -107,6 +122,9 @@ function start(): void {
     libraryService = library.service;
     if (library.failure !== undefined)
       console.error('[uasm] biblioteka niedostepna:', library.failure);
+    if (library.service !== null) {
+      importService = startImport(library.service, logImportError);
+    }
 
     const dbPath = databaseFile(userData);
     const home = homedir();
