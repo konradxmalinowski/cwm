@@ -7,6 +7,7 @@ import type {
   ImportCandidate,
   ImportSkip,
   LocationCatalog,
+  RootScan,
   ToolAdapter,
 } from '../../ports/tool-adapter';
 import type { SourceReader } from '../../ports/source-reader';
@@ -203,6 +204,7 @@ export class ImportService {
 
     const raw: { candidate: ImportCandidate; rootLabel: string; secrets: SecretHit[] }[] = [];
     const skipped: ScannedSkip[] = [];
+    const scans: RootScan[] = [];
 
     for (const root of roots) {
       const adapter = this.adapters.get(root.tool);
@@ -225,21 +227,46 @@ export class ImportService {
         continue;
       }
       try {
-        const result = await adapter.scan(root, this.deps.reader);
-        for (const candidate of result.candidates) {
-          raw.push({ candidate, rootLabel: root.label, secrets: this.classify(candidate) });
-        }
-        for (const s of result.skipped) skipped.push({ ...s, rootLabel: root.label });
+        scans.push({ root, result: await adapter.scan(root, this.deps.reader) });
       } catch (error: unknown) {
         this.deps.onUnexpected?.(error);
         skip('unreadable', `Nie udało się przeskanować lokalizacji ${root.label}.`);
       }
     }
 
+    for (const done of await this.finalizeScans(scans)) {
+      for (const candidate of done.result.candidates) {
+        raw.push({ candidate, rootLabel: done.root.label, secrets: this.classify(candidate) });
+      }
+      for (const s of done.result.skipped) skipped.push({ ...s, rootLabel: done.root.label });
+    }
+
     const library = (await this.deps.library.list()).items;
     const candidates = this.resolveStatuses(raw, library);
     const scanToken = this.remember(candidates);
     return { scanToken, candidates, skipped };
+  }
+
+  /** Krok `finalize` adaptera po skanie rootow jednego narzedzia; blad adaptera nie psuje reszty. */
+  private async finalizeScans(scans: readonly RootScan[]): Promise<readonly RootScan[]> {
+    const out = [...scans];
+    for (const tool of new Set(scans.map((s) => s.root.tool))) {
+      const adapter = this.adapters.get(tool);
+      if (adapter?.finalize === undefined) continue;
+      const mine = scans.filter((s) => s.root.tool === tool);
+      try {
+        const results = await adapter.finalize(mine, this.deps.reader);
+        if (results.length !== mine.length) continue;
+        mine.forEach((scan, i) => {
+          const at = out.indexOf(scan);
+          const result = results[i];
+          if (at !== -1 && result !== undefined) out[at] = { root: scan.root, result };
+        });
+      } catch (error: unknown) {
+        this.deps.onUnexpected?.(error);
+      }
+    }
+    return out;
   }
 
   private remember(candidates: readonly ScannedCandidate[]): string {
@@ -334,17 +361,28 @@ export class ImportService {
       exact.set(`${item.kind}\0${item.identity.slug}`, item);
       lowered.set(`${item.kind}\0${item.identity.slug.toLowerCase()}`, item);
     }
-    const seen = new Set<string>();
+    const primaryOf = new Map<string, number>();
+    const bodyHash = (i: number): Sha256 =>
+      sha256Text(normalizeToLf(raw[i]?.candidate.draft.content.body ?? ''));
     raw.forEach(({ candidate }, i) => {
       if (decided.has(i)) return;
       const { kind, draft } = candidate;
       const lowerKey = `${kind}\0${draft.identity.slug.toLowerCase()}`;
-      if (seen.has(lowerKey)) {
-        // Kolizja w obrebie tego samego skanu (inne narzedzie albo wielkosc liter): wymaga decyzji.
-        status[i] = 'conflict';
+      const primary = primaryOf.get(lowerKey);
+      if (primary !== undefined) {
+        // Kolizja w obrebie skanu: pierwszy wg kolejnosci rootow jest glowny i tylko on idzie do biblioteki.
+        const primaryDraft = raw[primary]?.candidate.draft;
+        const sameElement =
+          primaryDraft?.identity.slug === draft.identity.slug && bodyHash(primary) === bodyHash(i);
+        if (sameElement) {
+          markDuplicate(i, primary);
+        } else {
+          status[i] = 'conflict';
+          duplicateOf[i] = ids[primary] ?? null;
+        }
         return;
       }
-      seen.add(lowerKey);
+      primaryOf.set(lowerKey, i);
 
       const same = exact.get(`${kind}\0${draft.identity.slug}`);
       if (same !== undefined) {
@@ -424,7 +462,7 @@ export class ImportService {
       }
 
       try {
-        const toSave = this.toDraft(scanned);
+        const toSave = this.toDraft(scanned, session);
         const result =
           scanned.status === 'changed' && scanned.existingItemId !== null
             ? await this.deps.library.update(scanned.existingItemId, toSave)
@@ -449,7 +487,7 @@ export class ImportService {
   }
 
   /** Szkic z adaptera plus pochodzenie (rootId i sciezka wzgledna) i trafienia klasyfikatora. */
-  private toDraft(scanned: ScannedCandidate): ItemDraft {
+  private toDraft(scanned: ScannedCandidate, session: ScanSession): ItemDraft {
     const { candidate } = scanned;
     const { draft } = candidate;
     const findings: SecretFinding[] = scanned.secrets.map((s) => ({
@@ -463,6 +501,17 @@ export class ImportService {
       path: candidate.relPath,
       at: this.deps.clock.now().toISOString(),
     };
+    // Duplikat z innego narzedzia o tej samej tresci dolacza swoj snapshot (ADR 0023), zeby element
+    // pamietal oba oryginaly. Duplikat z sekretem nie dolacza, bo nikt go nie potwierdzil.
+    const snapshots = [...(draft.source?.snapshots ?? [])];
+    for (const other of session.candidates.values()) {
+      if (other.status !== 'duplicate' || other.duplicateOf !== scanned.candidateId) continue;
+      if (other.secrets.length > 0 || other.candidate.tool === candidate.tool) continue;
+      for (const snapshot of other.candidate.draft.source?.snapshots ?? []) {
+        if (!snapshots.some((existing) => existing.tool === snapshot.tool))
+          snapshots.push(snapshot);
+      }
+    }
     return {
       ...draft,
       classification: {
@@ -470,7 +519,7 @@ export class ImportService {
         secretFindings: findings,
       },
       source: {
-        snapshots: draft.source?.snapshots ?? [],
+        snapshots,
         importedFrom: origin,
       },
     };

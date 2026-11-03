@@ -33,7 +33,10 @@ export type CandidateStatus =
   | 'changed'
   /** Ten sam element w dwoch rootach jednego narzedzia albo alias (ADR 0024, 0026). */
   | 'duplicate'
-  /** Kolizja `lower(slug)` z innym elementem biblioteki (ADR 0017); wymaga decyzji. */
+  /**
+   * Kolizja `lower(slug)` z elementem biblioteki (ADR 0017) albo z innym kandydatem tego skanu,
+   * ktory ma pierwszenstwo (`duplicateOf`); glowny pozostaje do zaimportowania.
+   */
   | 'conflict';
 
 export interface SecretHitDto {
@@ -59,7 +62,7 @@ export interface CandidateDto {
   status: CandidateStatus;
   /** Id elementu biblioteki dla `unchanged`, `changed` i `conflict`. */
   existingItemId: string | null;
-  /** Dla `duplicate`: kandydat, ktory narzedzie faktycznie czyta. */
+  /** Dla `duplicate` i `conflict` w obrebie skanu: kandydat z pierwszenstwem. */
   duplicateOf: string | null;
   secrets: SecretHitDto[];
   warnings: WarningDto[];

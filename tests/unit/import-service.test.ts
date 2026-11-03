@@ -111,17 +111,137 @@ describe('ImportService.scan: statusy i domyslny wybor', () => {
     expect(dup?.duplicateOf).toBe(primary?.candidateId);
   });
 
-  it('ten sam slug u dwoch narzedzi to konflikt, bo trafilby w ten sam element', async () => {
-    const h = setup(
-      {
-        'r-claude': [candidate({ slug: 'acme-shared', root: claude })],
-        'r-codex': [candidate({ slug: 'acme-shared', root: codexMain })],
-      },
-      [claude, codexMain],
-    );
-    const report = await h.service.scan(['r-claude', 'r-codex']);
-    expect(report.candidates.map((c) => c.status)).toEqual(['new', 'conflict']);
-    expect(report.candidates[1]?.existingItemId).toBeNull();
+  describe('kolizja w obrebie skanu miedzy narzedziami', () => {
+    const both = [claude, codexMain];
+
+    it('ta sama tresc: glowny new, drugi duplicate bez zaznaczenia', async () => {
+      const h = setup(
+        {
+          'r-claude': [candidate({ slug: 'acme-shared', root: claude })],
+          'r-codex': [candidate({ slug: 'acme-shared', root: codexMain })],
+        },
+        both,
+      );
+      const report = await h.service.scan(['r-codex', 'r-claude']);
+      expect(report.candidates.map((c) => c.status)).toEqual(['new', 'duplicate']);
+      expect(report.candidates[1]?.duplicateOf).toBe(report.candidates[0]?.candidateId);
+      expect(report.candidates[1]?.selectedByDefault).toBe(false);
+    });
+
+    it('apply glownego scala snapshoty obu narzedzi w jeden element', async () => {
+      const h = setup(
+        {
+          'r-claude': [candidate({ slug: 'acme-shared', root: claude })],
+          'r-codex': [candidate({ slug: 'acme-shared', root: codexMain })],
+        },
+        both,
+      );
+      const scan = await h.service.scan(['r-claude', 'r-codex']);
+      const report = await h.service.apply({
+        scanToken: scan.scanToken,
+        candidateIds: ['cand-1', 'cand-2'],
+      });
+      expect(report.imported).toHaveLength(1);
+      expect(report.skipped).toEqual([{ candidateId: 'cand-2', reason: 'duplicate' }]);
+      const { items } = await h.library.list();
+      expect(items).toHaveLength(1);
+      expect(items[0]?.source.snapshots.map((x) => x.tool).sort()).toEqual([
+        'claude-code',
+        'codex',
+      ]);
+    });
+
+    it('duplikat z sekretem nie dolacza snapshotu', async () => {
+      const h = setup(
+        {
+          'r-claude': [candidate({ slug: 'acme-shared', root: claude })],
+          'r-codex': [
+            candidate({
+              slug: 'acme-shared',
+              root: codexMain,
+              sourceFiles: [{ relPath: 'auth.json', text: '{}' }],
+            }),
+          ],
+        },
+        both,
+      );
+      const scan = await h.service.scan(['r-claude', 'r-codex']);
+      await h.service.apply({ scanToken: scan.scanToken, candidateIds: ['cand-1'] });
+      const [item] = (await h.library.list()).items;
+      expect(item?.source.snapshots.map((x) => x.tool)).toEqual(['claude-code']);
+    });
+
+    it('inna tresc: glowny new i importowalny, drugi conflict z duplicateOf', async () => {
+      const h = setup(
+        {
+          'r-claude': [candidate({ slug: 'acme-shared', root: claude })],
+          'r-codex': [candidate({ slug: 'acme-shared', root: codexMain, body: 'inna\n' })],
+        },
+        both,
+      );
+      const scan = await h.service.scan(['r-claude', 'r-codex']);
+      const [main, other] = scan.candidates;
+      expect(main?.status).toBe('new');
+      expect(main?.selectedByDefault).toBe(true);
+      expect(other).toMatchObject({
+        status: 'conflict',
+        existingItemId: null,
+        duplicateOf: main?.candidateId,
+        selectedByDefault: false,
+      });
+      const report = await h.service.apply({
+        scanToken: scan.scanToken,
+        candidateIds: ['cand-1', 'cand-2'],
+      });
+      expect(report.imported).toHaveLength(1);
+      expect(report.skipped).toEqual([{ candidateId: 'cand-2', reason: 'conflict' }]);
+    });
+
+    it('inna wielkosc liter sluga to conflict nawet przy tej samej tresci', async () => {
+      const body = 'wspolna\n';
+      const h = setup(
+        {
+          'r-claude': [candidate({ slug: 'acme-shared', root: claude, body })],
+          'r-codex': [candidate({ slug: 'Acme-Shared', root: codexMain, body })],
+        },
+        both,
+      );
+      const scan = await h.service.scan(['r-claude', 'r-codex']);
+      expect(scan.candidates.map((c) => c.status)).toEqual(['new', 'conflict']);
+    });
+
+    it('drugi skan po imporcie: unchanged i duplicate/conflict, bez nowych elementow', async () => {
+      const h = setup(
+        {
+          'r-claude': [
+            candidate({ slug: 'acme-same', root: claude }),
+            candidate({ slug: 'acme-diff', root: claude }),
+          ],
+          'r-codex': [
+            candidate({ slug: 'acme-same', root: codexMain }),
+            candidate({ slug: 'acme-diff', root: codexMain, body: 'inna\n' }),
+          ],
+        },
+        both,
+      );
+      const first = await h.service.scan(['r-claude', 'r-codex']);
+      await h.service.apply({
+        scanToken: first.scanToken,
+        candidateIds: first.candidates.filter((c) => c.selectedByDefault).map((c) => c.candidateId),
+      });
+      const count = (await h.library.list()).items.length;
+      expect(count).toBe(2);
+
+      const second = await h.service.scan(['r-claude', 'r-codex']);
+      expect(second.candidates.map((c) => c.status)).toEqual([
+        'unchanged',
+        'unchanged',
+        'duplicate',
+        'conflict',
+      ]);
+      expect(second.candidates.some((c) => c.selectedByDefault)).toBe(false);
+      expect((await h.library.list()).items).toHaveLength(count);
+    });
   });
 
   it('nieistniejacy root, brak adaptera i awaria adaptera trafiaja do skipped', async () => {
