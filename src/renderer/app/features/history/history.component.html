@@ -1,0 +1,303 @@
+<section
+  class="view"
+  aria-labelledby="history-heading"
+  [attr.aria-busy]="phase() === 'planning' || phase() === 'applying' || loadingMore()"
+>
+  <header class="view__head">
+    <p class="view__context">{{ stepLabel() }}</p>
+    <h1 class="view__sentence" id="history-heading" tabindex="-1">{{ sentence() }}</h1>
+    @switch (phase()) {
+      @case ('list') {
+        @if (listState().status === 'ready' && entries().length > 0) {
+          <p class="view__sub">
+            Każdy zapis do narzędzia ma kopię zapasową. Cofnięcie jest zwykłym zapisem: najpierw
+            zobaczysz plan, potem go zatwierdzisz.
+          </p>
+        }
+      }
+      @case ('plan') {
+        @if (target(); as t) {
+          <p class="view__sub">
+            Cofasz: {{ kindLabel(t.kind).toLowerCase() }} z {{ formatDate(t.at) }}. {{ t.summary }}
+          </p>
+        }
+      }
+    }
+  </header>
+
+  @switch (phase()) {
+    @case ('list') {
+      @if (planError(); as message) {
+        <div class="notice" role="alert" data-testid="history-plan-error">
+          <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+          <p class="notice__text">Nic nie zostało zmienione. Możesz spróbować jeszcze raz.</p>
+        </div>
+      }
+
+      @let state = listState();
+      @if (state.status === 'loading') {
+        <div class="skeleton" aria-hidden="true" data-testid="history-loading">
+          @for (row of [1, 2, 3, 4, 5]; track row) {
+            <div class="skeleton__row">
+              <span class="skeleton__bar skeleton__bar--s"></span>
+              <span class="skeleton__bar skeleton__bar--m"></span>
+              <span class="skeleton__bar skeleton__bar--l"></span>
+            </div>
+          }
+        </div>
+        <p class="sr-only" role="status">Wczytuję historię operacji.</p>
+      } @else if (state.status === 'error') {
+        <div class="notice" role="alert" data-testid="history-error">
+          <p class="notice__text"><span class="notice__label">Błąd.</span> {{ state.message }}</p>
+          <p class="row-actions">
+            <button type="button" class="btn" (click)="retry()">Spróbuj ponownie</button>
+          </p>
+        </div>
+      } @else if (entries().length === 0) {
+        <div class="empty" data-testid="history-empty">
+          <p class="section__title">Nie ma tu jeszcze żadnej operacji.</p>
+          <p>
+            Wpis pojawia się po każdym zapisie: imporcie, eksporcie, synchronizacji albo zmianie
+            elementu w bibliotece.
+          </p>
+          <p class="row-actions">
+            <a class="btn btn--primary" [href]="syncHref">Przejdź do synchronizacji</a>
+          </p>
+        </div>
+      } @else {
+        <ol class="ledger-list" aria-label="Rejestr operacji" data-testid="history-list">
+          @for (entry of entries(); track entry.operationId) {
+            <li
+              class="op"
+              data-testid="history-entry"
+              [attr.data-kind]="entry.kind"
+              [attr.data-reverted]="entry.revertedBy !== null"
+              [style.--i]="$index"
+            >
+              <div class="op__head">
+                <p class="op__kind">{{ kindLabel(entry.kind) }}</p>
+                <p class="op__meta">
+                  <time [attr.datetime]="entry.at">{{ formatDate(entry.at) }}</time>
+                  <span>{{ entry.tool === null ? 'Biblioteka' : toolLabel(entry.tool) }}</span>
+                </p>
+              </div>
+              <p class="op__summary">{{ entry.summary }}</p>
+              @if (entry.itemIds.length > 0) {
+                <p class="op__items">
+                  <span class="entry__k">Elementy</span>
+                  @for (id of entry.itemIds; track id; let last = $last) {
+                    @if (itemKnown(id)) {
+                      <a [href]="itemHref(id)">{{ itemTitle(id) }}</a>
+                    } @else {
+                      <span class="view__sub">{{ itemTitle(id) }}</span>
+                    }
+                    {{ last ? '' : ', ' }}
+                  }
+                </p>
+              }
+              @if (entry.revertedBy !== null) {
+                <p class="op__reverted" data-testid="history-reverted">
+                  <span class="notice__label">Cofnięta.</span>
+                  {{ revertedByText(entry.revertedBy) }}
+                </p>
+              } @else if (entry.revertible) {
+                <p class="op__actions">
+                  <button
+                    type="button"
+                    class="btn"
+                    data-testid="history-undo"
+                    (click)="startRollback(entry)"
+                  >
+                    {{ undoLabel(entry.kind) }}
+                    <span class="sr-only"> z {{ formatDate(entry.at) }}: {{ entry.summary }}</span>
+                  </button>
+                </p>
+              }
+            </li>
+          }
+        </ol>
+
+        @if (moreError(); as message) {
+          <div class="notice" role="alert" data-testid="history-more-error">
+            <p class="notice__text">
+              <span class="notice__label">Błąd.</span> Nie udało się wczytać starszych wpisów.
+              {{ message }}
+            </p>
+          </div>
+        }
+        @if (hasMore()) {
+          <p class="row-actions">
+            <button
+              type="button"
+              class="btn"
+              data-testid="history-more"
+              [disabled]="loadingMore()"
+              (click)="loadMore()"
+            >
+              @if (loadingMore()) {
+                Wczytuję starsze wpisy
+              } @else {
+                Pokaż starsze wpisy
+              }
+            </button>
+          </p>
+        } @else {
+          <p class="view__sub">To wszystkie zapisane operacje.</p>
+        }
+      }
+    }
+
+    @case ('planning') {
+      <div class="skeleton" aria-hidden="true" data-testid="history-plan-loading">
+        @for (row of [1, 2, 3]; track row) {
+          <div class="skeleton__row">
+            <span class="skeleton__bar skeleton__bar--s"></span>
+            <span class="skeleton__bar skeleton__bar--l"></span>
+          </div>
+        }
+      </div>
+      <p role="status">Porównuję kopię zapasową z plikami w narzędziu. Niczego nie zapisuję.</p>
+      <p class="row-actions">
+        <button type="button" class="btn" (click)="cancelPlanning()">Anuluj</button>
+      </p>
+    }
+
+    @case ('plan') {
+      @if (plan(); as p) {
+        @if (counts(); as c) {
+          @if (applyError(); as message) {
+            <div class="notice" role="alert" data-testid="history-apply-error">
+              <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+              <p class="notice__text">
+                Zapis nie został potwierdzony. Przygotuj plan od nowa, żeby zobaczyć aktualny stan
+                plików, zanim spróbujesz jeszcze raz.
+              </p>
+              <p class="row-actions">
+                <button
+                  type="button"
+                  class="btn btn--primary"
+                  data-testid="history-replan"
+                  (click)="replan()"
+                >
+                  Przygotuj plan od nowa
+                </button>
+                <button type="button" class="btn" (click)="backToList()">Wróć do historii</button>
+              </p>
+            </div>
+          }
+
+          <app-plan-view [plan]="p" [titles]="titles()" />
+
+          <div class="import-total" data-testid="history-total">
+            <p class="import-total__count">
+              <span class="import-total__num" [class.import-total__num--zero]="c.changes === 0">{{
+                c.changes
+              }}</span>
+              <span
+                >{{
+                  plural(
+                    c.changes,
+                    'plik do przywrócenia',
+                    'pliki do przywrócenia',
+                    'plików do przywrócenia'
+                  )
+                }}
+                w {{ planTool() }}</span
+              >
+            </p>
+            @if (c.modify > 0) {
+              <p class="signal-overwrite" data-testid="history-overwrite-total">
+                <span
+                  ><strong>Nadpisze</strong> {{ c.modify }}
+                  {{
+                    plural(c.modify, 'istniejący plik', 'istniejące pliki', 'istniejących plików')
+                  }}.</span
+                >
+                <span>Przed zapisem aplikacja zrobi kopię zapasową każdego z nich.</span>
+              </p>
+            }
+            @if (c.remove > 0) {
+              <p class="signal-remove" data-testid="history-remove-total">
+                <span
+                  ><strong>Usunie</strong> {{ c.remove }}
+                  {{ plural(c.remove, 'plik', 'pliki', 'plików') }} z dysku.</span
+                >
+                <span>
+                  Cofana operacja utworzyła te pliki. Ich treść trafi najpierw do kopii zapasowej.
+                </span>
+              </p>
+            }
+            @if (blockerList().length > 0) {
+              <div id="history-blockers" data-testid="history-blockers">
+                <p class="notice__label">Dlaczego zapis jest nieaktywny:</p>
+                <ul class="notice__list">
+                  @for (reason of blockerList(); track $index) {
+                    <li>{{ reason }}</li>
+                  }
+                </ul>
+              </div>
+            }
+            <div class="row-actions">
+              <button
+                type="button"
+                class="btn"
+                [class.btn--primary]="c.remove === 0"
+                [class.btn--destructive]="c.remove > 0"
+                data-testid="history-apply"
+                [disabled]="!p.applicable || applyError() !== null"
+                [attr.aria-describedby]="p.applicable ? null : 'history-blockers'"
+                (click)="openConfirm()"
+              >
+                Zatwierdź cofnięcie
+              </button>
+              <button type="button" class="btn" data-testid="history-back" (click)="backToList()">
+                Wróć do historii
+              </button>
+            </div>
+          </div>
+        }
+      }
+    }
+
+    @case ('applying') {
+      <div class="skeleton" aria-hidden="true">
+        @for (row of [1, 2, 3]; track row) {
+          <div class="skeleton__row">
+            <span class="skeleton__bar skeleton__bar--m"></span>
+            <span class="skeleton__bar skeleton__bar--l"></span>
+          </div>
+        }
+      </div>
+      <p role="status">Przywracam pliki w {{ planTool() }}.</p>
+    }
+
+    @case ('result') {
+      @if (result(); as r) {
+        <app-apply-result [result]="r" [plan]="plan()" />
+        <p class="row-actions">
+          <button
+            type="button"
+            class="btn btn--primary"
+            data-testid="history-done"
+            (click)="finish()"
+          >
+            Wróć do historii
+          </button>
+        </p>
+      }
+    }
+  }
+</section>
+
+@if (confirming()) {
+  @if (counts(); as c) {
+    <app-export-confirm-dialog
+      [toolName]="planTool()"
+      [counts]="c"
+      title="Cofnąć tę operację?"
+      confirmLabel="Zatwierdź cofnięcie"
+      (confirmed)="apply()"
+      (cancelled)="cancelConfirm()"
+    />
+  }
+}

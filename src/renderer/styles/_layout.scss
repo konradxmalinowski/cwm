@@ -124,7 +124,8 @@
 
   .toc__list {
     display: flex;
-    gap: var(--s4);
+    flex-wrap: wrap;
+    gap: var(--s1) var(--s4);
   }
 
   .toc__link {

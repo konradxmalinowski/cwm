@@ -28,20 +28,61 @@ export const LEVELS: Readonly<
 
 export const SEGMENT_SLOTS: readonly number[] = [0, 1, 2, 3];
 
-export const ACTION_LABEL: Readonly<Record<PlanEntryDto['action'], string>> = {
+/**
+ * Rodzaj wpisu planu do wyswietlenia. `delete` (cofniecie operacji, ktora plik utworzyla) to
+ * usuniecie z dysku i jako jedyne dostaje czerwien. Nieznana akcja z nowszego main jest
+ * pokazana neutralnie, zamiast wywracac widok.
+ */
+export type EntryKind = PlanEntryDto['action'];
+
+export function entryKind(entry: PlanEntryDto): EntryKind {
+  return entry.action;
+}
+
+/** Para tekstow do diffu albo null, gdy podgladu nie ma (plik binarny albo za duzy). */
+export function diffPair(entry: PlanEntryDto): { before: string; after: string } | null {
+  const before = entry.before ?? (entry.action === 'create' ? '' : null);
+  const after = entry.after ?? (entry.action === 'delete' ? '' : null);
+  return before === null || after === null ? null : { before, after };
+}
+
+const ACTION_LABELS: Readonly<Record<string, string>> = {
   create: 'Utworzy',
   modify: 'Nadpisze',
   link: 'Dowiązanie',
   unchanged: 'Bez zmian',
+  delete: 'Usunie',
+  'restore-link': 'Przywróci dowiązanie',
 };
 
 /** Znak w marginesie. Tekst, nie ikona: DESIGN.md nie przewiduje ikon w rejestrze planu. */
-export const ACTION_MARK: Readonly<Record<PlanEntryDto['action'], string>> = {
+const ACTION_MARKS: Readonly<Record<string, string>> = {
   create: '+',
   modify: '⇄',
   link: '~',
   unchanged: '=',
+  delete: '−',
+  'restore-link': '~',
 };
+
+export function actionLabel(kind: string): string {
+  return ACTION_LABELS[kind] ?? 'Zmiana';
+}
+
+export function actionMark(kind: string): string {
+  return ACTION_MARKS[kind] ?? '·';
+}
+
+export const HIDDEN_SECRET_MARKER = '[ukryty sekret:';
+export const HIDDEN_SECRET_NOTE =
+  'Część wartości jest ukryta. Zmiana ukrytej wartości nie jest widoczna w podglądzie.';
+
+export function hasHiddenSecret(before: string | null, after: string | null): boolean {
+  return (
+    (before?.includes(HIDDEN_SECRET_MARKER) ?? false) ||
+    (after?.includes(HIDDEN_SECRET_MARKER) ?? false)
+  );
+}
 
 export const SCOPE_LABEL: Readonly<Record<PlanEntryDto['scope'], string>> = {
   'whole-file': 'Cały plik. Aplikacja zapisuje go w całości.',
@@ -85,6 +126,8 @@ export interface PlanCounts {
   readonly modify: number;
   readonly link: number;
   readonly unchanged: number;
+  /** Pliki, ktore zapis usunie z dysku. Nie wchodza do `modify`. */
+  readonly remove: number;
   readonly blocked: number;
   /** Pliki, ktore zapis faktycznie zmieni. */
   readonly changes: number;
@@ -95,10 +138,11 @@ export function countPlan(plan: ExportPlanDto): PlanCounts {
   let modify = 0;
   let link = 0;
   let unchanged = 0;
+  let remove = 0;
   let blocked = 0;
   for (const entry of plan.entries) {
     if (entry.recoverability === 'blocked') blocked++;
-    switch (entry.action) {
+    switch (entryKind(entry)) {
       case 'create':
         create++;
         break;
@@ -106,15 +150,49 @@ export function countPlan(plan: ExportPlanDto): PlanCounts {
         modify++;
         break;
       case 'link':
+      case 'restore-link':
         link++;
         break;
       case 'unchanged':
         unchanged++;
         break;
+      case 'delete':
+        remove++;
+        break;
     }
   }
-  return { create, modify, link, unchanged, blocked, changes: create + modify + link };
+  return {
+    create,
+    modify,
+    link,
+    unchanged,
+    remove,
+    blocked,
+    changes: create + modify + link + remove,
+  };
 }
+
+export function addCounts(a: PlanCounts, b: PlanCounts): PlanCounts {
+  return {
+    create: a.create + b.create,
+    modify: a.modify + b.modify,
+    link: a.link + b.link,
+    unchanged: a.unchanged + b.unchanged,
+    remove: a.remove + b.remove,
+    blocked: a.blocked + b.blocked,
+    changes: a.changes + b.changes,
+  };
+}
+
+export const EMPTY_COUNTS: PlanCounts = {
+  create: 0,
+  modify: 0,
+  link: 0,
+  unchanged: 0,
+  remove: 0,
+  blocked: 0,
+  changes: 0,
+};
 
 /** Powody, dla ktorych plan nie nadaje sie do zapisu. Puste, gdy `applicable`. */
 export function blockers(plan: ExportPlanDto, counts: PlanCounts): string[] {

@@ -1,0 +1,321 @@
+@let p = plan();
+@let c = counts();
+
+@if (p.toolMissing) {
+  <div class="notice" role="alert" data-testid="export-tool-missing">
+    <p class="notice__text">
+      <span class="notice__label">Zablokowane.</span> Nie znaleziono katalogu narzędzia
+      {{ tool() }} na tym komputerze. Zainstaluj albo uruchom narzędzie przynajmniej raz, a potem
+      przygotuj plan jeszcze raz. Aplikacja nie tworzy konfiguracji narzędzia od zera.
+    </p>
+  </div>
+}
+
+@if (showStats()) {
+  <app-plan-stats [counts]="c" />
+}
+
+@if (p.verdicts.length > 0) {
+  <section
+    class="section"
+    [attr.aria-labelledby]="prefix() + '-compat'"
+    data-testid="export-verdicts"
+  >
+    <p
+      class="section__title"
+      role="heading"
+      [attr.aria-level]="level()"
+      [id]="prefix() + '-compat'"
+    >
+      Zgodność
+      <span class="group__count">{{ p.verdicts.length }}</span>
+    </p>
+    <p class="view__sub">
+      Wynik dla każdego elementu: co przejdzie bez zmian, co zginie przy konwersji i co aplikacja
+      dopisze.
+    </p>
+    <ul class="verdicts">
+      @for (v of p.verdicts; track v.itemId) {
+        <li class="verdict" data-testid="export-verdict" [attr.data-level]="v.level">
+          <div class="verdict__head">
+            <p class="verdict__title">{{ v.title }}</p>
+            <span class="lvl" [attr.data-level]="v.level">
+              <span class="segs" aria-hidden="true">
+                @for (slot of segmentSlots; track slot) {
+                  <i [class.on]="slot < levels[v.level].segments"></i>
+                }
+              </span>
+              <span class="lvl__word">{{ levels[v.level].label }}</span>
+              <span class="sr-only">, {{ levels[v.level].segments }} z 4</span>
+            </span>
+          </div>
+          <p class="cand__meta">
+            <span>{{ kindLabel(v.kind) }}</span>
+            <span class="mono">{{ v.slug }}</span>
+          </p>
+          @if (v.reasons.length > 0) {
+            <ul class="notice__list">
+              @for (reason of v.reasons; track $index) {
+                <li>{{ reason }}</li>
+              }
+            </ul>
+          }
+          @if (v.lostAttributes.length > 0) {
+            <p class="verdict__line">
+              <span class="verdict__k">Zginie przy eksporcie</span>
+              <span class="mono">{{ v.lostAttributes.join(', ') }}</span>
+            </p>
+          }
+          @if (v.addedAttributes.length > 0) {
+            <p class="verdict__line">
+              <span class="verdict__k">Aplikacja dopisze</span>
+              <span class="mono">{{ v.addedAttributes.join(', ') }}</span>
+            </p>
+          }
+        </li>
+      }
+    </ul>
+  </section>
+}
+
+@if (p.entries.length > 0) {
+  <section
+    class="section"
+    [attr.aria-labelledby]="prefix() + '-entries'"
+    data-testid="export-entries"
+  >
+    <p
+      class="section__title"
+      role="heading"
+      [attr.aria-level]="level()"
+      [id]="prefix() + '-entries'"
+    >
+      Pliki
+      <span class="group__count">{{ p.entries.length }}</span>
+    </p>
+    <p class="hints">
+      <span><kbd>j</kbd> <kbd>k</kbd> następny i poprzedni podgląd</span>
+      <span><kbd>Enter</kbd> rozwiń albo zwiń</span>
+    </p>
+    <ul class="entries">
+      @for (e of p.entries; track e.entryId) {
+        @let kind = kindOf(e);
+        <li
+          class="entry"
+          data-testid="export-entry"
+          [style.--i]="$index"
+          [attr.data-action]="kind"
+          [attr.data-blocked]="e.recoverability === 'blocked'"
+          [class.entry--overwrite]="kind === 'modify' && e.recoverability !== 'blocked'"
+          [class.entry--remove]="kind === 'delete' && e.recoverability !== 'blocked'"
+          [class.entry--blocked]="e.recoverability === 'blocked'"
+          [class.entry--unchanged]="kind === 'unchanged'"
+        >
+          <span class="entry__mark" aria-hidden="true">{{ actionMark(kind) }}</span>
+          <div class="entry__body">
+            <p class="entry__path mono">
+              <span class="sr-only">{{ actionLabel(kind) }}: </span>{{ pathOf(e) }}
+            </p>
+            <p class="cand__meta">
+              <span class="entry__action">{{ actionLabel(kind) }}</span>
+              <span>{{ titlesOf(e.itemIds) }}</span>
+            </p>
+
+            @if (e.recoverability === 'blocked') {
+              <div class="entry__blocked" data-testid="export-entry-blocked">
+                <p>
+                  <span class="notice__label">Zablokowane.</span>
+                  {{ e.blockedReason ?? 'Aplikacja nie potrafi zabezpieczyć tego pliku kopią.' }}
+                </p>
+                <p class="view__sub">Aplikacja odmawia zapisu zamiast ryzykować plik bez kopii.</p>
+              </div>
+            } @else if (kind === 'modify') {
+              <p class="signal-overwrite" data-testid="export-overwrite">
+                <span><strong>Nadpisze</strong> istniejący plik.</span>
+                <span>Poprzednia treść trafi najpierw do kopii zapasowej.</span>
+              </p>
+            } @else if (kind === 'delete') {
+              <p class="signal-remove" data-testid="export-remove">
+                <span><strong>Usunie</strong> plik z dysku.</span>
+                <span>
+                  Poprzednia treść trafi najpierw do kopii zapasowej. Odzyskasz ją osobnym krokiem w
+                  Historii.
+                </span>
+              </p>
+            }
+
+            @if (kind !== 'unchanged' && kind !== 'delete' && kind !== 'restore-link') {
+              <p class="entry__line">
+                <span class="entry__k">Zakres edycji</span>
+                <span>{{ scopeLabel[e.scope] }}</span>
+              </p>
+            }
+            @if (e.materialization !== null) {
+              @let m = materialization[e.materialization];
+              <p class="entry__line" data-testid="export-materialization">
+                <span class="entry__k">Tryb</span>
+                <span
+                  ><strong>{{ m.label }}.</strong> {{ m.effect }}</span
+                >
+              </p>
+            }
+
+            @if (e.warnings.length > 0) {
+              <div class="entry__warn">
+                <p><span class="notice__label">Ostrzeżenia:</span></p>
+                <ul class="notice__list">
+                  @for (w of e.warnings; track $index) {
+                    <li>{{ w }}</li>
+                  }
+                </ul>
+              </div>
+            }
+
+            @if (hasHiddenSecret(e.before, e.after)) {
+              <p class="entry__secret" data-testid="export-hidden-secret">{{ secretNote }}</p>
+            }
+
+            @if (e.files.length > 0) {
+              <details class="entry__files">
+                <summary>
+                  {{ e.files.length }}
+                  {{
+                    plural(
+                      e.files.length,
+                      'plik w tym wpisie',
+                      'pliki w tym wpisie',
+                      'plików w tym wpisie'
+                    )
+                  }}
+                </summary>
+                <ul class="mono">
+                  @for (f of e.files; track $index) {
+                    <li>{{ f }}</li>
+                  }
+                </ul>
+              </details>
+            }
+
+            @if (hasDiff(e)) {
+              <details
+                class="entry__diff"
+                [open]="isOpen(e.entryId)"
+                (toggle)="onToggle(e.entryId, $event)"
+              >
+                <summary data-export-nav>Podgląd zmian</summary>
+                @if (isOpen(e.entryId)) {
+                  @if (diffPair(e); as pair) {
+                    <app-diff-view [before]="pair.before" [after]="pair.after" [path]="pathOf(e)" />
+                  } @else {
+                    <p class="entry__nopreview" data-testid="export-no-preview">
+                      podgląd niedostępny (plik binarny albo za duży)
+                    </p>
+                  }
+                }
+              </details>
+            }
+          </div>
+        </li>
+      }
+    </ul>
+  </section>
+}
+
+@if (p.refusals.length > 0) {
+  <section
+    class="section"
+    [attr.aria-labelledby]="prefix() + '-refusals'"
+    data-testid="export-refusals"
+  >
+    <p
+      class="section__title"
+      role="heading"
+      [attr.aria-level]="level()"
+      [id]="prefix() + '-refusals'"
+    >
+      Odmowy
+      <span class="group__count">{{ p.refusals.length }}</span>
+    </p>
+    <p class="view__sub">Z tych elementów nie powstanie żaden plik w narzędziu {{ tool() }}.</p>
+    <ul class="skipped">
+      @for (r of p.refusals; track r.itemId) {
+        <li class="skipped__row" data-testid="export-refusal">
+          <p>
+            <strong>{{ titleOf(r.itemId) }}</strong>
+            <span class="view__sub">
+              ({{ kindLabel(r.kind) }}, <span class="mono">{{ r.slug }}</span
+              >)</span
+            >
+          </p>
+          <p><span class="notice__label">Nie powstanie żaden plik.</span> {{ r.reason }}</p>
+        </li>
+      }
+    </ul>
+  </section>
+}
+
+@if (p.conflicts.length > 0) {
+  <section
+    class="section"
+    [attr.aria-labelledby]="prefix() + '-conflicts'"
+    data-testid="export-conflicts"
+  >
+    <p
+      class="section__title"
+      role="heading"
+      [attr.aria-level]="level()"
+      [id]="prefix() + '-conflicts'"
+    >
+      Konflikty
+      <span class="group__count">{{ p.conflicts.length }}</span>
+    </p>
+    <p class="view__sub">
+      Dwa elementy chcą zapisać ten sam plik. Plan z konfliktem nie jest zapisywany.
+    </p>
+    <ul class="skipped">
+      @for (k of p.conflicts; track $index) {
+        <li class="skipped__row entry--blocked-row" data-testid="export-conflict">
+          <p class="mono">{{ k.relPath }}</p>
+          <p>{{ titlesOf(k.itemIds) }}</p>
+          <p>{{ k.reason }}</p>
+        </li>
+      }
+    </ul>
+    <div class="notice" data-testid="export-conflict-help">
+      <p class="notice__text">
+        <span class="notice__label">Co zrobić.</span> Wróć do wyboru i odznacz jeden z elementów z
+        każdego konfliktu, a potem przygotuj plan jeszcze raz. Drugi element możesz wyeksportować
+        osobno.
+      </p>
+    </div>
+  </section>
+}
+
+@if (p.orphans.length > 0) {
+  <section
+    class="section"
+    [attr.aria-labelledby]="prefix() + '-orphans'"
+    data-testid="export-orphans"
+  >
+    <p
+      class="section__title"
+      role="heading"
+      [attr.aria-level]="level()"
+      [id]="prefix() + '-orphans'"
+    >
+      Pliki bez odpowiednika w bibliotece
+      <span class="group__count">{{ p.orphans.length }}</span>
+    </p>
+    <p class="view__sub">
+      Tylko informacja. Aplikacja nie usuwa tych plików i niczego w nich nie zmienia.
+    </p>
+    <ul class="skipped">
+      @for (o of p.orphans; track $index) {
+        <li class="skipped__row" data-testid="export-orphan">
+          <p class="mono">{{ pathOf(o) }}</p>
+          <p>{{ o.reason }}</p>
+        </li>
+      }
+    </ul>
+  </section>
+}

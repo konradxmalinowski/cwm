@@ -8,6 +8,8 @@ import { ThemeService, type ThemePreference } from './core/theme/theme.service';
 import { ExportWizardComponent } from './features/export/export-wizard.component';
 import { ImportWizardComponent } from './features/import/import-wizard.component';
 import { DiagnosticsComponent } from './features/diagnostics/diagnostics.component';
+import { HistoryComponent } from './features/history/history.component';
+import { SyncCenterComponent } from './features/sync/sync-center.component';
 import { LibraryDetailComponent } from './features/library/library-detail.component';
 import { LibraryFormComponent } from './features/library/library-form.component';
 import { LibraryListComponent } from './features/library/library-list.component';
@@ -23,6 +25,8 @@ import { StartupBannerComponent } from './startup-banner.component';
     ImportWizardComponent,
     ExportWizardComponent,
     DiagnosticsComponent,
+    SyncCenterComponent,
+    HistoryComponent,
   ],
   templateUrl: './app.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -39,6 +43,8 @@ export class AppComponent {
     if (name === 'import') return 'import';
     if (name === 'export') return 'export';
     if (name === 'diagnostics') return 'diagnostics';
+    if (name === 'sync') return 'sync';
+    if (name === 'history') return 'history';
     return null;
   });
   protected readonly themeOptions: readonly { value: ThemePreference; label: string }[] = [

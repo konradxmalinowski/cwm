@@ -1,0 +1,713 @@
+<section
+  class="view"
+  aria-labelledby="sync-heading"
+  [attr.aria-busy]="phase() === 'planning' || phase() === 'applying' || refreshing()"
+>
+  <header class="view__head">
+    <p class="view__context">{{ stepLabel() }}</p>
+    <h1 class="view__sentence" id="sync-heading" tabindex="-1">{{ sentence() }}</h1>
+    @switch (phase()) {
+      @case ('status') {
+        @if (statusState().status === 'ready' && allRows().length > 0) {
+          <p class="view__sub">
+            Na tym kroku nic się nie zapisuje. Najpierw zobaczysz plan: każdy plik, który powstanie
+            albo zostanie nadpisany, i każdą zmianę, którą aplikacja przyjmie do biblioteki.
+          </p>
+        }
+      }
+      @case ('plan') {
+        <p class="view__sub">
+          Synchronizacja nie usuwa plików z narzędzi. Pliki, których nie ma w planie, zostają tak,
+          jak są.
+        </p>
+      }
+    }
+  </header>
+
+  @switch (phase()) {
+    <!-- Krok 1: stan i wybor -->
+    @case ('status') {
+      @if (planError(); as message) {
+        <div class="notice" role="alert" data-testid="sync-plan-error">
+          <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+          <p class="notice__text">Wybór został zachowany. Możesz spróbować jeszcze raz.</p>
+          <p class="row-actions">
+            <button type="button" class="btn" (click)="preparePlan()">Spróbuj ponownie</button>
+          </p>
+        </div>
+      }
+
+      @let state = statusState();
+      @if (state.status === 'loading') {
+        <div class="skeleton" aria-hidden="true" data-testid="sync-loading">
+          @for (row of [1, 2, 3, 4, 5]; track row) {
+            <div class="skeleton__row">
+              <span class="skeleton__bar skeleton__bar--s"></span>
+              <span class="skeleton__bar skeleton__bar--m"></span>
+              <span class="skeleton__bar skeleton__bar--l"></span>
+            </div>
+          }
+        </div>
+        <p class="sr-only" role="status">Wczytuję stan synchronizacji.</p>
+      } @else if (state.status === 'error') {
+        <div class="notice" role="alert" data-testid="sync-error">
+          <p class="notice__text"><span class="notice__label">Błąd.</span> {{ state.message }}</p>
+          <p class="row-actions">
+            <button type="button" class="btn" (click)="retry()">Spróbuj ponownie</button>
+          </p>
+        </div>
+      } @else {
+        @if (missingTools().length > 0) {
+          <div class="notice" data-testid="sync-missing-tools">
+            <p class="notice__text">
+              <span class="notice__label">Zablokowane.</span>
+              @for (tool of missingTools(); track tool; let last = $last) {
+                {{ toolLabel(tool) }}{{ last ? '' : ', ' }}
+              }
+              {{ plural(missingTools().length, 'nie ma', 'nie ma', 'nie ma') }} na tym komputerze,
+              bo nie znaleziono jego katalogu głównego. Synchronizacja pomija
+              {{ plural(missingTools().length, 'to narzędzie', 'te narzędzia', 'te narzędzia') }} i
+              nie tworzy konfiguracji od zera. Zainstaluj albo uruchom narzędzie przynajmniej raz, a
+              potem odśwież stan.
+            </p>
+          </div>
+        }
+
+        @if (allRows().length === 0) {
+          <div class="empty" data-testid="sync-empty">
+            <p class="section__title">Nie ma tu jeszcze żadnego elementu.</p>
+            <p>
+              Synchronizacja porównuje elementy biblioteki z plikami w narzędziach. Zaimportuj
+              elementy z Claude Code albo Codeksa, albo utwórz pierwszy ręcznie.
+            </p>
+            <p class="row-actions">
+              <a class="btn btn--primary" [href]="importHref">Zaimportuj elementy</a>
+              <a class="btn" [href]="libraryHref">Przejdź do biblioteki</a>
+            </p>
+          </div>
+        } @else {
+          @let t = totals();
+          <div class="stats" data-testid="sync-stats">
+            <p class="stat" [class.stat--zero]="t.pending === 0">
+              <span class="stat__num">{{ t.pending }}</span>
+              <span class="stat__label">Do zapisu</span>
+            </p>
+            <p class="stat" [class.stat--zero]="t.decisions === 0">
+              <span class="stat__num">{{ t.decisions }}</span>
+              <span class="stat__label">Do decyzji</span>
+            </p>
+            <p class="stat" [class.stat--zero]="t.inSync === 0">
+              <span class="stat__num">{{ t.inSync }}</span>
+              <span class="stat__label">Zgodne</span>
+            </p>
+          </div>
+          <p class="view__sub">
+            Liczby dotyczą par element i narzędzie. Jeden element w dwóch narzędziach to dwie pary.
+          </p>
+
+          <details class="legend" data-testid="sync-legend">
+            <summary>Co znaczą stany</summary>
+            <dl class="legend__list">
+              @for (key of stateOrder; track key) {
+                <div>
+                  <dt>{{ states[key].label }}</dt>
+                  <dd>{{ states[key].meaning }}</dd>
+                </div>
+              }
+            </dl>
+          </details>
+
+          <section class="section" aria-labelledby="sync-matrix-heading">
+            <h2 class="section__title" id="sync-matrix-heading">
+              Elementy
+              <span class="group__count">{{ allRows().length }}</span>
+            </h2>
+
+            <div class="toolbar" role="search">
+              <div class="field toolbar__grow">
+                <label class="field__label" for="sync-query">Szukaj w bibliotece</label>
+                <input
+                  id="sync-query"
+                  class="control"
+                  type="search"
+                  autocomplete="off"
+                  [value]="query()"
+                  (input)="onQuery($any($event.target).value)"
+                />
+              </div>
+              <div class="field toolbar__select">
+                <label class="field__label" for="sync-state">Stan</label>
+                <select
+                  id="sync-state"
+                  class="control"
+                  data-testid="sync-state-filter"
+                  (change)="onStateFilter($any($event.target).value)"
+                >
+                  <option value="" [selected]="stateFilter() === ''">Wszystkie stany</option>
+                  @for (key of stateOrder; track key) {
+                    <option [value]="key" [selected]="stateFilter() === key">
+                      {{ states[key].label }}
+                    </option>
+                  }
+                </select>
+              </div>
+              @if (filtered()) {
+                <button type="button" class="btn" (click)="clearFilters()">Wyczyść filtry</button>
+              }
+              <div class="row-actions">
+                <button
+                  type="button"
+                  class="btn"
+                  data-testid="sync-select-all"
+                  [disabled]="rows().length === 0 || allVisibleSelected()"
+                  (click)="selectAllVisible()"
+                >
+                  Zaznacz wszystkie
+                </button>
+                <button
+                  type="button"
+                  class="btn"
+                  [disabled]="selectedCount() === 0"
+                  (click)="clearSelection()"
+                >
+                  Odznacz wszystkie
+                </button>
+              </div>
+            </div>
+            <p class="hints">
+              <span><kbd>/</kbd> szukaj</span>
+              <span><kbd>j</kbd> <kbd>k</kbd> następny i poprzedni element</span>
+              <span><kbd>Spacja</kbd> zaznacz albo odznacz</span>
+            </p>
+
+            @if (rows().length === 0) {
+              <div class="empty" data-testid="sync-no-match">
+                <p class="section__title">Żaden element nie pasuje do filtrów.</p>
+                <p class="row-actions">
+                  <button type="button" class="btn" (click)="clearFilters()">Wyczyść filtry</button>
+                </p>
+              </div>
+            } @else {
+              <div class="matrix-wrap">
+                <table class="matrix" data-testid="sync-matrix">
+                  <caption class="sr-only">
+                    Stan elementów biblioteki w narzędziach
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col" class="matrix__pick"><span class="sr-only">Wybór</span></th>
+                      <th scope="col">Element</th>
+                      @for (tool of tools(); track tool) {
+                        <th scope="col">{{ toolLabel(tool) }}</th>
+                      }
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (row of rows(); track row.itemId) {
+                      <tr
+                        class="matrix__row"
+                        data-testid="sync-row"
+                        [attr.data-slug]="row.slug"
+                        [class.matrix__row--overwrite]="overwrites(row)"
+                        [class.matrix__row--picked]="selected().has(row.itemId)"
+                      >
+                        <td class="matrix__pick">
+                          <input
+                            type="checkbox"
+                            class="pick"
+                            data-sync-nav
+                            data-testid="sync-pick"
+                            [id]="'sync-pick-' + row.itemId"
+                            [checked]="selected().has(row.itemId)"
+                            [attr.aria-labelledby]="'sync-title-' + row.itemId"
+                            (change)="toggleRow(row.itemId, $any($event.target).checked)"
+                          />
+                        </td>
+                        <th scope="row" class="matrix__item">
+                          <a
+                            class="register__title"
+                            [id]="'sync-title-' + row.itemId"
+                            [href]="itemHref(row.itemId)"
+                            >{{ row.title }}</a
+                          >
+                          <span class="cand__meta">
+                            <span>{{ kindLabel(row.kind) }}</span>
+                            <span class="mono">{{ row.slug }}</span>
+                          </span>
+                        </th>
+                        @for (tool of tools(); track tool) {
+                          <td class="matrix__cell" [attr.data-label]="toolLabel(tool)">
+                            @if (row.cells.get(tool); as cell) {
+                              @let info = states[cell.status];
+                              <p class="sync-state" [attr.data-state]="cell.status">
+                                <span class="sync-state__word">{{ info.label }}</span>
+                              </p>
+                              <p class="sync-state__meaning">{{ info.meaning }}</p>
+                              <p class="sync-state__meta">
+                                @if (cell.lastSyncedAt !== null) {
+                                  Ostatnia synchronizacja: {{ formatDate(cell.lastSyncedAt) }}.
+                                } @else {
+                                  Nigdy nie synchronizowany.
+                                }
+                                @if (cell.materialization !== null) {
+                                  Tryb: {{ materializationName[cell.materialization] }}.
+                                }
+                              </p>
+
+                              @if (info.needsDecision) {
+                                <fieldset class="resolve" data-testid="sync-resolve">
+                                  <legend class="sr-only">
+                                    Decyzja dla elementu {{ row.title }} w {{ toolLabel(tool) }}
+                                  </legend>
+                                  @for (option of resolutions; track option.value) {
+                                    <label class="resolve__option">
+                                      <input
+                                        type="radio"
+                                        [name]="'sync-resolve-' + row.itemId + '-' + tool"
+                                        [value]="option.value"
+                                        [attr.data-testid]="'sync-resolve-' + option.value"
+                                        [checked]="choiceOf(row.itemId, tool) === option.value"
+                                        (change)="choose(row.itemId, tool, option.value)"
+                                      />
+                                      <span>{{ option.label }}</span>
+                                    </label>
+                                  }
+                                </fieldset>
+                                @if (choiceOf(row.itemId, tool) === 'library-wins') {
+                                  <p class="signal-overwrite" data-testid="sync-overwrite">
+                                    <span
+                                      ><strong>Nadpisze</strong> plik w {{ toolLabel(tool) }}.</span
+                                    >
+                                    <span>Poprzednia treść trafi najpierw do kopii zapasowej.</span>
+                                  </p>
+                                } @else if (choiceOf(row.itemId, tool) === 'tool-wins') {
+                                  <p class="resolve__note" data-testid="sync-adopt-note">
+                                    Zmiana z narzędzia stanie się nową wersją elementu w bibliotece.
+                                  </p>
+                                } @else if (undecided(row, tool)) {
+                                  <p class="resolve__note" data-testid="sync-undecided">
+                                    Bez wyboru ten element zostanie pominięty.
+                                  </p>
+                                }
+                                <button
+                                  type="button"
+                                  class="btn btn--small"
+                                  data-testid="sync-preview"
+                                  [attr.aria-expanded]="previewOf(row.itemId, tool) !== undefined"
+                                  (click)="togglePreview(row.itemId, tool)"
+                                >
+                                  @if (previewOf(row.itemId, tool) === undefined) {
+                                    Pokaż różnicę
+                                  } @else {
+                                    Ukryj różnicę
+                                  }
+                                  <span class="sr-only">
+                                    dla {{ row.title }} w {{ toolLabel(tool) }}</span
+                                  >
+                                </button>
+                              }
+                            } @else {
+                              <p class="sync-state__meaning">Brak danych dla tego narzędzia.</p>
+                            }
+                          </td>
+                        }
+                      </tr>
+                      @if (rowHasPreview(row)) {
+                        <tr class="matrix__preview">
+                          <td [attr.colspan]="tools().length + 2">
+                            @for (tool of tools(); track tool) {
+                              @if (previewOf(row.itemId, tool); as preview) {
+                                <div class="preview" data-testid="sync-preview-panel">
+                                  <p class="preview__head">
+                                    Różnica w {{ toolLabel(tool) }}:
+                                    <strong>{{ row.title }}</strong>
+                                  </p>
+                                  @if (preview.status === 'loading') {
+                                    <p role="status">Porównuję plik w narzędziu z biblioteką.</p>
+                                  } @else if (preview.status === 'error') {
+                                    <div class="notice" role="alert">
+                                      <p class="notice__text">
+                                        <span class="notice__label">Błąd.</span>
+                                        {{ preview.message }}
+                                      </p>
+                                    </div>
+                                  } @else {
+                                    <p class="view__sub">
+                                      Wiersze usunięte to treść pliku w narzędziu, dodane to wersja
+                                      z biblioteki.
+                                    </p>
+                                    @for (
+                                      entry of previewEntries(preview.plan);
+                                      track entry.entryId
+                                    ) {
+                                      <p class="mono">{{ entryPath(entry) }}</p>
+                                      @if (hasHiddenSecret(entry.before, entry.after)) {
+                                        <p class="entry__secret">{{ secretNote }}</p>
+                                      }
+                                      @if (diffPair(entry); as pair) {
+                                        <app-diff-view
+                                          [before]="pair.before"
+                                          [after]="pair.after"
+                                          [path]="entryPath(entry)"
+                                        />
+                                      } @else {
+                                        <p class="entry__nopreview">
+                                          podgląd niedostępny (plik binarny albo za duży)
+                                        </p>
+                                      }
+                                    } @empty {
+                                      <p class="entry__nopreview" data-testid="sync-preview-empty">
+                                        Nie ma różnicy do pokazania.
+                                      </p>
+                                    }
+                                  }
+                                </div>
+                              }
+                            }
+                          </td>
+                        </tr>
+                      }
+                    }
+                  </tbody>
+                </table>
+              </div>
+            }
+          </section>
+
+          @if (state.data.orphans.length > 0) {
+            <section class="section" aria-labelledby="sync-orphans" data-testid="sync-orphans">
+              <h2 class="section__title" id="sync-orphans">
+                Pliki bez odpowiednika w bibliotece
+                <span class="group__count">{{ state.data.orphans.length }}</span>
+              </h2>
+              <p class="view__sub">
+                To pliki w narzędziach, których aplikacja nie rozpoznaje jako elementów biblioteki.
+                Aplikacja ich nie usuwa i niczego w nich nie zmienia. Możesz je zaimportować w
+                widoku Import.
+              </p>
+              <ul class="skipped">
+                @for (o of state.data.orphans; track $index) {
+                  <li class="skipped__row" data-testid="sync-orphan">
+                    <p class="mono">{{ entryPath(o) }}</p>
+                    <p>
+                      <span class="view__sub">{{ toolLabel(o.tool) }}.</span> {{ o.reason }}
+                    </p>
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          <div class="import-total" data-testid="sync-select-total">
+            <p class="import-total__count">
+              <span
+                class="import-total__num"
+                [class.import-total__num--zero]="selectedCount() === 0"
+                >{{ selectedCount() }}</span
+              >
+              <span>{{
+                plural(
+                  selectedCount(),
+                  'wybrany element',
+                  'wybrane elementy',
+                  'wybranych elementów'
+                )
+              }}</span>
+            </p>
+            <p class="sr-only" role="status">Wybrano {{ selectedCount() }}.</p>
+            <div class="row-actions">
+              <button
+                type="button"
+                class="btn btn--primary"
+                data-testid="sync-prepare"
+                [disabled]="!canPlan()"
+                [attr.aria-describedby]="canPlan() ? null : 'sync-prepare-hint'"
+                (click)="preparePlan()"
+              >
+                Przygotuj synchronizację
+              </button>
+              @if (!canPlan()) {
+                <span class="view__sub" id="sync-prepare-hint">
+                  @if (syncTools().length === 0) {
+                    Żadne narzędzie nie jest dostępne na tym komputerze.
+                  } @else {
+                    Zaznacz co najmniej jeden element.
+                  }
+                </span>
+              } @else {
+                <span class="view__sub"
+                  >Plan pokaże, co się stanie. Nic nie zostanie zapisane.</span
+                >
+              }
+            </div>
+          </div>
+        }
+      }
+    }
+
+    @case ('planning') {
+      <div class="skeleton" aria-hidden="true" data-testid="sync-plan-loading">
+        @for (row of [1, 2, 3, 4]; track row) {
+          <div class="skeleton__row">
+            <span class="skeleton__bar skeleton__bar--s"></span>
+            <span class="skeleton__bar skeleton__bar--l"></span>
+          </div>
+        }
+      </div>
+      <p role="status">Porównuję bibliotekę z plikami w narzędziach. Niczego nie zapisuję.</p>
+      <p class="row-actions">
+        <button type="button" class="btn" (click)="cancelPlanning()">Anuluj</button>
+      </p>
+    }
+
+    <!-- Krok 2: plan -->
+    @case ('plan') {
+      @if (plan(); as p) {
+        @let c = planCounts();
+        @if (applyError(); as message) {
+          <div class="notice" role="alert" data-testid="sync-apply-error">
+            <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+            <p class="notice__text">
+              Zapis nie został potwierdzony. Przygotuj plan od nowa, żeby zobaczyć aktualny stan
+              plików, zanim spróbujesz jeszcze raz.
+            </p>
+            <p class="row-actions">
+              <button
+                type="button"
+                class="btn btn--primary"
+                data-testid="sync-replan"
+                (click)="replan()"
+              >
+                Przygotuj plan od nowa
+              </button>
+              <button type="button" class="btn" (click)="backToSelection()">Wróć do wyboru</button>
+            </p>
+          </div>
+        }
+
+        <app-plan-stats [counts]="c" data-testid="sync-plan-stats">
+          <p class="stat" [class.stat--zero]="p.adoptions.length === 0">
+            <span class="stat__num">{{ p.adoptions.length }}</span>
+            <span class="stat__label">Przyjmie do biblioteki</span>
+          </p>
+        </app-plan-stats>
+
+        @for (tp of p.plans; track tp.planId) {
+          <section
+            class="section sync-tool"
+            [attr.aria-labelledby]="'sync-tool-' + tp.planId"
+            data-testid="sync-tool-plan"
+          >
+            <h2 class="section__title" id="sync-tool-{{ tp.planId }}">{{ planToolName(tp) }}</h2>
+            @if (tp.entries.length === 0 && tp.verdicts.length === 0) {
+              <p class="view__sub">Dla tego narzędzia nie powstanie żaden plik.</p>
+            }
+            <app-plan-view [plan]="tp" [titles]="planTitles()" [level]="3" [showStats]="false" />
+          </section>
+        }
+
+        @if (p.adoptions.length > 0) {
+          <section class="section" aria-labelledby="sync-adoptions" data-testid="sync-adoptions">
+            <h2 class="section__title" id="sync-adoptions">
+              Zmiany przyjęte do biblioteki
+              <span class="group__count">{{ p.adoptions.length }}</span>
+            </h2>
+            <p class="view__sub">
+              Te zmiany pochodzą z plików w narzędziach. Aplikacja zapisze je w bibliotece jako nową
+              wersję elementu, bez dotykania plików w narzędziu.
+            </p>
+            <ul class="skipped">
+              @for (a of p.adoptions; track a.itemId + a.tool) {
+                <li class="skipped__row" data-testid="sync-adoption">
+                  <p>
+                    <strong>{{ a.title }}</strong>
+                    <span class="view__sub"> z {{ toolLabel(a.tool) }}</span>
+                  </p>
+                  @if (hasHiddenSecret(a.before, a.after)) {
+                    <p class="entry__secret">{{ secretNote }}</p>
+                  }
+                  @if (a.before !== null && a.after !== null) {
+                    <details class="entry__diff" open>
+                      <summary>Podgląd zmian</summary>
+                      <app-diff-view [before]="a.before" [after]="a.after" [path]="a.title" />
+                    </details>
+                  } @else {
+                    <p class="entry__nopreview">podgląd niedostępny (plik binarny albo za duży)</p>
+                  }
+                </li>
+              }
+            </ul>
+          </section>
+        }
+
+        @if (p.skipped.length > 0) {
+          <section class="section" aria-labelledby="sync-skipped" data-testid="sync-skipped">
+            <h2 class="section__title" id="sync-skipped">
+              Pominięte
+              <span class="group__count">{{ p.skipped.length }}</span>
+            </h2>
+            <p class="view__sub">Te pary element i narzędzie przebieg zostawia bez zmian.</p>
+            <ul class="skipped">
+              @for (s of p.skipped; track s.itemId + s.tool) {
+                <li class="skipped__row" data-testid="sync-skipped-row">
+                  <p>
+                    <strong>{{ skippedTitle(s.itemId) }}</strong>
+                    <span class="view__sub"> w {{ toolLabel(s.tool) }}</span>
+                  </p>
+                  <p>{{ s.reason }}</p>
+                </li>
+              }
+            </ul>
+          </section>
+        }
+
+        <div class="import-total" data-testid="sync-total">
+          <p class="import-total__count">
+            <span class="import-total__num" [class.import-total__num--zero]="c.changes === 0">{{
+              c.changes
+            }}</span>
+            <span
+              >{{
+                plural(c.changes, 'plik do zapisania', 'pliki do zapisania', 'plików do zapisania')
+              }}
+              @if (p.adoptions.length > 0) {
+                i {{ p.adoptions.length }}
+                {{
+                  plural(
+                    p.adoptions.length,
+                    'zmiana do biblioteki',
+                    'zmiany do biblioteki',
+                    'zmian do biblioteki'
+                  )
+                }}
+              }
+            </span>
+          </p>
+          @if (c.modify > 0) {
+            <p class="signal-overwrite" data-testid="sync-overwrite-total">
+              <span
+                ><strong>Nadpisze</strong> {{ c.modify }}
+                {{
+                  plural(c.modify, 'istniejący plik', 'istniejące pliki', 'istniejących plików')
+                }}.</span
+              >
+              <span>Przed zapisem aplikacja zrobi kopię zapasową każdego z nich.</span>
+            </p>
+          }
+          @if (planBlockers().length > 0) {
+            <div id="sync-blockers" data-testid="sync-blockers">
+              <p class="notice__label">Dlaczego zapis jest nieaktywny:</p>
+              <ul class="notice__list">
+                @for (reason of planBlockers(); track $index) {
+                  <li>{{ reason }}</li>
+                }
+              </ul>
+            </div>
+          }
+          <div class="row-actions">
+            <button
+              type="button"
+              class="btn btn--primary"
+              data-testid="sync-apply"
+              [disabled]="!p.applicable || applyError() !== null"
+              [attr.aria-describedby]="p.applicable ? null : 'sync-blockers'"
+              (click)="openConfirm()"
+            >
+              Zsynchronizuj
+            </button>
+            <button type="button" class="btn" data-testid="sync-back" (click)="backToSelection()">
+              Wróć do wyboru
+            </button>
+          </div>
+        </div>
+      }
+    }
+
+    @case ('applying') {
+      <div class="skeleton" aria-hidden="true" data-testid="sync-apply-loading">
+        @for (row of [1, 2, 3]; track row) {
+          <div class="skeleton__row">
+            <span class="skeleton__bar skeleton__bar--m"></span>
+            <span class="skeleton__bar skeleton__bar--l"></span>
+          </div>
+        }
+      </div>
+      <p role="status">
+        Zapisuję pliki w narzędziach i przyjmuję zmiany do biblioteki. Nie zamykaj aplikacji, dopóki
+        zapis się nie skończy.
+      </p>
+    }
+
+    <!-- Krok 3: wynik -->
+    @case ('result') {
+      @if (result(); as r) {
+        <div class="report" data-testid="sync-result">
+          @for (item of r.results; track item.planId) {
+            <section class="section" [attr.aria-labelledby]="'sync-res-' + item.planId">
+              <h2 class="section__title" id="sync-res-{{ item.planId }}">
+                {{ resultToolName(item.planId) }}
+              </h2>
+              <app-apply-result
+                [result]="item"
+                [plan]="planFor(item.planId)"
+                [level]="3"
+                title="Pliki"
+              />
+            </section>
+          }
+
+          @if (r.adopted.length > 0) {
+            <section class="section" aria-labelledby="sync-res-adopted" data-testid="sync-adopted">
+              <h2 class="section__title" id="sync-res-adopted">
+                Przyjęte do biblioteki
+                <span class="group__count">{{ r.adopted.length }}</span>
+              </h2>
+              @if (adoptedFailed()) {
+                <div class="notice" role="alert">
+                  <p class="notice__text">
+                    <span class="notice__label">Błąd.</span> Część zmian nie trafiła do biblioteki.
+                    Pliki w narzędziach zostały bez zmian.
+                  </p>
+                </div>
+              }
+              <ul class="results">
+                @for (a of r.adopted; track a.itemId + a.tool) {
+                  <li class="results__row" data-testid="sync-adopted-row" [attr.data-ok]="a.ok">
+                    <span class="results__word">{{ a.ok ? 'Przyjęto' : 'Błąd' }}</span>
+                    <span>{{ skippedTitle(a.itemId) }} z {{ toolLabel(a.tool) }}</span>
+                    @if (a.message !== null) {
+                      <span class="view__sub">{{ a.message }}</span>
+                    }
+                  </li>
+                }
+              </ul>
+            </section>
+          }
+
+          <p class="view__sub">Cofnięcie tej synchronizacji jest dostępne w Historii.</p>
+        </div>
+
+        <p class="row-actions">
+          <a class="btn btn--primary" data-testid="sync-to-history" [href]="historyHref"
+            >Otwórz Historię</a
+          >
+          <button type="button" class="btn" data-testid="sync-restart" (click)="restart()">
+            Wróć do synchronizacji
+          </button>
+        </p>
+      }
+    }
+  }
+</section>
+
+@if (confirming()) {
+  <app-export-confirm-dialog
+    toolName="wybranych narzędziach"
+    title="Zsynchronizować wybrane elementy?"
+    confirmLabel="Zsynchronizuj"
+    [counts]="planCounts()"
+    [adoptions]="plan()?.adoptions?.length ?? 0"
+    (confirmed)="apply()"
+    (cancelled)="cancelConfirm()"
+  />
+}

@@ -1,0 +1,293 @@
+// Synchronizacja i historia. Stany synchronizacji sa bez koloru: slowo i wyjasnienie.
+// Kolor tylko tam, gdzie DESIGN.md go przyznaje: zaznaczenie (kobalt), sygnal "nadpisze"
+// (wybor "Zachowaj wersje z biblioteki") i usuniecie (czerwien, tylko w planie cofniecia).
+
+.legend {
+  max-width: 72ch;
+}
+
+.legend summary {
+  display: inline-block;
+  min-height: 24px;
+  cursor: pointer;
+  font-weight: 500;
+  color: var(--cobalt-300);
+}
+
+.legend__list {
+  display: grid;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  padding: var(--s3) var(--s4);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+}
+
+.legend__list dt {
+  font-weight: 700;
+}
+
+.legend__list dd {
+  color: var(--text-muted);
+}
+
+.matrix-wrap {
+  overflow-x: auto;
+}
+
+.matrix {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.matrix th {
+  padding: var(--s2);
+  text-align: left;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.matrix td,
+.matrix tbody th {
+  padding: var(--s3) var(--s2);
+  vertical-align: top;
+  border-bottom: 1px solid var(--hairline);
+  border-left: 3px solid transparent;
+}
+
+.matrix tbody th {
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--text);
+}
+
+.matrix__pick {
+  width: 32px;
+}
+
+.matrix__item {
+  min-width: 18ch;
+  overflow-wrap: anywhere;
+}
+
+.matrix__item .cand__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--s3);
+  font-weight: 400;
+}
+
+.matrix__cell {
+  min-width: 24ch;
+  max-width: 40ch;
+}
+
+.matrix__row:hover > *,
+.matrix__row:focus-within > * {
+  background: var(--surface-raised);
+}
+
+.matrix__row--picked > :first-child {
+  border-left-color: var(--cobalt-300);
+}
+
+// Nadpisanie: pasek 3 px w cobalt-200 i tlo cobalt-600, tak jak w planie.
+.matrix__row--overwrite > *,
+.matrix__row--overwrite:hover > *,
+.matrix__row--overwrite:focus-within > * {
+  background: var(--cobalt-600);
+}
+
+.matrix__row--overwrite > :first-child {
+  border-left-color: var(--cobalt-200);
+}
+
+.matrix__preview > td {
+  padding: var(--s3) var(--s2);
+  border-left: 0;
+}
+
+.preview {
+  display: grid;
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+}
+
+.preview__head {
+  font-weight: 500;
+}
+
+.sync-state__word {
+  font-weight: 700;
+}
+
+.sync-state__meaning,
+.sync-state__meta {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+}
+
+.sync-state__meaning {
+  margin-top: var(--s1);
+}
+
+.resolve {
+  display: grid;
+  gap: var(--s1);
+  margin: var(--s2) 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.resolve__option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.resolve__option input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--cobalt-300);
+  flex: none;
+}
+
+.resolve__note {
+  margin-bottom: var(--s2);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+}
+
+.matrix__cell .signal-overwrite {
+  margin-bottom: var(--s2);
+  background: transparent;
+}
+
+.sync-tool {
+  padding-top: var(--s3);
+  border-top: 1px solid var(--hairline);
+}
+
+// ---- Historia: rejestr operacji, odwrotna chronologia ----
+.ledger-list {
+  display: grid;
+  border-top: 1px solid var(--hairline);
+  list-style: none;
+}
+
+.op {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s3) var(--s2);
+  border-bottom: 1px solid var(--hairline);
+  border-left: 3px solid transparent;
+  max-width: 100ch;
+}
+
+.op:hover,
+.op:focus-within {
+  background: var(--surface-raised);
+}
+
+.op__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s1) var(--s4);
+}
+
+.op__kind {
+  font-weight: 700;
+}
+
+.op__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--s3);
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.op__summary {
+  overflow-wrap: anywhere;
+}
+
+.op__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--s2);
+}
+
+.op__reverted {
+  color: var(--text-muted);
+}
+
+.op[data-reverted='true'] .op__kind,
+.op[data-reverted='true'] .op__summary {
+  color: var(--text-muted);
+}
+
+.op__actions {
+  margin-top: var(--s1);
+}
+
+@container frame (max-width: 720px) {
+  .matrix thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .matrix,
+  .matrix tbody,
+  .matrix tr,
+  .matrix td,
+  .matrix tbody th {
+    display: block;
+  }
+
+  .matrix__row {
+    padding: var(--s3) 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .matrix td,
+  .matrix tbody th {
+    border-bottom: 0;
+    padding: var(--s1) var(--s2);
+  }
+
+  .matrix__cell {
+    max-width: none;
+  }
+
+  .matrix__cell::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--text-muted);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .op {
+    animation: entry-in 120ms ease-out both;
+    animation-delay: calc(min(var(--i, 0), 11) * 40ms);
+  }
+}

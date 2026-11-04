@@ -38,6 +38,22 @@
             ><span class="toc__num" aria-hidden="true">4.</span>Diagnostyka</a
           >
         </li>
+        <li>
+          <a
+            class="toc__link"
+            [href]="'#' + paths.sync"
+            [attr.aria-current]="section() === 'sync' ? 'page' : null"
+            ><span class="toc__num" aria-hidden="true">5.</span>Synchronizacja</a
+          >
+        </li>
+        <li>
+          <a
+            class="toc__link"
+            [href]="'#' + paths.history"
+            [attr.aria-current]="section() === 'history' ? 'page' : null"
+            ><span class="toc__num" aria-hidden="true">6.</span>Historia</a
+          >
+        </li>
       </ul>
 
       <fieldset class="theme toc__foot">
@@ -77,12 +93,17 @@
         <app-export-wizard [itemId]="current.itemId" />
       } @else if (current.name === 'diagnostics') {
         <app-diagnostics />
+      } @else if (current.name === 'sync') {
+        <app-sync-center />
+      } @else if (current.name === 'history') {
+        <app-history />
       } @else {
         <section class="view">
           <header class="view__head">
             <h1 class="view__sentence" tabindex="-1">Nie ma takiego widoku.</h1>
             <p class="view__sub">
-              Wróć do biblioteki, zaimportuj albo wyeksportuj elementy, albo otwórz diagnostykę.
+              Wróć do biblioteki, zaimportuj, wyeksportuj albo zsynchronizuj elementy, albo otwórz
+              historię lub diagnostykę.
             </p>
           </header>
           <p class="row-actions">

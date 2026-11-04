@@ -9,11 +9,7 @@ import {
   signal,
 } from '@angular/core';
 
-import type {
-  ExportApplyDto,
-  ExportPlanDto,
-  PlanEntryDto,
-} from '../../../../shared/ipc/export-contract';
+import type { ExportApplyDto, ExportPlanDto } from '../../../../shared/ipc/export-contract';
 import type { ToolIdDto } from '../../../../shared/ipc/import-contract';
 import type { ItemSummaryDto } from '../../../../shared/ipc/library-contract';
 import { ExportApiService } from '../../core/ipc/export-api.service';
@@ -21,22 +17,11 @@ import { LibraryApiService } from '../../core/ipc/library-api.service';
 import { kindLabel, plural } from '../../core/labels';
 import { ROUTES } from '../../core/routing/route';
 import { ExportSelectionService } from '../../core/state/export-selection.service';
-import { joinRootPath, toolLabel } from '../import/import-model';
-import { DiffViewComponent } from './diff-view.component';
+import { toolLabel } from '../import/import-model';
+import { ApplyResultComponent } from './apply-result.component';
 import { ExportConfirmDialogComponent } from './export-confirm-dialog.component';
-import {
-  ACTION_LABEL,
-  ACTION_MARK,
-  LEVELS,
-  MATERIALIZATION,
-  OUTCOME_LABEL,
-  SCOPE_LABEL,
-  SEGMENT_SLOTS,
-  TOOLS,
-  blockers,
-  countPlan,
-  toolLocative,
-} from './export-model';
+import { TOOLS, blockers, countPlan, toolLocative } from './export-model';
+import { PlanViewComponent } from './plan-view.component';
 
 type ItemsState =
   | { readonly status: 'loading' }
@@ -49,7 +34,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 
 @Component({
   selector: 'app-export-wizard',
-  imports: [DiffViewComponent, ExportConfirmDialogComponent],
+  imports: [ApplyResultComponent, ExportConfirmDialogComponent, PlanViewComponent],
   templateUrl: './export-wizard.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { '(document:keydown)': 'onKeydown($event)' },
@@ -67,13 +52,6 @@ export class ExportWizardComponent {
   protected readonly newHref = `#${ROUTES.libraryNew}`;
 
   protected readonly tools = TOOLS;
-  protected readonly levels = LEVELS;
-  protected readonly segmentSlots = SEGMENT_SLOTS;
-  protected readonly actionLabel = ACTION_LABEL;
-  protected readonly actionMark = ACTION_MARK;
-  protected readonly scopeLabel = SCOPE_LABEL;
-  protected readonly materialization = MATERIALIZATION;
-  protected readonly outcomeLabel = OUTCOME_LABEL;
   protected readonly kindLabel = kindLabel;
   protected readonly toolLabel = toolLabel;
   protected readonly plural = plural;
@@ -89,7 +67,6 @@ export class ExportWizardComponent {
   protected readonly applyError = signal<string | null>(null);
   protected readonly result = signal<ExportApplyDto | null>(null);
   protected readonly confirming = signal(false);
-  protected readonly openEntries = signal<ReadonlySet<string>>(new Set());
 
   private seq = 0;
   private itemsSeq = 0;
@@ -140,25 +117,15 @@ export class ExportWizardComponent {
     return plan === null ? null : countPlan(plan);
   });
 
+  protected readonly titleMap = computed(
+    () => new Map(this.visibleItems().map((item) => [item.id, item.title])),
+  );
+
   protected readonly blockerList = computed(() => {
     const plan = this.plan();
     const counts = this.counts();
     return plan === null || counts === null ? [] : blockers(plan, counts);
   });
-
-  private readonly titlesById = computed(() => {
-    const map = new Map<string, string>();
-    for (const item of this.visibleItems()) map.set(item.id, item.title);
-    for (const verdict of this.plan()?.verdicts ?? []) map.set(verdict.itemId, verdict.title);
-    for (const refusal of this.plan()?.refusals ?? []) {
-      if (!map.has(refusal.itemId)) map.set(refusal.itemId, refusal.slug);
-    }
-    return map;
-  });
-
-  private readonly entriesById = computed(
-    () => new Map((this.plan()?.entries ?? []).map((entry) => [entry.entryId, entry])),
-  );
 
   protected readonly sentence = computed(() => {
     switch (this.phase()) {
@@ -221,12 +188,6 @@ export class ExportWizardComponent {
       case 'result':
         return 'Eksport, krok 3 z 3: wynik';
     }
-  });
-
-  /** Wynik w trybie "blad bez wycofania": aplikacja zostawila czesciowy stan. */
-  protected readonly resultUnrestored = computed(() => {
-    const r = this.result();
-    return r !== null && !r.rolledBack && r.entries.some((e) => e.outcome === 'failed');
   });
 
   constructor() {
@@ -336,15 +297,6 @@ export class ExportWizardComponent {
     }
     this.plan.set(result.value);
     this.applyError.set(null);
-    // Wpisy nadpisujace z podgladem sa od razu rozwiniete: uzytkownik ma zobaczyc, co zniknie.
-    this.openEntries.set(
-      new Set(
-        result.value.entries
-          .filter((e) => e.action === 'modify' && e.before !== null && e.after !== null)
-          .slice(0, 5)
-          .map((e) => e.entryId),
-      ),
-    );
     this.phase.set('plan');
   }
 
@@ -367,44 +319,6 @@ export class ExportWizardComponent {
   protected replan(): void {
     this.backToSelection();
     void this.preparePlan();
-  }
-
-  protected titleOf(itemId: string): string {
-    return this.titlesById().get(itemId) ?? 'Element spoza planu';
-  }
-
-  protected titlesOf(itemIds: readonly string[]): string {
-    return itemIds.map((id) => this.titleOf(id)).join(', ');
-  }
-
-  protected pathOf(entry: { rootLabel: string; relPath: string }): string {
-    return joinRootPath(entry.rootLabel, entry.relPath);
-  }
-
-  protected entryPath(entryId: string): string {
-    const entry = this.entriesById().get(entryId);
-    return entry === undefined ? 'Plik spoza planu' : this.pathOf(entry);
-  }
-
-  protected hasDiff(entry: PlanEntryDto): boolean {
-    return entry.action !== 'link' && entry.action !== 'unchanged';
-  }
-
-  protected diffBefore(entry: PlanEntryDto): string | null {
-    if (entry.before === null && entry.after !== null && entry.action === 'create') return '';
-    return entry.before;
-  }
-
-  protected isOpen(entryId: string): boolean {
-    return this.openEntries().has(entryId);
-  }
-
-  protected onToggle(entryId: string, event: Event): void {
-    const open = (event.target as HTMLDetailsElement).open;
-    const next = new Set(this.openEntries());
-    if (open) next.add(entryId);
-    else next.delete(entryId);
-    this.openEntries.set(next);
   }
 
   protected openConfirm(): void {

@@ -98,6 +98,13 @@
   font-weight: 700;
 }
 
+// Usuniecie: jedyny wpis planu w czerwieni. Liczba pojawia sie tylko wtedy, gdy jest wieksza od zera.
+.stat--remove .stat__num,
+.stat--remove .stat__label {
+  color: var(--destructive);
+  font-weight: 700;
+}
+
 // ---- Zgodnosc ----
 .verdicts {
   display: grid;
@@ -217,6 +224,19 @@
   border-left: 4px solid var(--text);
 }
 
+// Usuniecie pliku z dysku: czerwien, slowo "Usunie" i znak w marginesie, nie sam kolor.
+.entry--remove,
+.entry--remove:hover,
+.entry--remove:focus-within {
+  border-left: 4px solid var(--destructive);
+}
+
+.entry--remove .entry__mark,
+.entry--remove .entry__action {
+  color: var(--destructive);
+  font-weight: 700;
+}
+
 .entry--unchanged .entry__path,
 .entry--unchanged .entry__mark,
 .entry--unchanged .cand__meta {
@@ -257,6 +277,14 @@
   display: grid;
   gap: 0;
   max-width: 72ch;
+}
+
+.entry__secret {
+  max-width: 72ch;
+  padding: var(--s2) var(--s3);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-left: 4px solid var(--text);
 }
 
 .entry__blocked,
@@ -301,6 +329,30 @@
 
 .entry--blocked-row {
   border-left: 4px solid var(--text);
+}
+
+// Sygnal usuniecia: ten sam uklad co "nadpisze", czerwony pasek i slowo.
+.signal-remove {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  background: var(--surface);
+  border-left: 4px solid var(--destructive);
+}
+
+.signal-remove strong {
+  color: var(--destructive);
+  font-weight: 700;
+}
+
+.entry--remove .signal-remove {
+  background: transparent;
+  padding-left: 0;
+  border-left: 0;
+}
+
+.confirm-facts__remove .confirm-facts__num {
+  color: var(--destructive);
 }
 
 // ---- Diff liniowy: tla neutralne, kolor nie opisuje linijek (DESIGN.md, ryzyko 1) ----
