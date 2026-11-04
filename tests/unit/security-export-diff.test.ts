@@ -55,15 +55,15 @@ describe('podglad diffu bez sekretow (kryterium 5)', () => {
     const { json, dto } = await planPayload([
       entry({
         relPath: 'config.toml',
-        action: 'update',
-        scope: 'managed-block',
+        action: 'modify',
+        scope: 'marker-block',
         previous: bytes(toml('stary')),
         content: bytes(toml('nowy')),
       }),
       entry({
         relPath: 'settings.json',
-        action: 'update',
-        scope: 'json-keys',
+        action: 'modify',
+        scope: 'json-key',
         previous: bytes(settings('{}')),
         content: bytes(settings('{ "a": 1 }')),
       }),
@@ -87,7 +87,7 @@ describe('podglad diffu bez sekretow (kryterium 5)', () => {
         relPath: 'auth.json',
         previous: bytes('{ "account": "jan-acme" }\n'),
         content: bytes('{ "account": "ewa-acme" }\n'),
-        action: 'update',
+        action: 'modify',
       }),
       entry({
         relPath: 'notatka.md',
