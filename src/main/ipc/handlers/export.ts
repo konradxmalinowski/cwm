@@ -7,6 +7,7 @@ import {
   type ExportPlanReport,
   type ExportService,
 } from '../../../core/services/export/export-service';
+import { redactSecrets } from '../../../core/services/security/secret-redactor';
 import type {
   ExportApplyDto,
   ExportPlanDto,
@@ -56,6 +57,12 @@ export function previewText(bytes: Uint8Array | null): string | null {
   }
 }
 
+/** Podglad przechodzi redakcje sekretow, zanim opusci main; diff w rendererze liczy sie na wyniku. */
+function redactedPreview(bytes: Uint8Array | null, relPath: string): string | null {
+  const text = previewText(bytes);
+  return text === null ? null : redactSecrets(text, relPath).text;
+}
+
 function toEntryDto(entry: WritePlanEntry, entryId: string, rootLabel: string): PlanEntryDto {
   const isDirectory = entry.files !== null;
   return {
@@ -66,8 +73,8 @@ function toEntryDto(entry: WritePlanEntry, entryId: string, rootLabel: string): 
     scope: entry.scope,
     materialization: entry.materialization,
     itemIds: [...entry.itemIds],
-    before: isDirectory ? null : previewText(entry.previous),
-    after: isDirectory ? null : previewText(entry.content),
+    before: isDirectory ? null : redactedPreview(entry.previous, entry.relPath),
+    after: isDirectory ? null : redactedPreview(entry.content, entry.relPath),
     files: (entry.files ?? []).map((f) => f.relPath),
     recoverability: entry.recoverability?.status ?? 'blocked',
     blockedReason:
