@@ -81,6 +81,11 @@ export interface ToolAdapter {
 /** Warstwa wykrywania lokalizacji (ADR 0022). Jedyne miejsce, ktore zna sciezki narzedzi. */
 export interface LocationCatalog {
   detect(): Promise<readonly DetectedRoot[]>;
+  /**
+   * Czy istnieje katalog glowny narzedzia (`~/.claude`, `~/.codex`, z `CLAUDE_CONFIG_DIR` i
+   * `CODEX_HOME`). Katalogi wspoldzielone, jak `~/.agents`, o tym nie przesadzaja.
+   */
+  toolHomeExists(tool: ToolId): Promise<boolean>;
 }
 
 /**

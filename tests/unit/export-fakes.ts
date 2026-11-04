@@ -1,4 +1,4 @@
-import type { LoadedItem } from '../../src/core/model/item';
+import type { LoadedItem, ToolId } from '../../src/core/model/item';
 import type { ApplyReport, WritePlan, WritePlanEntry } from '../../src/core/model/plan';
 import type { DetectedRoot, ExportContext, ToolExporter } from '../../src/core/ports/tool-adapter';
 import type { WriteGate } from '../../src/core/ports/write-gate';
@@ -42,10 +42,15 @@ export function emptyPlan(overrides: Partial<WritePlan> = {}): WritePlan {
 }
 
 export class FakeExporter implements ToolExporter {
-  readonly id = 'claude-code' as const;
+  readonly id: ToolId;
   contexts: ExportContext[] = [];
   seen: LoadedItem[][] = [];
-  constructor(public build: (items: readonly LoadedItem[]) => WritePlan) {}
+  constructor(
+    public build: (items: readonly LoadedItem[]) => WritePlan,
+    tool: ToolId = 'claude-code',
+  ) {
+    this.id = tool;
+  }
   capabilities(): never {
     throw new Error('nieuzywane w tym tescie');
   }
@@ -88,6 +93,7 @@ export class FakeGate implements WriteGate {
 export async function exportHarness(
   options: {
     roots?: DetectedRoot[];
+    tool?: ToolId;
     build?: (items: readonly LoadedItem[]) => WritePlan;
     overrides?: Partial<ExportServiceDeps>;
   } = {},
@@ -106,6 +112,7 @@ export async function exportHarness(
             verdict: { level: 'full', reasons: [], lostAttributes: [], addedAttributes: [] },
           })),
         })),
+    options.tool,
   );
   const gate = new FakeGate();
   let counter = 0;

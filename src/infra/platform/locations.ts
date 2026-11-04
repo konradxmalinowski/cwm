@@ -81,6 +81,9 @@ const BASE_DIR: Record<Base, { readonly dir: string; readonly override?: string 
   agents: { dir: '.agents' },
 };
 
+/** Katalog glowny narzedzia; `agents` jest wspoldzielony i nie jest czyimkolwiek domem. */
+const TOOL_HOME: Record<ToolId, Base> = { 'claude-code': 'claude', codex: 'codex' };
+
 export type PathProbe = (absolutePath: string) => Promise<'directory' | 'file' | 'missing'>;
 
 /** Probe idzie za dowiazaniem: `~/.codex/skills` bywa dowiazaniem do katalogu z dotfiles. */
@@ -147,6 +150,10 @@ export class FsLocationCatalog implements LocationCatalog {
       });
     }
     return roots;
+  }
+
+  async toolHomeExists(tool: ToolId): Promise<boolean> {
+    return (await this.probe(this.baseDir(TOOL_HOME[tool]))) === 'directory';
   }
 
   /** Mapa zostaje w main: tylko czytnik zrodla pyta o sciezke, adaptery i renderer znaja `rootId`. */

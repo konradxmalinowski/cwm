@@ -157,3 +157,34 @@ describe('FsLocationCatalog z podstawionym systemem', () => {
     expect(await labelsFor('linux', '/home/acme')).toEqual(win);
   });
 });
+
+describe('toolHomeExists', () => {
+  it('~/.agents bez ~/.codex nie jest domem Codeksa', async () => {
+    const home = createTempTree('acme-home-');
+    dir(join(home, '.agents', 'skills'));
+    const catalog = new FsLocationCatalog(envFor(home), { salt: SALT });
+
+    expect(await catalog.toolHomeExists('codex')).toBe(false);
+    expect(await catalog.toolHomeExists('claude-code')).toBe(false);
+    dir(join(home, '.codex'));
+    expect(await catalog.toolHomeExists('codex')).toBe(true);
+  });
+
+  it('CODEX_HOME i CLAUDE_CONFIG_DIR wskazuja katalog glowny', async () => {
+    const home = createTempTree('acme-home-');
+    const custom = createTempTree('acme-custom-');
+    const catalog = new FsLocationCatalog(
+      envFor(home, { CODEX_HOME: custom, CLAUDE_CONFIG_DIR: join(home, 'brak') }),
+      { salt: SALT },
+    );
+    expect(await catalog.toolHomeExists('codex')).toBe(true);
+    expect(await catalog.toolHomeExists('claude-code')).toBe(false);
+  });
+
+  it('plik zamiast katalogu nie liczy sie jako dom', async () => {
+    const home = createTempTree('acme-home-');
+    writeFileSync(join(home, '.claude'), 'x');
+    const catalog = new FsLocationCatalog(envFor(home), { salt: SALT });
+    expect(await catalog.toolHomeExists('claude-code')).toBe(false);
+  });
+});

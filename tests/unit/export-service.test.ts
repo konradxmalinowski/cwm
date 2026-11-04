@@ -41,6 +41,7 @@ describe('ExportService.plan', () => {
 
   it('brak katalogu narzedzia: plan toolMissing bez wpisow, bez wołania eksportera i bramki', async () => {
     const h = await exportHarness({ roots: [root('r-claude', 'claude-code', { exists: false })] });
+    h.catalog.homes = new Set();
     const report = await h.service.plan('claude-code', [h.itemId]);
 
     expect(report.toolMissing).toBe(true);
@@ -49,6 +50,27 @@ describe('ExportService.plan', () => {
     expect(h.exporter.contexts).toHaveLength(0);
     expect(h.gate.probes).toBe(0);
     expect(await code(h.service.apply(report.planId, true))).toBe('unknown-plan');
+  });
+
+  it('tylko ~/.agents bez katalogu glownego Codeksa: toolMissing, zero wpisow', async () => {
+    const agents = root('r-agents', 'codex', { label: '~/.agents/skills' });
+    const h = await exportHarness({ roots: [agents], tool: 'codex' });
+    h.catalog.homes = new Set(); // ~/.codex nie istnieje
+    const report = await h.service.plan('codex', [h.itemId]);
+
+    expect(report.toolMissing).toBe(true);
+    expect(report.plan.entries).toEqual([]);
+    expect(h.exporter.contexts).toHaveLength(0);
+  });
+
+  it('katalog glowny jest: eksport do drugiego roota dziala', async () => {
+    const agents = root('r-agents', 'codex', { label: '~/.agents/skills' });
+    const h = await exportHarness({ roots: [agents], tool: 'codex' });
+    h.catalog.homes = new Set(['codex']);
+    const report = await h.service.plan('codex', [h.itemId]);
+
+    expect(report.toolMissing).toBe(false);
+    expect(h.exporter.contexts[0]?.roots.map((r) => r.rootId)).toEqual(['r-agents']);
   });
 
   it('narzedzie bez eksportera i pusty wybor sa odmowione', async () => {

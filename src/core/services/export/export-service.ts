@@ -3,12 +3,7 @@ import type { ApplyReport, WritePlan } from '../../model/plan';
 import type { Clock } from '../../ports/clock';
 import { cryptoRandomBytes } from '../../ports/id-generator';
 import type { SourceReader } from '../../ports/source-reader';
-import type {
-  DetectedRoot,
-  ExportContext,
-  LocationCatalog,
-  ToolExporter,
-} from '../../ports/tool-adapter';
+import type { ExportContext, LocationCatalog, ToolExporter } from '../../ports/tool-adapter';
 import type { LinkCapability, WriteGate } from '../../ports/write-gate';
 import type { LibraryService } from '../library/library-service';
 
@@ -158,7 +153,7 @@ export class ExportService {
     const now = this.deps.clock.now().toISOString();
 
     // Narzedzia nie ma na dysku: eksport odmowiony w calosci (decyzja 2026-11-03).
-    if (!roots.some((r: DetectedRoot) => r.exists)) {
+    if (!(await this.deps.catalog.toolHomeExists(tool))) {
       const empty: WritePlan = {
         planId,
         tool,

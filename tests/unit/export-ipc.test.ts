@@ -138,6 +138,7 @@ describe('kanaly export:*', () => {
 
   it('toolMissing wraca w DTO jako nieaplikowalny plan bez wpisow', async () => {
     const h = await exportHarness({ roots: [root('r-claude', 'claude-code', { exists: false })] });
+    h.catalog.homes = new Set();
     const { call } = wire(h.service);
     const r = await call<ExportPlanDto>('export:plan', {
       tool: 'claude-code',

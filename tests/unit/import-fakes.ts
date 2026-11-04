@@ -83,7 +83,12 @@ export function candidate(spec: CandidateSpec): ImportCandidate {
 }
 
 export class FakeCatalog implements LocationCatalog {
+  /** Narzedzia, ktorych katalog glowny istnieje; domyslnie wszystkie. */
+  homes: Set<ToolId> | null = null;
   constructor(public roots: DetectedRoot[]) {}
+  toolHomeExists(tool: ToolId): Promise<boolean> {
+    return Promise.resolve(this.homes === null || this.homes.has(tool));
+  }
   detect(): Promise<readonly DetectedRoot[]> {
     return Promise.resolve(this.roots);
   }
