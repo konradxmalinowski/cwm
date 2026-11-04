@@ -70,7 +70,7 @@ function extensionOf(name: string): string {
   return dot <= 0 ? '' : name.slice(dot);
 }
 
-function classifyFileName(relPath: string): SecretHit | null {
+export function classifyFileName(relPath: string): SecretHit | null {
   const name = baseName(relPath).toLowerCase();
   const ext = extensionOf(name);
   const make = (confidence: SecretConfidence, reason: string): SecretHit => ({
@@ -97,12 +97,12 @@ function classifyFileName(relPath: string): SecretHit | null {
   return null;
 }
 
-interface KnownPattern {
+export interface KnownPattern {
   readonly pattern: RegExp;
   readonly reason: string;
 }
 
-const KNOWN_PATTERNS: readonly KnownPattern[] = [
+export const KNOWN_PATTERNS: readonly KnownPattern[] = [
   {
     pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/,
     reason: 'Linia zaczyna blok klucza prywatnego (-----BEGIN ... PRIVATE KEY-----).',
@@ -137,11 +137,11 @@ const KNOWN_PATTERNS: readonly KnownPattern[] = [
   },
 ];
 
-const SENSITIVE_KEY =
+export const SENSITIVE_KEY =
   /(?:api[_-]?key|access[_-]?key|private[_-]?key|secret|token|passw(?:or)?d|credential)/i;
 
 /** Klucz: wartosc w YAML, TOML, JSON, .env i frontmatterze. Grupy: nazwa klucza, wartosc. */
-const ASSIGNMENT =
+export const ASSIGNMENT =
   /(?:^|[\s{,[(])["']?([A-Za-z0-9_.-]{0,60}(?:api[_-]?key|access[_-]?key|private[_-]?key|secret|token|passw(?:or)?d|credential)[A-Za-z0-9_.-]{0,60})["']?\s*[:=]\s*["']?([^\s"',;#]+)/gi;
 
 const PLACEHOLDER_FRAGMENTS = [
@@ -167,7 +167,7 @@ function looksLikePlaceholder(value: string): boolean {
 }
 
 /** Wartosc wyglada jak sekret, a nie jak slowo, liczba albo nazwa: litery i cyfry albo wysoka entropia. */
-function looksLikeSecretValue(value: string): boolean {
+export function looksLikeSecretValue(value: string): boolean {
   if (value.length < 8 || looksLikePlaceholder(value)) return false;
   const hasLetter = /[A-Za-z]/.test(value);
   const hasDigit = /\d/.test(value);
@@ -187,11 +187,11 @@ export function shannonEntropy(value: string): number {
   return entropy;
 }
 
-const ENTROPY_MIN_LENGTH = 32;
+export const ENTROPY_MIN_LENGTH = 32;
 const ENTROPY_THRESHOLD = 4.2;
-const LONG_TOKEN = /[A-Za-z0-9_+=-]{32,}/g;
+export const LONG_TOKEN = /[A-Za-z0-9_+=-]{32,}/g;
 
-function isEntropyCandidate(token: string): boolean {
+export function isEntropyCandidate(token: string): boolean {
   // Hash gita albo sumy kontrolnej to hex: w dokumentacji skilli wystepuje czesto i nie jest sekretem.
   if (/^[0-9a-fA-F]+$/.test(token)) return false;
   // Sumy integralnosci (sha512-...) wyrazenie zwykle lapie razem z prefiksem.

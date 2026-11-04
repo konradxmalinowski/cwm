@@ -6,6 +6,7 @@ import type { ImportService } from '../core/services/import/import-service';
 import type { LibraryService } from '../core/services/library/library-service';
 import { IndexStoreOpenError, SqliteIndexStore } from '../infra/db/index-store';
 import { quarantineIndex } from '../infra/db/quarantine';
+import { createLogger, logFilePath, type Logger } from '../infra/logging/logger';
 import { redactHomePath } from '../infra/logging/redact';
 import { databaseFile, quarantineRoot, rendererRoot } from './bootstrap/paths';
 import { startIndex, type IndexOpenFailure } from './bootstrap/index-startup';
@@ -30,15 +31,26 @@ let libraryService: LibraryService | null = null;
 let importService: ImportService | null = null;
 let exportService: ExportService | null = null;
 
+let loggerInstance: Logger | null = null;
+
+/** Jedyny kanal logowania procesu glownego: redakcja sekretow i katalogu domowego jest wbudowana. */
+function log(): Logger {
+  loggerInstance ??= createLogger({
+    logFile: logFilePath(app.getPath('userData')),
+    homeDir: homedir(),
+  });
+  return loggerInstance;
+}
+
 function logImportError(error: unknown): void {
-  console.error(
+  log().error(
     '[uasm] nieoczekiwany blad importu:',
     error instanceof Error ? error.name : 'nieznany',
   );
 }
 
 function logExportError(error: unknown): void {
-  console.error(
+  log().error(
     '[uasm] nieoczekiwany blad eksportu:',
     error instanceof Error ? error.name : 'nieznany',
   );
@@ -58,7 +70,7 @@ function reportIndexStartup(info: IndexStartupInfo): void {
   // konczenia procesu - inaczej okno, ktore ma pokazac powod, zniknelo by
   // razem z aplikacja.
   if (info.outcome === 'refused') {
-    console.error(
+    log().error(
       '[uasm] indeks nie zostal otwarty:',
       info.reason ?? 'nieznana przyczyna',
       info.message ?? '',
@@ -67,7 +79,7 @@ function reportIndexStartup(info: IndexStartupInfo): void {
     return;
   }
 
-  console.warn(
+  log().warn(
     '[uasm] indeks byl uszkodzony i zostal odbudowany; stary plik:',
     info.quarantinedAs ?? '(brak)',
   );
@@ -108,7 +120,7 @@ function start(): void {
     registerLibraryHandlers(registry, {
       service: () => libraryService,
       logUnexpected: (error) => {
-        console.error(
+        log().error(
           '[uasm] nieoczekiwany blad biblioteki:',
           error instanceof Error ? error.name : 'nieznany',
         );
@@ -136,7 +148,7 @@ function start(): void {
     const library = startLibrary(userData, () => indexState.store);
     libraryService = library.service;
     if (library.failure !== undefined)
-      console.error('[uasm] biblioteka niedostepna:', library.failure);
+      log().error('[uasm] biblioteka niedostepna:', library.failure);
     if (library.service !== null) {
       importService = startImport(library.service, logImportError);
       exportService = startExport(library.service, logExportError, {
