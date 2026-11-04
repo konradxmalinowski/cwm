@@ -19,6 +19,95 @@ import tseslint from 'typescript-eslint';
 const FS_MODULES = ['fs', 'node:fs', 'fs/promises', 'node:fs/promises'];
 const PROCESS_MODULES = ['child_process', 'node:child_process'];
 
+/**
+ * Funkcje zapisujace i zmieniajace system plikow (ADR 0012, ROADMAP Etap 5 kryterium 1).
+ * `open`/`openSync` sa na liscie, bo uchwyt otwarty do zapisu omija reszte. `promises` i import
+ * przestrzeni nazw (`* as fs`) tez lapie regula, zeby nie dalo sie obejsc listy aliasem.
+ */
+const FS_WRITE_NAMES = [
+  'default',
+  'promises',
+  'writeFile',
+  'writeFileSync',
+  'appendFile',
+  'appendFileSync',
+  'rename',
+  'renameSync',
+  'unlink',
+  'unlinkSync',
+  'rm',
+  'rmSync',
+  'rmdir',
+  'rmdirSync',
+  'symlink',
+  'symlinkSync',
+  'link',
+  'linkSync',
+  'mkdir',
+  'mkdirSync',
+  'mkdtemp',
+  'mkdtempSync',
+  'chmod',
+  'chmodSync',
+  'lchmod',
+  'lchmodSync',
+  'chown',
+  'chownSync',
+  'lchown',
+  'lchownSync',
+  'copyFile',
+  'copyFileSync',
+  'cp',
+  'cpSync',
+  'truncate',
+  'truncateSync',
+  'utimes',
+  'utimesSync',
+  'lutimes',
+  'lutimesSync',
+  'open',
+  'openSync',
+  'createWriteStream',
+  'write',
+  'writeSync',
+  'writev',
+  'writevSync',
+  'opendir',
+];
+
+/**
+ * Dozwolona lista miejsc zapisu, wynik inwentaryzacji grepem po `src/` (Etap 5). Kazdy wpis ma
+ * powod. Plik spoza listy, ktory potrzebuje zapisu, idzie przez `WriteGate` albo trafia tu
+ * z uzasadnieniem w przegladzie; regula nie jest wylaczana komentarzem nigdzie.
+ */
+const FS_WRITE_ALLOWED = [
+  // Prymityw zapisu atomowego, z ktorego korzysta WriteGate (ADR 0031).
+  'src/infra/fs/atomic.ts',
+  // Sama bramka zapisu (ADR 0012): mkdir/rm/rmdir przy materializacji i rollbacku.
+  'src/infra/fs/write-gate.ts',
+  // Wykrywanie zdolnosci dowiazan: probne symlink/link w katalogu tymczasowym.
+  'src/infra/fs/link-mode.ts',
+  // Odczyt z limitem rozmiaru. Uzywa `open` wylacznie z O_RDONLY, ale `open` jest na liscie
+  // zakazanych, bo uchwyt do zapisu omijalby bramke.
+  'src/infra/fs/bounded-read.ts',
+  // Wlasna biblioteka uzytkownika w userData (ADR 0014), poza konfiguracja narzedzi.
+  'src/infra/library/**',
+  // Content store i backupy w userData (ADR 0019).
+  'src/infra/store/**',
+  // Kwarantanna uszkodzonego indeksu (ADR 0029) i tworzenie katalogu bazy.
+  'src/infra/db/**',
+  // Logger do userData/logs/app.log (ADR 0014).
+  'src/infra/logging/**',
+  // Testy buduja i sprzataja drzewa tymczasowe; izolacja jest pilnowana przez harness.
+  'tests/**',
+  // Skrypty deweloperskie i buildowe nie sa czescia aplikacji.
+  'scripts/**',
+];
+
+const FS_MODULE_NAMES = ['fs', 'node:fs', 'fs/promises', 'node:fs/promises'];
+const FS_WRITE_MESSAGE =
+  'Zapis do systemu plikow tylko przez WriteGate albo z dozwolonej listy (ADR 0012, eslint.config.mjs).';
+
 export default tseslint.config(
   {
     ignores: [
@@ -77,6 +166,36 @@ export default tseslint.config(
             { target: './src/renderer', from: './src/adapters' },
             { target: './src/renderer', from: './src/preload' },
           ],
+        },
+      ],
+    },
+  },
+
+  // Zapis tylko przez bramke. Blok stoi PRZED blokami per warstwa: te zakazuja fs w calosci
+  // i nadpisuja ten, wiec core/, adapters/ i renderer/ nadal widza swoje komunikaty.
+  {
+    files: ['src/**/*.ts'],
+    ignores: FS_WRITE_ALLOWED,
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: FS_MODULE_NAMES.map((name) => ({
+            name,
+            importNames: FS_WRITE_NAMES,
+            message: FS_WRITE_MESSAGE,
+          })),
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: `CallExpression[callee.name='require'][arguments.0.value=/^(node:)?fs(\\/promises)?$/]`,
+          message: FS_WRITE_MESSAGE,
+        },
+        {
+          selector: `ImportExpression[source.value=/^(node:)?fs(\\/promises)?$/]`,
+          message: FS_WRITE_MESSAGE,
         },
       ],
     },
@@ -167,6 +286,12 @@ export default tseslint.config(
     languageOptions: {
       globals: { ...globals.node },
     },
+  },
+
+  // Proces glowny loguje wylacznie przez logger z redakcja (ARCHITECTURE 8.4): zadnego console.*.
+  {
+    files: ['src/main/**/*.ts'],
+    rules: { 'no-console': 'error' },
   },
 
   {

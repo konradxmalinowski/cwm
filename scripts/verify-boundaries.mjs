@@ -61,6 +61,91 @@ const cases = [
     code: "import { IpcRegistry } from '../main/ipc/registry';\n\nexport const probe = IpcRegistry;\n",
     expect: 'import-x/no-restricted-paths',
   },
+  // Zapis tylko przez bramke (ADR 0012, Etap 5 kryterium 1): proby poza dozwolona lista.
+  {
+    label: 'core/ zapisuje do pliku (writeFile)',
+    file: `src/core/services/${PROBE}`,
+    code: "import { writeFile } from 'node:fs/promises';\n\nexport const probe = writeFile;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'handler IPC w main/ zapisuje do pliku (writeFile)',
+    file: `src/main/ipc/handlers/${PROBE}`,
+    code: "import { writeFile } from 'node:fs/promises';\n\nexport const probe = writeFile;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'main/ tworzy katalog synchronicznie (mkdirSync)',
+    file: `src/main/bootstrap/${PROBE}`,
+    code: "import { mkdirSync } from 'node:fs';\n\nexport const probe = mkdirSync;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/fs/ poza lista zapisuje (rename)',
+    file: `src/infra/fs/${PROBE}`,
+    code: "import { rename } from 'node:fs/promises';\n\nexport const probe = rename;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/source/ otwiera uchwyt (open)',
+    file: `src/infra/source/${PROBE}`,
+    code: "import { open } from 'node:fs/promises';\n\nexport const probe = open;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'main/ importuje przestrzen nazw fs (omiecie listy aliasem)',
+    file: `src/main/${PROBE}`,
+    code: "import * as fs from 'node:fs';\n\nexport const probe = fs;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'main/ importuje domyslny eksport fs',
+    file: `src/main/${PROBE}`,
+    code: "import fs from 'node:fs';\n\nexport const probe = fs;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'main/ laduje fs przez require',
+    file: `src/main/${PROBE}`,
+    code: "export const probe = require('node:fs');\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'main/ laduje fs/promises dynamicznym importem',
+    file: `src/main/${PROBE}`,
+    code: "export const probe = import('node:fs/promises');\n",
+    expect: 'no-restricted-syntax',
+  },
+];
+
+// Proby pozytywne: lint nie moze zglosic niczego. Dowodza, ze regula zapisu jest wasko
+// ograniczona do listy, a nie wylacza ani nie zabija kodu, ktory ma prawo zapisywac.
+const passCases = [
+  {
+    label: 'dozwolone: infra/library/ zapisuje',
+    file: `src/infra/library/${PROBE}`,
+    code: "import { writeFile, mkdir } from 'node:fs/promises';\n\nexport const probe = [writeFile, mkdir];\n",
+  },
+  {
+    label: 'dozwolone: infra/store/ zapisuje',
+    file: `src/infra/store/${PROBE}`,
+    code: "import { rm } from 'node:fs/promises';\n\nexport const probe = rm;\n",
+  },
+  {
+    label: 'dozwolone: infra/logging/ zapisuje',
+    file: `src/infra/logging/${PROBE}`,
+    code: "import { appendFileSync } from 'node:fs';\n\nexport const probe = appendFileSync;\n",
+  },
+  {
+    label: 'dozwolone: infra/db/ zapisuje',
+    file: `src/infra/db/${PROBE}`,
+    code: "import { renameSync } from 'node:fs';\n\nexport const probe = renameSync;\n",
+  },
+  {
+    label: 'odczyt z main/ nie jest zapisem (readFile, stat)',
+    file: `src/main/ipc/handlers/${PROBE}`,
+    code: "import { readFile, stat } from 'node:fs/promises';\n\nexport const probe = [readFile, stat];\n",
+  },
 ];
 
 const control = {
@@ -71,6 +156,21 @@ const control = {
 
 const eslint = new ESLint({ cwd: process.cwd() });
 const failures = [];
+
+for (const passCase of passCases) {
+  await writeProbe(passCase.file, passCase.code);
+  try {
+    const rules = await lint(passCase.file);
+    if (rules.length === 0) {
+      process.stdout.write(`PASS  ${passCase.label}\n`);
+    } else {
+      failures.push(`${passCase.label}: lint zglosil [${rules.join(', ')}]`);
+      process.stdout.write(`FAIL  ${passCase.label} -> [${rules.join(', ')}]\n`);
+    }
+  } finally {
+    await rm(passCase.file, { force: true });
+  }
+}
 
 // Katalogi warstw moga byc jeszcze puste (git nie sledzi pustych katalogow),
 // a proba granicy musi dac sie zapisac takze w swiezym klonie.
@@ -120,5 +220,5 @@ if (failures.length > 0) {
 }
 
 process.stdout.write(
-  `\nwszystkie ${cases.length + 1} proby granic zachowaly sie zgodnie z oczekiwaniem\n`,
+  `\nwszystkie ${cases.length + passCases.length + 1} proby granic zachowaly sie zgodnie z oczekiwaniem\n`,
 );

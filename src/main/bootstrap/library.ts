@@ -1,12 +1,10 @@
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { systemClock } from '../../core/ports/clock';
 import { createUlidGenerator, cryptoRandomBytes } from '../../core/ports/id-generator';
 import type { IndexStore } from '../../core/ports/index-store';
 import type { OperationLog, OperationRecord } from '../../core/ports/operation-log';
 import { LibraryService } from '../../core/services/library/library-service';
 import { SqliteIndexStore } from '../../infra/db/index-store';
+import { ensureLibraryDirs } from '../../infra/library/ensure-dirs';
 import { FsLibraryStore } from '../../infra/library/library-store';
 import { FsObjectStore } from '../../infra/store/object-store';
 import { libraryRoot, objectsRoot } from './paths';
@@ -46,8 +44,7 @@ export function startLibrary(
   const library = libraryRoot(userDataDir);
   const objects = objectsRoot(userDataDir);
   try {
-    mkdirSync(join(library, 'items'), { recursive: true });
-    mkdirSync(objects, { recursive: true });
+    ensureLibraryDirs(library, objects);
   } catch (error: unknown) {
     const code =
       typeof error === 'object' && error !== null && 'code' in error
