@@ -1,10 +1,14 @@
-import type { ItemAttributes, JsonValue, ReasoningDepth } from '../../core/model/item';
+import type { ItemAttributes, ItemDraft, JsonValue, ReasoningDepth } from '../../core/model/item';
 import { isIgnoredPath } from '../../core/model/library-file-names';
-import { SourceReadError, type SourceEntry } from '../../core/ports/source-reader';
+import {
+  SourceReadError,
+  type SourceEntry,
+  type SourceReader,
+} from '../../core/ports/source-reader';
 import type { ImportWarning } from '../../core/ports/tool-adapter';
 import { slugDeclaredNameWarning } from '../../core/services/library/validate';
 import { deriveDescription, deriveSlug } from '../shared/slug';
-import type { ScanContext } from '../shared/scan-context';
+import { ScanContext } from '../shared/scan-context';
 import { TextDecodeError, toParsableText } from '../shared/text';
 import { readToml, tomlString, tomlToJson, type TomlIssue, type TomlValue } from '../shared/toml';
 
@@ -19,7 +23,7 @@ const KNOWN_AGENT_KEYS = new Set([
 
 // Przyblizenie, bo poziomow Codeksa jest wiecej niz trzy (ADR 0023). Nieznana wartosc zostaje
 // w `unmappedKeys`, a dokladny tekst i tak jest w snapshocie.
-const EFFORT_DEPTH: Readonly<Record<string, ReasoningDepth>> = {
+export const EFFORT_DEPTH: Readonly<Record<string, ReasoningDepth>> = {
   minimal: 'routine',
   low: 'routine',
   medium: 'deep',
@@ -368,4 +372,34 @@ export function registeredFile(entry: RegistryEntry): string | null {
   if (entry.configFile === null) return null;
   const target = registryTarget(entry.configFile);
   return target !== null && /^agents\/[^/]+$/.test(target) ? target.slice('agents/'.length) : null;
+}
+
+/** Czytnik, ktory nigdy nie jest wolany: `buildAgent` dostaje bajty, nie czyta zrodla. */
+const NO_READER: SourceReader = {
+  list: () => Promise.reject(new Error('Czytnik nie jest uzywany przy parsowaniu bajtow.')),
+  read: () => Promise.reject(new Error('Czytnik nie jest uzywany przy parsowaniu bajtow.')),
+  resolveSymlink: () =>
+    Promise.reject(new Error('Czytnik nie jest uzywany przy parsowaniu bajtow.')),
+  mode: () => Promise.resolve(null),
+};
+
+/** Szkic agenta z samych bajtow pliku `.toml` (eksport porownuje nim snapshot z elementem). */
+export function parseAgentDraft(bytes: Uint8Array, stem: string): ItemDraft | null {
+  const ctx = new ScanContext(
+    'codex',
+    { rootId: 'parse', tool: 'codex', kind: 'agents', label: 'agents', exists: true, active: true },
+    NO_READER,
+  );
+  buildAgent(ctx, { display: `${stem}.toml`, stem, bytes, mode: null, aliasKey: '' });
+  return ctx.candidates[0]?.draft ?? null;
+}
+
+/** `model_reasoning_effort` z pliku agenta albo null. */
+export function agentEffort(bytes: Uint8Array): string | null {
+  try {
+    const parsed = readToml(toParsableText(bytes), (path, array) => path.length === 0 && !array);
+    return textOrNull(parsed.tables[0]?.values.get('model_reasoning_effort'));
+  } catch {
+    return null;
+  }
 }

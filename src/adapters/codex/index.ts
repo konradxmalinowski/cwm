@@ -1,12 +1,15 @@
 import { SourceReadError, type SourceReader } from '../../core/ports/source-reader';
 import type {
   DetectedRoot,
+  ExportContext,
   ImportWarning,
   RootKind,
   ScanResult,
   ToolAdapter,
+  ToolExporter,
 } from '../../core/ports/tool-adapter';
-import type { JsonValue } from '../../core/model/item';
+import type { JsonValue, LibraryItem, LoadedItem } from '../../core/model/item';
+import type { CompatibilityVerdict, WritePlan } from '../../core/model/plan';
 import { addHookCandidates, isRecord } from '../shared/hooks';
 import { scanInstructionFile } from '../shared/instructions';
 import type { ImportCandidate, RootScan } from '../../core/ports/tool-adapter';
@@ -14,12 +17,13 @@ import type { MarkdownItem } from '../shared/markdown-item';
 import { ScanContext, unsupportedRootKind } from '../shared/scan-context';
 import { scanSkillsRoot } from '../shared/skills';
 import { TextDecodeError, toParsableText } from '../shared/text';
+import { codexCapabilities, planCodex } from './export';
 import { readRegistry, registeredFile, reportRegistry, scanCodexAgents } from './agents';
 
 const NAME = 'OpenAI Codex';
 
-/** Adapter Codeksa w zakresie importu (Etap 3). `plan`, `apply` i `verify` dojda w Etapie 4. */
-export class CodexAdapter implements ToolAdapter {
+/** Adapter Codeksa: import (Etap 3) i plan eksportu (Etap 4). Zapis robi `WriteGate`. */
+export class CodexAdapter implements ToolAdapter, ToolExporter {
   readonly id = 'codex' as const;
   readonly displayName = NAME;
   readonly rootKinds: readonly RootKind[] = [
@@ -29,6 +33,14 @@ export class CodexAdapter implements ToolAdapter {
     'global-instructions',
     'hooks',
   ];
+
+  capabilities(item: LibraryItem): CompatibilityVerdict {
+    return codexCapabilities(item);
+  }
+
+  plan(items: readonly LoadedItem[], ctx: ExportContext): Promise<WritePlan> {
+    return planCodex(items, ctx);
+  }
 
   async scan(root: DetectedRoot, reader: SourceReader): Promise<ScanResult> {
     const ctx = new ScanContext(this.id, root, reader);

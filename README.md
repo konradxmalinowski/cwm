@@ -248,9 +248,10 @@ Kryterium akceptacji Etapu 1 punkt 5: kazda pozycja w `package.json` ma powod.
 
 ### Runtime (ida do paczki)
 
-| Pakiet           | Powod                                                                              |
-| ---------------- | ---------------------------------------------------------------------------------- |
-| `better-sqlite3` | indeks metadanych, FTS5, synchroniczne API pasujace do procesu glownego (ADR 0007) |
+| Pakiet           | Powod                                                                                                                                                           |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `better-sqlite3` | indeks metadanych, FTS5, synchroniczne API pasujace do procesu glownego (ADR 0007)                                                                              |
+| `smol-toml`      | niezalezny parser TOML do weryfikacji semantycznej edycji `config.toml` w `SegmentTomlEditor` (ADR 0011); zapisu nie robi, wiec komentarze uzytkownika nie gina |
 
 ### Budowanie i testy (nie ida do paczki)
 
