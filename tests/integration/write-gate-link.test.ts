@@ -284,3 +284,71 @@ describe('materializacja: rollback', () => {
     expect(read(victim)).toBe('cudza');
   });
 });
+
+describe('probe rozpoznaje brak zmian dla link (po udanym zapisie)', () => {
+  const skill = (a = 'a') =>
+    entry({
+      action: 'link',
+      relPath: 'acme-skill',
+      content: null,
+      files: [
+        { relPath: 'SKILL.md', bytes: text(a) },
+        { relPath: 'refs/n.md', bytes: text('b') },
+      ],
+    });
+  // `previous` odzwierciedla to, co adapter widzi na dysku przy kopii; przy linku nie jest sprawdzane.
+  const plan = (skillContent = 'a', id = 'plan-x', seen = false) =>
+    makePlan(
+      [
+        skill(skillContent),
+        linkFile(seen ? { previous: text('tresc\n') } : {}),
+        entry({
+          action: 'link',
+          relPath: 'drugi.md',
+          content: text('d'),
+          previous: seen ? text('d') : null,
+        }),
+      ],
+      { planId: id },
+    );
+
+  posixOnly('apply, potem probe tego samego planu: wszystkie wpisy sa unchanged', async () => {
+    const f = makeFixture({ capability: ALL_LINKS });
+    await run(f, plan());
+    const probed = await f.gate.probe(plan('a', 'plan-2'));
+    expect(probed.entries.map((e) => e.action)).toEqual(['unchanged', 'unchanged', 'unchanged']);
+    expect(probed.applicable).toBe(true);
+    const report = await f.gate.apply(probed, { planId: probed.planId });
+    expect(report.backupId).toBe('');
+    expect(report.entries.map((e) => e.outcome)).toEqual(['unchanged', 'unchanged', 'unchanged']);
+  });
+
+  posixOnly('zmiana jednego pliku skilla daje link tylko dla tego wpisu', async () => {
+    const f = makeFixture({ capability: ALL_LINKS });
+    await run(f, plan());
+    const probed = await f.gate.probe(plan('zmienione', 'plan-2'));
+    expect(probed.entries.map((e) => e.action)).toEqual(['link', 'unchanged', 'unchanged']);
+  });
+
+  posixOnly('dowiazanie wskazujace gdzie indziej zostaje link z podmiana', async () => {
+    const f = makeFixture({ capability: ALL_LINKS });
+    await run(f, plan());
+    const { rmSync } = await import('node:fs');
+    rmSync(join(f.skillsRoot, 'drugi.md'));
+    const elsewhere = join(f.outside, 'inny.md');
+    writeFileSync(elsewhere, 'd');
+    symlinkSync(elsewhere, join(f.skillsRoot, 'drugi.md'));
+    const probed = await f.gate.probe(plan('a', 'plan-2'));
+    expect(probed.entries.map((e) => e.action)).toEqual(['unchanged', 'unchanged', 'link']);
+  });
+
+  it('kopia (tryb copy) o identycznej tresci tez jest unchanged, zmieniona nie', async () => {
+    const f = makeFixture({ capability: NO_LINKS });
+    await run(f, plan());
+    const same = await f.gate.probe(plan('a', 'plan-2', true));
+    expect(same.entries.map((e) => e.action)).toEqual(['unchanged', 'unchanged', 'unchanged']);
+    expect(same.entries[0]?.warnings).toEqual([]);
+    const changed = await f.gate.probe(plan('nowe', 'plan-3', true));
+    expect(changed.entries.map((e) => e.action)).toEqual(['link', 'unchanged', 'unchanged']);
+  });
+});

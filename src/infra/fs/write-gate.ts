@@ -266,7 +266,10 @@ export class FsWriteGate implements WriteGate {
           ? { status: 'blocked', reason: analysis?.reason ?? 'Nie sprawdzono wpisu.', probedAt }
           : { status: 'recoverable', reason: null, probedAt };
       const resolved = analysis?.resolved ?? null;
+      // Adapter nie widzi celu dowiazania ani userData, wiec to brama stwierdza, ze nic sie nie zmieni.
+      const idle = entry.action === 'link' && resolved !== null && this.changesNothing(resolved);
       const warnings =
+        !idle &&
         resolved?.note !== null &&
         resolved?.note !== undefined &&
         !entry.warnings.includes(resolved.note)
@@ -274,6 +277,7 @@ export class FsWriteGate implements WriteGate {
           : entry.warnings;
       return {
         ...entry,
+        action: idle ? 'unchanged' : entry.action,
         materialization: resolved?.effective ?? entry.materialization,
         warnings,
         recoverability: verdict,
@@ -283,6 +287,22 @@ export class FsWriteGate implements WriteGate {
       entries.every((e) => e.recoverability?.status === 'recoverable') &&
       plan.conflicts.length === 0;
     return { ...plan, entries, applicable };
+  }
+
+  /** Link wskazuje na nasza materializacje o tej samej tresci, albo kopia ma tresc identyczna z planem. */
+  private changesNothing(resolved: Resolved): boolean {
+    if (resolved.kind === 'link' && resolved.link !== null) {
+      return (
+        resolved.link.alreadyLinked &&
+        sameMaterial(resolved.link.materialBefore, resolved.link.material)
+      );
+    }
+    return (
+      resolved.kind === 'files' &&
+      resolved.dirLink === null &&
+      resolved.ops.length > 0 &&
+      resolved.ops.every((op) => op.unchanged)
+    );
   }
 
   // --- apply ---
