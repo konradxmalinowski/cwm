@@ -253,6 +253,14 @@
                 plików, zanim spróbujesz jeszcze raz.
               </p>
               <p class="row-actions">
+                <button
+                  type="button"
+                  class="btn btn--primary"
+                  data-testid="export-replan"
+                  (click)="replan()"
+                >
+                  Przygotuj plan od nowa
+                </button>
                 <button type="button" class="btn" (click)="backToSelection()">
                   Wróć do wyboru
                 </button>
@@ -602,7 +610,7 @@
                 type="button"
                 class="btn btn--primary"
                 data-testid="export-apply"
-                [disabled]="!p.applicable"
+                [disabled]="!p.applicable || applyError() !== null"
                 [attr.aria-describedby]="p.applicable ? null : 'export-blockers'"
                 (click)="openConfirm()"
               >

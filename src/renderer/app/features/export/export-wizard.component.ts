@@ -363,6 +363,12 @@ export class ExportWizardComponent {
     this.phase.set('select');
   }
 
+  /** Plan jest jednorazowy: po nieudanym zapisie trzeba go przygotowac od nowa z tym samym wyborem. */
+  protected replan(): void {
+    this.backToSelection();
+    void this.preparePlan();
+  }
+
   protected titleOf(itemId: string): string {
     return this.titlesById().get(itemId) ?? 'Element spoza planu';
   }
