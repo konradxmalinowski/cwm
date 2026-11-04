@@ -1,4 +1,4 @@
-import type { ItemId, ItemKind, Sha256, Timestamp } from '../model/item';
+import type { ItemId, ItemKind, Sha256, Timestamp, ToolId } from '../model/item';
 
 export type OperationType =
   | 'create'
@@ -7,7 +7,11 @@ export type OperationType =
   | 'adopt-disk'
   | 'restore'
   /** Eksport do konfiguracji narzedzia przez WriteGate (ADR 0012). */
-  | 'export';
+  | 'export'
+  /** Synchronizacja z narzedziem (eksport albo przyjecie zmian z narzedzia, Etap 5). */
+  | 'sync'
+  /** Cofniecie wczesniejszego zapisu do narzedzia z jego kopii (ADR 0019). */
+  | 'rollback';
 
 export interface OperationState {
   readonly revision: number;
@@ -31,8 +35,37 @@ export interface OperationRecord {
   readonly before: OperationState | null;
   /** `null` przy `delete`. */
   readonly after: OperationState | null;
+  /** Narzedzie, do ktorego zapisano (operacje zapisu do konfiguracji). */
+  readonly tool?: ToolId;
+  /** Kopia `backups/<id>` zrobiona przed zapisem; pusta lub brak, gdy nic nie zapisano. */
+  readonly backupId?: string;
+  /** `backupId` operacji, ktora ten zapis cofa. */
+  readonly reverts?: string;
 }
 
 export interface OperationLog {
   append(record: OperationRecord): Promise<void>;
+}
+
+/** Wiersz logu razem z numerem kolejnym; nowsze operacje maja wiekszy `seq`. */
+export interface OperationRow extends OperationRecord {
+  readonly seq: number;
+}
+
+/**
+ * Wiersze jednej operacji zapisu: wszystkie z tym samym `backupId` (eksport zapisuje wiersz na
+ * element, synchronizacja dodaje swoje). Operacja bez kopii to grupa z jednego wiersza.
+ */
+export interface OperationGroup {
+  /** `backup:<id>` albo `seq:<n>`; stabilny identyfikator operacji w historii. */
+  readonly key: string;
+  readonly rows: readonly OperationRow[];
+}
+
+export interface OperationLogReader {
+  /** Grupy od najnowszej; `before` to klucz grupy, od ktorej (wylacznie) czytamy dalej. */
+  groups(limit: number, before?: string): Promise<readonly OperationGroup[]>;
+  group(key: string): Promise<OperationGroup | null>;
+  /** Klucz grupy, ktora cofnela kopie `backupId`, albo null. */
+  revertedBy(backupId: string): Promise<string | null>;
 }

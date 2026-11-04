@@ -127,5 +127,5 @@ export async function exportHarness(
     newPlanId: () => `plan-${++counter}`,
     ...options.overrides,
   });
-  return { ...lib, itemId, catalog, exporter, gate, service };
+  return { ...lib, library: lib.service, itemId, catalog, exporter, gate, service };
 }

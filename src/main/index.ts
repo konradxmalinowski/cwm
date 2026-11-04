@@ -3,6 +3,8 @@ import { app, ipcMain, BrowserWindow } from 'electron';
 import type { IndexStartupInfo } from '../core/model/index-health';
 import type { ExportService } from '../core/services/export/export-service';
 import type { ImportService } from '../core/services/import/import-service';
+import type { HistoryService } from '../core/services/history/history-service';
+import type { SyncService } from '../core/services/sync/sync-service';
 import type { LibraryService } from '../core/services/library/library-service';
 import { IndexStoreOpenError, SqliteIndexStore } from '../infra/db/index-store';
 import { quarantineIndex } from '../infra/db/quarantine';
@@ -18,6 +20,7 @@ import { startImport } from './bootstrap/import';
 import { startLibrary } from './bootstrap/library';
 import { registerDiagnosticsHandler, type IndexState } from './ipc/handlers/diagnostics';
 import { registerExportHandlers } from './ipc/handlers/export';
+import { registerSyncHandlers } from './ipc/handlers/sync';
 import { registerImportHandlers } from './ipc/handlers/import';
 import { registerLibraryHandlers } from './ipc/handlers/library';
 import { IpcRegistry } from './ipc/registry';
@@ -30,6 +33,8 @@ let indexState: IndexState = { store: null, info: { outcome: 'refused' } };
 let libraryService: LibraryService | null = null;
 let importService: ImportService | null = null;
 let exportService: ExportService | null = null;
+let syncService: SyncService | null = null;
+let historyService: HistoryService | null = null;
 
 let loggerInstance: Logger | null = null;
 
@@ -134,6 +139,11 @@ function start(): void {
       service: () => exportService,
       logUnexpected: logExportError,
     });
+    registerSyncHandlers(registry, {
+      sync: () => syncService,
+      history: () => historyService,
+      logUnexpected: logExportError,
+    });
     registry.assertImplementedRegistered();
 
     // Okno powstaje PRZED otwarciem indeksu (ADR 0029 punkt 3). Odmowa startu
@@ -151,10 +161,16 @@ function start(): void {
       log().error('[uasm] biblioteka niedostepna:', library.failure);
     if (library.service !== null) {
       importService = startImport(library.service, logImportError);
-      exportService = startExport(library.service, logExportError, {
+      void startExport(library.service, logExportError, {
         userDataDir: userData,
         indexStore: () => indexState.store,
-      });
+      })
+        .then((started) => {
+          exportService = started.exports;
+          syncService = started.sync;
+          historyService = started.history;
+        })
+        .catch(logExportError);
     }
 
     const dbPath = databaseFile(userData);

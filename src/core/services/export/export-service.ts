@@ -1,4 +1,4 @@
-import type { ItemId, LoadedItem, ToolId } from '../../model/item';
+import type { ItemId, LoadedItem, Sha256, ToolId } from '../../model/item';
 import type { ApplyReport, WritePlan } from '../../model/plan';
 import type { Clock } from '../../ports/clock';
 import { cryptoRandomBytes } from '../../ports/id-generator';
@@ -32,6 +32,14 @@ export class ExportError extends Error {
   }
 }
 
+/**
+ * Obserwator udanych zapisow (Etap 5): zapisuje stan synchronizacji po kazdym `export:apply`,
+ * tez tym z planu cofniecia. Blad obserwatora nie zmienia wyniku zapisu, ktory juz sie odbyl.
+ */
+export interface ApplyObserver {
+  applied(report: ExportPlanReport, result: ExportApplyReport): Promise<void>;
+}
+
 export interface ExportServiceDeps {
   readonly catalog: LocationCatalog;
   readonly exporters: readonly ToolExporter[];
@@ -43,6 +51,7 @@ export interface ExportServiceDeps {
   readonly clock: Clock;
   readonly ttlMs?: number;
   readonly newPlanId?: () => string;
+  readonly observer?: ApplyObserver;
   /** Szew na log bledu zapisu; komunikat dla uzytkownika jest ogolny. */
   readonly onUnexpected?: (error: unknown) => void;
 }
@@ -66,6 +75,9 @@ export interface PlannedItem {
   readonly kind: LoadedItem['item']['kind'];
   readonly slug: string;
   readonly title: string;
+  /** Rewizja i hash tresci elementu w chwili planu: podstawa stanu synchronizacji. */
+  readonly revision: number;
+  readonly contentHash: Sha256;
 }
 
 export interface ExportPlanReport {
@@ -126,6 +138,13 @@ export class ExportService {
   }
 
   async plan(tool: ToolId, itemIds: readonly string[]): Promise<ExportPlanReport> {
+    const report = await this.preview(tool, itemIds);
+    if (!report.toolMissing) this.remember(report);
+    return report;
+  }
+
+  /** Jak `plan`, ale plan nie jest zapamietany: do odczytu stanu (sieroty, status) bez wypierania planow. */
+  async preview(tool: ToolId, itemIds: readonly string[]): Promise<ExportPlanReport> {
     const exporter = this.exporters.get(tool);
     if (exporter === undefined) {
       throw new ExportError(
@@ -145,6 +164,8 @@ export class ExportService {
       kind: item.kind,
       slug: item.identity.slug,
       title: item.content.title,
+      revision: item.version.revision,
+      contentHash: item.version.contentHash,
     }));
 
     const roots = (await this.deps.catalog.detect()).filter((r) => r.tool === tool);
@@ -180,6 +201,40 @@ export class ExportService {
     const report: ExportPlanReport = {
       planId,
       tool,
+      toolMissing: false,
+      plan,
+      items,
+      rootLabels,
+      entryIds: plan.entries.map((_e, i) => `e${i + 1}`),
+    };
+    return report;
+  }
+
+  /**
+   * Przyjmuje plan zbudowany poza eksporterami (cofniecie z kopii): sonduje go bramka i zapamietuje
+   * pod nowym `planId`, wiec dalej idzie zwyklym `apply` z jawnym zatwierdzeniem.
+   */
+  async adopt(draft: WritePlan, items: readonly PlannedItem[] = []): Promise<ExportPlanReport> {
+    const roots = (await this.deps.catalog.detect()).filter((r) => r.tool === draft.tool);
+    const rootLabels = new Map(roots.map((r) => [r.rootId, r.label]));
+    const planId = this.newPlanId();
+    if (!(await this.deps.catalog.toolHomeExists(draft.tool))) {
+      const plan: WritePlan = { ...draft, planId, applicable: false };
+      return {
+        planId,
+        tool: draft.tool,
+        toolMissing: true,
+        plan,
+        items,
+        rootLabels,
+        entryIds: plan.entries.map((_e, i) => `e${i + 1}`),
+      };
+    }
+    const probed = await this.deps.gate.probe({ ...draft, planId });
+    const plan: WritePlan = { ...probed, planId };
+    const report: ExportPlanReport = {
+      planId,
+      tool: draft.tool,
       toolMissing: false,
       plan,
       items,
@@ -236,7 +291,7 @@ export class ExportService {
     const idByKey = new Map(
       plan.entries.map((e, i) => [key(e.rootId, e.relPath), entryIds[i] ?? '']),
     );
-    return {
+    const result: ExportApplyReport = {
       planId,
       backupId: report.backupId,
       entries: report.entries.map((e) => ({
@@ -247,6 +302,11 @@ export class ExportService {
       verified: report.verified,
       rolledBack: report.rolledBack,
     };
+    // Zapis sie odbyl; nieudana notatka o stanie synchronizacji nie moze go zamienic w blad.
+    await this.deps.observer?.applied(stored.report, result).catch((error: unknown) => {
+      this.deps.onUnexpected?.(error);
+    });
+    return result;
   }
 
   private remember(report: ExportPlanReport): void {

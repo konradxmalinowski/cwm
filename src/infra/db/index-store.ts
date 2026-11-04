@@ -8,10 +8,19 @@ import type { Database } from 'better-sqlite3';
 import type { DatabaseProbe } from '../../core/model/diagnostics';
 import type { IndexFailureReason } from '../../core/model/index-health';
 import type { IndexStore } from '../../core/ports/index-store';
-import type { OperationLog, OperationRecord } from '../../core/ports/operation-log';
+import type { ItemId, Sha256, ToolId } from '../../core/model/item';
+import type {
+  OperationGroup,
+  OperationLog,
+  OperationLogReader,
+  OperationRecord,
+  OperationRow,
+  OperationType,
+} from '../../core/ports/operation-log';
+import type { SyncRecord, SyncStateStore, SyncedFile } from '../../core/ports/sync-state';
 import { redactHomePath } from '../logging/redact';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 function schemaDir(): string {
   return join(__dirname, 'schema');
@@ -27,6 +36,7 @@ function migrationList(firstFile: string | undefined): readonly Migration[] {
   return [
     { version: 1, file: firstFile ?? join(schemaDir(), '001-init.sql') },
     { version: 2, file: join(schemaDir(), '002-operation-log.sql') },
+    { version: 3, file: join(schemaDir(), '003-sync-state.sql') },
   ];
 }
 
@@ -56,6 +66,83 @@ interface TextRow {
 
 interface CountRow {
   readonly total: number;
+}
+
+interface RawLogRow {
+  readonly seq: number;
+  readonly operation: string;
+  readonly item_id: string;
+  readonly item_kind: string | null;
+  readonly slug: string | null;
+  readonly at: string;
+  readonly before_revision: number | null;
+  readonly before_content_hash: string | null;
+  readonly before_version_hash: string | null;
+  readonly after_revision: number | null;
+  readonly after_content_hash: string | null;
+  readonly after_version_hash: string | null;
+  readonly tool: string | null;
+  readonly backup_id: string | null;
+  readonly reverts: string | null;
+}
+
+function toOperationRow(row: RawLogRow): OperationRow {
+  const state = (
+    revision: number | null,
+    contentHash: string | null,
+    versionHash: string | null,
+  ) =>
+    revision === null || contentHash === null || versionHash === null
+      ? null
+      : {
+          revision,
+          contentHash: contentHash as Sha256,
+          versionHash: versionHash as Sha256,
+        };
+  return {
+    seq: row.seq,
+    operation: row.operation as OperationType,
+    itemId: row.item_id as ItemId,
+    itemKind: row.item_kind as OperationRow['itemKind'],
+    slug: row.slug,
+    at: row.at,
+    before: state(row.before_revision, row.before_content_hash, row.before_version_hash),
+    after: state(row.after_revision, row.after_content_hash, row.after_version_hash),
+    ...(row.tool === null ? {} : { tool: row.tool as ToolId }),
+    ...(row.backup_id === null ? {} : { backupId: row.backup_id }),
+    ...(row.reverts === null ? {} : { reverts: row.reverts }),
+  };
+}
+
+interface RawSyncRow {
+  readonly item_id: string;
+  readonly tool: string;
+  readonly item_revision: number;
+  readonly item_content_hash: string;
+  readonly files_json: string;
+  readonly synced_at: string;
+  readonly backup_id: string;
+}
+
+/** Rekord z uszkodzonym JSON-em jest pomijany: stan synchronizacji jest odtwarzalny (ADR 0014). */
+function toSyncRecord(row: RawSyncRow): SyncRecord | null {
+  let files: SyncedFile[];
+  try {
+    const parsed: unknown = JSON.parse(row.files_json);
+    if (!Array.isArray(parsed)) return null;
+    files = parsed as SyncedFile[];
+  } catch {
+    return null;
+  }
+  return {
+    itemId: row.item_id as ItemId,
+    tool: row.tool as ToolId,
+    itemRevision: row.item_revision,
+    itemContentHash: row.item_content_hash as Sha256,
+    files,
+    syncedAt: row.synced_at,
+    backupId: row.backup_id,
+  };
 }
 
 /**
@@ -256,8 +343,9 @@ export class SqliteIndexStore implements IndexStore {
       `INSERT INTO operation_log (
          operation, item_id, item_kind, slug, at,
          before_revision, before_content_hash, before_version_hash,
-         after_revision, after_content_hash, after_version_hash
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         after_revision, after_content_hash, after_version_hash,
+         tool, backup_id, reverts
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     return {
       append: (record: OperationRecord): Promise<void> => {
@@ -274,12 +362,128 @@ export class SqliteIndexStore implements IndexStore {
             record.after?.revision ?? null,
             record.after?.contentHash ?? null,
             record.after?.versionHash ?? null,
+            record.tool ?? null,
+            record.backupId ?? null,
+            record.reverts ?? null,
           );
           return Promise.resolve();
         } catch (error: unknown) {
           return Promise.reject(error instanceof Error ? error : new Error(String(error)));
         }
       },
+    };
+  }
+
+  /** Odczyt logu pogrupowany po operacjach zapisu do narzedzi (Etap 5, historia). */
+  operationLogReader(): OperationLogReader {
+    const KEY = "COALESCE('backup:' || backup_id, 'seq:' || seq)";
+    const rowsOf = (key: string): OperationRow[] =>
+      (
+        this.db
+          .prepare(`SELECT * FROM operation_log WHERE ${KEY} = ? ORDER BY seq DESC`)
+          .all(key) as RawLogRow[]
+      ).map(toOperationRow);
+    return {
+      groups: (limit, before) => {
+        try {
+          const ceiling =
+            before === undefined
+              ? Number.MAX_SAFE_INTEGER
+              : ((
+                  this.db
+                    .prepare(`SELECT MAX(seq) AS top FROM operation_log WHERE ${KEY} = ?`)
+                    .get(before) as { top: number | null } | undefined
+                )?.top ?? 0);
+          const heads = this.db
+            .prepare(
+              `SELECT ${KEY} AS key, MAX(seq) AS top FROM operation_log
+               GROUP BY key HAVING top < ? ORDER BY top DESC LIMIT ?`,
+            )
+            .all(ceiling, limit) as { key: string; top: number }[];
+          const groups: OperationGroup[] = heads.map((h) => ({ key: h.key, rows: rowsOf(h.key) }));
+          return Promise.resolve(groups);
+        } catch (error: unknown) {
+          return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      },
+      group: (key) => {
+        try {
+          const rows = rowsOf(key);
+          return Promise.resolve(rows.length === 0 ? null : { key, rows });
+        } catch (error: unknown) {
+          return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      },
+      revertedBy: (backupId) => {
+        try {
+          const row = this.db
+            .prepare(
+              `SELECT ${KEY} AS key FROM operation_log WHERE reverts = ? ORDER BY seq DESC LIMIT 1`,
+            )
+            .get(backupId) as { key: string } | undefined;
+          return Promise.resolve(row?.key ?? null);
+        } catch (error: unknown) {
+          return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      },
+    };
+  }
+
+  /** Stan synchronizacji w tym samym indeksie (migracja 3). */
+  syncState(): SyncStateStore {
+    const wrap = <T>(work: () => T): Promise<T> => {
+      try {
+        return Promise.resolve(work());
+      } catch (error: unknown) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    return {
+      get: (itemId, tool) =>
+        wrap(() => {
+          const row = this.db
+            .prepare('SELECT * FROM sync_state WHERE item_id = ? AND tool = ?')
+            .get(itemId, tool) as RawSyncRow | undefined;
+          return row === undefined ? null : toSyncRecord(row);
+        }),
+      list: (tool) =>
+        wrap(() => {
+          const rows = (
+            tool === undefined
+              ? this.db.prepare('SELECT * FROM sync_state ORDER BY item_id, tool').all()
+              : this.db
+                  .prepare('SELECT * FROM sync_state WHERE tool = ? ORDER BY item_id')
+                  .all(tool)
+          ) as RawSyncRow[];
+          return rows.flatMap((row) => {
+            const record = toSyncRecord(row);
+            return record === null ? [] : [record];
+          });
+        }),
+      put: (record) =>
+        wrap(() => {
+          this.db
+            .prepare(
+              `INSERT OR REPLACE INTO sync_state (
+                 item_id, tool, item_revision, item_content_hash, files_json, synced_at, backup_id
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              record.itemId,
+              record.tool,
+              record.itemRevision,
+              record.itemContentHash,
+              JSON.stringify(record.files),
+              record.syncedAt,
+              record.backupId,
+            );
+        }),
+      remove: (itemId, tool) =>
+        wrap(() => {
+          this.db
+            .prepare('DELETE FROM sync_state WHERE item_id = ? AND tool = ?')
+            .run(itemId, tool);
+        }),
     };
   }
 

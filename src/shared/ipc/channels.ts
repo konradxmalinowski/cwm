@@ -20,7 +20,7 @@ export const IPC_CHANNELS = [
   'export:apply',
   'sync:plan',
   'sync:apply',
-  'sync:verify',
+  'sync:status',
   'diff:compute',
   'history:list',
   'history:rollback',
@@ -56,6 +56,11 @@ export const IMPLEMENTED_CHANNELS = [
   'import:apply',
   'export:plan',
   'export:apply',
+  'sync:status',
+  'sync:plan',
+  'sync:apply',
+  'history:list',
+  'history:rollback',
   'diagnostics:report',
 ] as const;
 

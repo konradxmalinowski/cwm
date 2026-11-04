@@ -29,7 +29,12 @@ export interface PlanEntryDto {
   rootLabel: string;
   /** Sciezka wzgledem roota, np. "skills/acme-review/SKILL.md". */
   relPath: string;
-  action: 'create' | 'modify' | 'link' | 'unchanged';
+  /**
+   * `delete` i `restore-link` pojawiaja sie wylacznie w planie cofniecia operacji (history:rollback):
+   * `delete` usuwa plik albo dowiazanie, ktore zapis aplikacji utworzyl; `restore-link` zamienia to,
+   * co jest pod sciezka, z powrotem w dowiazanie do celu sprzed operacji.
+   */
+  action: 'create' | 'modify' | 'link' | 'unchanged' | 'delete' | 'restore-link';
   scope: 'whole-file' | 'marker-block' | 'toml-segment' | 'json-key';
   materialization: MaterializationModeDto | null;
   itemIds: string[];

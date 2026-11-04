@@ -129,9 +129,30 @@ interface LinkPlan {
   readonly materialBefore: MaterialContent | null;
 }
 
+/** Usuniecie pliku albo dowiazania przy cofaniu operacji (ADR 0028, ADR 0019). */
+interface RemovalPlan {
+  readonly abs: string;
+  readonly rootId: RootId;
+  readonly relPath: string;
+  readonly rootPath: string;
+  readonly before: Exclude<Existing, { kind: 'missing' }>;
+}
+
+/** Przywrocenie dowiazania do celu zapisanego w kopii. */
+interface RestorePlan {
+  readonly abs: string;
+  readonly rootId: RootId;
+  readonly relPath: string;
+  readonly linkTarget: string;
+  readonly kind: 'file' | 'directory';
+  readonly before: Existing;
+}
+
 interface Resolved {
   readonly entry: WritePlanEntry;
-  readonly kind: 'noop' | 'files' | 'link';
+  readonly kind: 'noop' | 'files' | 'link' | 'delete' | 'restore';
+  readonly removal: RemovalPlan | null;
+  readonly restore: RestorePlan | null;
   readonly ops: readonly FileOp[];
   readonly dirLink: DirLink | null;
   readonly link: LinkPlan | null;
@@ -147,7 +168,7 @@ interface EntryAnalysis {
 }
 
 const MAX_DIR_FILES = 1000;
-const VALID_ACTIONS = new Set(['create', 'modify', 'link', 'unchanged']);
+const VALID_ACTIONS = new Set(['create', 'modify', 'link', 'unchanged', 'delete', 'restore-link']);
 
 class VerifyError extends Error {
   constructor() {
@@ -229,6 +250,8 @@ type JournalItem =
     }
   | { readonly t: 'remove'; readonly abs: string }
   | { readonly t: 'rmdir'; readonly abs: string }
+  /** Katalog usuniety przy sprzataniu po `delete`; rollback tworzy go z powrotem. */
+  | { readonly t: 'mkdir'; readonly abs: string }
   | {
       readonly t: 'material';
       readonly path: string;
@@ -393,7 +416,7 @@ export class FsWriteGate implements WriteGate {
     }
 
     if (failure === null) {
-      await this.logOperation(resolved, reports);
+      await this.logOperation(plan, backupId, resolved, reports);
       return { planId: plan.planId, backupId, entries: reports, verified: true, rolledBack: false };
     }
 
@@ -469,6 +492,8 @@ export class FsWriteGate implements WriteGate {
 
   private spaceNeeded(resolved: Resolved): number {
     let need = 0;
+    if (resolved.removal?.before.kind === 'file') need += resolved.removal.before.bytes.length * 2;
+    if (resolved.restore?.before.kind === 'file') need += resolved.restore.before.bytes.length * 2;
     for (const op of resolved.ops) {
       if (!op.unchanged && op.before.kind === 'file') need += op.before.bytes.length * 2;
     }
@@ -510,6 +535,13 @@ export class FsWriteGate implements WriteGate {
       return this.resolved(entry, 'noop', [], null, null, null, null);
     }
 
+    if (entry.action === 'delete') {
+      return this.analyzeDelete(entry, rootPath, fileRoot, claim);
+    }
+    if (entry.action === 'restore-link') {
+      return this.analyzeRestoreLink(entry, rootPath, fileRoot, claim);
+    }
+
     const hasContent = entry.content !== null;
     const hasFiles = entry.files !== null;
     if (hasContent === hasFiles) {
@@ -532,6 +564,81 @@ export class FsWriteGate implements WriteGate {
     return this.resolved(entry, 'files', ops, dirLink, null, null, null);
   }
 
+  /** Usuniecie to cofniecie zapisu aplikacji: plik ma te tresc, jaka widzial plan, a dowiazanie jest nasze. */
+  private async analyzeDelete(
+    entry: WritePlanEntry,
+    rootPath: string,
+    fileRoot: boolean,
+    claim: (abs: string) => void,
+  ): Promise<Resolved> {
+    if (entry.content !== null || entry.files !== null) {
+      throw new Blocked('Wpis usunięcia nie może zawierać treści do zapisu.');
+    }
+    const loc = await locateTarget(rootPath, entry.relPath, { platform: this.platform, fileRoot });
+    claim(loc.abs);
+    const before = await this.snapshot(loc.abs);
+    if (before.kind === 'missing') return this.resolved(entry, 'noop', [], null, null, null, null);
+    if (before.kind === 'file') {
+      const expected = entry.previous;
+      if (expected === null || !bytesEqual(before.bytes, expected)) {
+        throw new Blocked('Plik zmienił się od przygotowania planu.');
+      }
+    } else if (!this.isOurs(loc.abs, before.linkTarget)) {
+      throw new Blocked('Dowiązanie nie pochodzi z zapisu aplikacji, więc go nie usunę.');
+    }
+    await assertWritableAncestor(loc.parentReal, this.platform);
+    const removal: RemovalPlan = {
+      abs: loc.abs,
+      rootId: entry.rootId,
+      relPath: entry.relPath,
+      rootPath,
+      before,
+    };
+    return { ...this.resolved(entry, 'delete', [], null, null, null, null), removal };
+  }
+
+  private async analyzeRestoreLink(
+    entry: WritePlanEntry,
+    rootPath: string,
+    fileRoot: boolean,
+    claim: (abs: string) => void,
+  ): Promise<Resolved> {
+    if (entry.content !== null || entry.files !== null) {
+      throw new Blocked('Wpis przywrócenia dowiązania nie może zawierać treści do zapisu.');
+    }
+    const target = entry.linkTarget;
+    if (typeof target !== 'string' || target === '' || target.includes('\0')) {
+      throw new Blocked('Kopia nie podaje poprawnego celu dowiązania.');
+    }
+    const loc = await locateTarget(rootPath, entry.relPath, { platform: this.platform, fileRoot });
+    claim(loc.abs);
+    const before = await this.snapshot(loc.abs);
+    if (before.kind === 'symlink' && before.linkTarget === target) {
+      return this.resolved(entry, 'noop', [], null, null, null, null);
+    }
+    if (before.kind === 'file') {
+      const expected = entry.previous;
+      if (expected === null || !bytesEqual(before.bytes, expected)) {
+        throw new Blocked('Plik zmienił się od przygotowania planu.');
+      }
+    }
+    await assertWritableAncestor(loc.parentReal, this.platform);
+    const resolvedTarget = path.resolve(path.dirname(loc.abs), target);
+    const isDirectory = await stat(resolvedTarget).then(
+      (s) => s.isDirectory(),
+      () => false,
+    );
+    const restore: RestorePlan = {
+      abs: loc.abs,
+      rootId: entry.rootId,
+      relPath: entry.relPath,
+      linkTarget: target,
+      kind: isDirectory ? 'directory' : 'file',
+      before,
+    };
+    return { ...this.resolved(entry, 'restore', [], null, null, null, null), restore };
+  }
+
   private resolved(
     entry: WritePlanEntry,
     kind: Resolved['kind'],
@@ -541,7 +648,7 @@ export class FsWriteGate implements WriteGate {
     effective: MaterializationMode | null,
     note: string | null,
   ): Resolved {
-    return { entry, kind, ops, dirLink, link, effective, note };
+    return { entry, kind, removal: null, restore: null, ops, dirLink, link, effective, note };
   }
 
   private async isFileRoot(entry: WritePlanEntry, rootPath: string): Promise<boolean> {
@@ -794,6 +901,26 @@ export class FsWriteGate implements WriteGate {
     };
     for (const item of resolved) {
       const action = item.entry.action;
+      if (item.removal !== null) {
+        items.push({
+          rootId: item.removal.rootId,
+          relPath: item.removal.relPath,
+          path: item.removal.abs,
+          action,
+          before: toBefore(item.removal.before),
+          after: { state: 'missing' },
+        });
+      }
+      if (item.restore !== null) {
+        items.push({
+          rootId: item.restore.rootId,
+          relPath: item.restore.relPath,
+          path: item.restore.abs,
+          action,
+          before: toBefore(item.restore.before),
+          after: { state: 'symlink', linkTarget: item.restore.linkTarget },
+        });
+      }
       if (item.dirLink !== null) {
         items.push({
           rootId: item.dirLink.rootId,
@@ -849,6 +976,14 @@ export class FsWriteGate implements WriteGate {
     journal: JournalItem[],
   ): Promise<{ changed: boolean; message: string | null }> {
     if (item.kind === 'noop') return { changed: false, message: null };
+    if (item.kind === 'delete') {
+      await this.executeDelete(item.removal as RemovalPlan, journal);
+      return { changed: true, message: null };
+    }
+    if (item.kind === 'restore') {
+      await this.executeRestore(item.restore as RestorePlan, journal);
+      return { changed: true, message: null };
+    }
     if (item.kind === 'files') {
       const changed = await this.executeFiles(item, journal);
       return { changed, message: changed ? item.note : null };
@@ -869,6 +1004,35 @@ export class FsWriteGate implements WriteGate {
       changed = true;
     }
     return changed;
+  }
+
+  private async executeDelete(removal: RemovalPlan, journal: JournalItem[]): Promise<void> {
+    journal.push(this.restoreOf(removal.abs, removal.before));
+    if (removal.before.kind === 'symlink') await removeLink(removal.abs);
+    else await rm(removal.abs, { force: true });
+    if ((await lstatOrNull(removal.abs)) !== null) throw new VerifyError();
+
+    // Katalogi, ktore opustoszaly po usunieciu, znikaja do roota (wylacznie puste: rmdir nie usuwa pelnych).
+    let dir = path.dirname(removal.abs);
+    while (dir !== removal.rootPath && isPathInside(dir, removal.rootPath)) {
+      try {
+        await rmdir(dir);
+      } catch {
+        break;
+      }
+      journal.push({ t: 'mkdir', abs: dir });
+      dir = path.dirname(dir);
+    }
+  }
+
+  private async executeRestore(restore: RestorePlan, journal: JournalItem[]): Promise<void> {
+    await this.mkdirTracked(path.dirname(restore.abs), journal);
+    journal.push(this.restoreOf(restore.abs, restore.before));
+    await createLink(restore.linkTarget, restore.abs, restore.kind, 'symlink', {
+      platform: this.platform,
+      ...(this.deps.linkOps === undefined ? {} : { ops: this.deps.linkOps }),
+    });
+    if ((await readlink(restore.abs)) !== restore.linkTarget) throw new VerifyError();
   }
 
   private restoreOf(abs: string, before: Existing): JournalItem {
@@ -1022,6 +1186,9 @@ export class FsWriteGate implements WriteGate {
           case 'rmdir':
             await rmdir(item.abs).catch(() => undefined);
             break;
+          case 'mkdir':
+            await mkdir(item.abs, { recursive: true, mode: 0o700 });
+            break;
           case 'material':
             await writeMaterialized(item.path, item.before);
             break;
@@ -1059,6 +1226,8 @@ export class FsWriteGate implements WriteGate {
   // --- log operacji ---
 
   private async logOperation(
+    plan: WritePlan,
+    backupId: string,
     resolved: readonly Resolved[],
     reports: readonly ApplyEntryReport[],
   ): Promise<void> {
@@ -1073,13 +1242,16 @@ export class FsWriteGate implements WriteGate {
       // Wpis logu jest pomocniczy: nieudany zapis nie moze cofac juz zweryfikowanego eksportu.
       await log
         .append({
-          operation: 'export',
+          operation: plan.reverts === undefined ? 'export' : 'rollback',
           itemId,
           itemKind: null,
           slug: null,
           at,
           before: null,
           after: null,
+          tool: plan.tool,
+          ...(backupId === '' ? {} : { backupId }),
+          ...(plan.reverts === undefined ? {} : { reverts: plan.reverts }),
         })
         .catch(() => undefined);
     }

@@ -24,7 +24,9 @@ export type BackupAfter =
   | { readonly state: 'file'; readonly bytes: Uint8Array }
   | { readonly state: 'symlink'; readonly linkTarget: string }
   /** Dowiazanie do katalogu zastapione katalogiem z plikami. */
-  | { readonly state: 'directory' };
+  | { readonly state: 'directory' }
+  /** Plik albo dowiazanie usuniete przy cofaniu operacji. */
+  | { readonly state: 'missing' };
 
 export interface BackupItem {
   readonly rootId: string;
@@ -50,7 +52,8 @@ export type ManifestBefore =
 export type ManifestAfter =
   | { readonly state: 'file'; readonly sha256: Sha256; readonly size: number }
   | { readonly state: 'symlink'; readonly linkTarget: string }
-  | { readonly state: 'directory' };
+  | { readonly state: 'directory' }
+  | { readonly state: 'missing' };
 
 export interface ManifestEntry {
   readonly index: number;

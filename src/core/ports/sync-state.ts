@@ -1,4 +1,5 @@
 import type { ItemId, Sha256, Timestamp, ToolId } from '../model/item';
+import type { EditScope, MaterializationMode } from '../model/plan';
 
 /**
  * Pamiec ostatniej udanej synchronizacji elementu z narzedziem (ARCHITECTURE 3.5, Etap 5).
@@ -10,6 +11,13 @@ export interface SyncedFile {
   readonly relPath: string;
   /** Hash bajtow, ktore aplikacja zapisala; podstawa wykrycia zmiany po stronie narzedzia. */
   readonly writtenHash: Sha256;
+  /**
+   * Dla dowiazania `writtenHash` jest hashem zawartosci materializacji (plik albo spis plikow
+   * katalogu), a `relPath` to samo dowiazanie. Brak pola oznacza zwykly zapis.
+   */
+  readonly materialization?: MaterializationMode;
+  /** Zakres edycji wpisu; poza `whole-file` plik ma tez cudza tresc, wiec jej zmiana nie liczy sie. */
+  readonly scope?: EditScope;
 }
 
 export interface SyncRecord {

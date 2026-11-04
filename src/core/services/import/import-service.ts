@@ -170,6 +170,29 @@ function baseName(relPath: string): string {
   return relPath.slice(relPath.lastIndexOf('/') + 1);
 }
 
+/** Klasyfikator sekretow dla kandydata; wspolny z przyjmowaniem zmian z narzedzia (Etap 5). */
+export function classifyCandidate(candidate: ImportCandidate): SecretHit[] {
+  const { draft } = candidate;
+  const files: SecretScanFile[] = [];
+  const hits: SecretHit[] = [];
+  for (const snapshot of draft.source?.snapshots ?? []) {
+    for (const file of snapshot.files) files.push({ relPath: file.relPath, bytes: file.bytes });
+    hits.push(
+      ...classifyStructured(snapshot.files[0]?.relPath ?? candidate.relPath, snapshot.unmappedKeys),
+    );
+  }
+  for (const asset of draft.assets ?? []) {
+    files.push({ relPath: asset.relPath, bytes: asset.bytes });
+  }
+  if (files.length === 0) {
+    files.push({
+      relPath: baseName(candidate.relPath),
+      bytes: new TextEncoder().encode(draft.content.body),
+    });
+  }
+  return [...classifySecrets(files), ...hits];
+}
+
 export class ImportService {
   private readonly sessions = new Map<string, ScanSession>();
   private readonly adapters: ReadonlyMap<ToolId, ToolAdapter>;
@@ -292,28 +315,7 @@ export class ImportService {
   }
 
   private classify(candidate: ImportCandidate): SecretHit[] {
-    const { draft } = candidate;
-    const files: SecretScanFile[] = [];
-    const hits: SecretHit[] = [];
-    for (const snapshot of draft.source?.snapshots ?? []) {
-      for (const file of snapshot.files) files.push({ relPath: file.relPath, bytes: file.bytes });
-      hits.push(
-        ...classifyStructured(
-          snapshot.files[0]?.relPath ?? candidate.relPath,
-          snapshot.unmappedKeys,
-        ),
-      );
-    }
-    for (const asset of draft.assets ?? []) {
-      files.push({ relPath: asset.relPath, bytes: asset.bytes });
-    }
-    if (files.length === 0) {
-      files.push({
-        relPath: baseName(candidate.relPath),
-        bytes: new TextEncoder().encode(draft.content.body),
-      });
-    }
-    return [...classifySecrets(files), ...hits];
+    return classifyCandidate(candidate);
   }
 
   private resolveStatuses(

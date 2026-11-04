@@ -42,7 +42,14 @@ export type WriteAction =
   /** Dowiazanie do wyrenderowanej kopii elementu w `userData` (ADR 0015). */
   | 'link'
   /** Cel juz ma oczekiwana tresc; wpis istnieje, zeby plan byl pelnym obrazem. */
-  | 'unchanged';
+  | 'unchanged'
+  /**
+   * Usuniecie pliku albo dowiazania, ktore zapis aplikacji sam utworzyl (ADR 0028). Powstaje
+   * tylko z cofniecia operacji: przywraca stan sprzed zapisu, nie usuwa sierot.
+   */
+  | 'delete'
+  /** Przywrocenie dowiazania do poprzedniego celu (`linkTarget`); tylko z cofniecia operacji. */
+  | 'restore-link';
 
 export interface WritePlanEntry {
   readonly rootId: RootId;
@@ -62,6 +69,8 @@ export interface WritePlanEntry {
   /** Bajty pliku przed zapisem, null gdy plik nie istnieje; podstawa podgladu i weryfikacji. */
   readonly previous: Uint8Array | null;
   readonly materialization: MaterializationMode | null;
+  /** Dla `restore-link`: cel dowiazania zapisany w MANIFEST kopii. */
+  readonly linkTarget?: string;
   readonly warnings: readonly string[];
   /** Ustawiane przez `WriteGate.probe`; adapter zostawia null. */
   readonly recoverability: RecoverabilityVerdict | null;
@@ -98,6 +107,8 @@ export interface WritePlan {
   readonly refusals: readonly PlanRefusal[];
   readonly conflicts: readonly PlanConflict[];
   readonly orphans: readonly PlanOrphan[];
+  /** `backupId` cofanej operacji: plan powstal z jej kopii i w logu jest zapisem `rollback`. */
+  readonly reverts?: string;
   /** False, gdy ktorykolwiek wpis jest `blocked` albo jest nierozstrzygniety konflikt. */
   readonly applicable: boolean;
 }
