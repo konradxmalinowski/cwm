@@ -44,7 +44,7 @@ const PACKAGED_LAUNCH_TIMEOUT_MS = 120_000;
  */
 const STRIPPED_ENV_KEYS = ['NODE_OPTIONS', 'ELECTRON_RUN_AS_NODE'] as const;
 
-function launchEnv(): Record<string, string> {
+function launchEnv(overrides: Readonly<Record<string, string>> = {}): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
@@ -55,13 +55,14 @@ function launchEnv(): Record<string, string> {
   // Bez tego zawis startu nie zostawia na stderr zadnego sladu, a cisza
   // w logu byla najbardziej kosztowna cecha awarii na Windowsie.
   env['ELECTRON_ENABLE_LOGGING'] = '1';
-  return env;
+  return { ...env, ...overrides };
 }
 
 async function launch(
   args: string[],
   executablePath?: string,
   presetUserDataDir?: string,
+  envOverrides?: Readonly<Record<string, string>>,
 ): Promise<LaunchedApp> {
   const userDataDir = presetUserDataDir ?? createTempTree('acme-userdata-');
   const startedAt = Date.now();
@@ -90,7 +91,7 @@ async function launch(
     // z bitem setuid - jest na to krok w ci.yml.
     chromiumSandbox: true,
     ...(executablePath === undefined ? {} : { executablePath }),
-    env: launchEnv(),
+    env: launchEnv(envOverrides),
   });
 
   const page = await app.firstWindow();
@@ -114,6 +115,20 @@ export function launchApp(): Promise<LaunchedApp> {
  */
 export function launchAppWithUserData(userDataDir: string): Promise<LaunchedApp> {
   return launch(['.'], undefined, userDataDir);
+}
+
+/**
+ * Aplikacja ze skonfigurowanym katalogiem domowym narzedzi: `home` zastepuje HOME i USERPROFILE,
+ * a `CLAUDE_CONFIG_DIR` i `CODEX_HOME` wskazuja w niego. Dzieki temu przeplyw z prawdziwymi
+ * plikami narzedzi idzie wylacznie po syntetycznym drzewie z harnessu, nigdy po profilu uzytkownika.
+ */
+export function launchAppWithHome(home: string, userDataDir: string): Promise<LaunchedApp> {
+  return launch(['.'], undefined, userDataDir, {
+    HOME: home,
+    USERPROFILE: home,
+    CLAUDE_CONFIG_DIR: join(home, '.claude'),
+    CODEX_HOME: join(home, '.codex'),
+  });
 }
 
 const RELEASE_DIR = 'release';

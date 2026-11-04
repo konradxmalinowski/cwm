@@ -15,12 +15,7 @@ import { callBridge } from './ipc-call';
 @Injectable({ providedIn: 'root' })
 export class SyncApiService {
   status(request: SyncStatusRequest): Promise<Result<SyncStatusDto>> {
-    // Kanal `sync:status` zastapi `sync:verify` razem z commitem backendu; do tego czasu most go nie typuje.
-    return callBridge((bridge) =>
-      (bridge.sync as unknown as { status: (payload?: unknown) => Promise<unknown> }).status(
-        request,
-      ),
-    );
+    return callBridge((bridge) => bridge.sync.status(request));
   }
 
   plan(request: SyncPlanRequest): Promise<Result<SyncPlanDto>> {

@@ -34,12 +34,12 @@ export function undoLabel(kind: string): string {
 }
 
 /**
- * Kursor stronicowania: `before` dostaje czas ostatniego wpisu z biezacej strony. Wpisy sa
- * w odwrotnej chronologii, wiec nastepna strona to wpisy starsze od niego.
+ * Kursor stronicowania: `before` dostaje `operationId` ostatniego wpisu z biezacej strony
+ * (`backup:<id>` albo `seq:<n>`), a backend zwraca grupy starsze od jego najnowszego wiersza.
  */
 export function nextCursor(entries: readonly HistoryEntryDto[]): string | null {
   const last = entries[entries.length - 1];
-  return last === undefined ? null : last.at;
+  return last === undefined ? null : last.operationId;
 }
 
 export const PAGE_SIZE = 25;

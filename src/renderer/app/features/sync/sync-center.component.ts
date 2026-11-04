@@ -127,6 +127,14 @@ export class SyncCenterComponent {
     this.tools().filter((tool) => !this.missingTools().includes(tool)),
   );
 
+  /** Narzedzia wybrane do zapisu; null oznacza wszystkie dostepne. */
+  protected readonly pickedTools = signal<ReadonlySet<ToolIdDto> | null>(null);
+
+  protected readonly planTools = computed(() => {
+    const picked = this.pickedTools();
+    return this.syncTools().filter((tool) => picked === null || picked.has(tool));
+  });
+
   protected readonly rows = computed(() => {
     const query = this.query().trim().toLocaleLowerCase('pl');
     const state = this.stateFilter();
@@ -150,7 +158,7 @@ export class SyncCenterComponent {
   );
 
   protected readonly canPlan = computed(
-    () => this.phase() === 'status' && this.selectedCount() > 0 && this.syncTools().length > 0,
+    () => this.phase() === 'status' && this.selectedCount() > 0 && this.planTools().length > 0,
   );
 
   private readonly titlesById = computed(
@@ -337,6 +345,17 @@ export class SyncCenterComponent {
     this.stateFilter.set('');
   }
 
+  protected toolPicked(tool: ToolIdDto): boolean {
+    return this.planTools().includes(tool);
+  }
+
+  protected toggleTool(tool: ToolIdDto, checked: boolean): void {
+    const next = new Set(this.planTools());
+    if (checked) next.add(tool);
+    else next.delete(tool);
+    this.pickedTools.set(next);
+  }
+
   protected toggleRow(itemId: string, checked: boolean): void {
     const next = new Set(this.selected());
     if (checked) next.add(itemId);
@@ -457,9 +476,9 @@ export class SyncCenterComponent {
         const [itemId, tool] = key.split('|') as [string, ToolIdDto];
         return { itemId, tool, resolution };
       })
-      .filter((r) => this.selected().has(r.itemId) && this.syncTools().includes(r.tool));
+      .filter((r) => this.selected().has(r.itemId) && this.planTools().includes(r.tool));
     const result = await this.api.plan({
-      tools: [...this.syncTools()],
+      tools: [...this.planTools()],
       itemIds,
       ...(resolutions.length > 0 ? { resolutions } : {}),
     });
@@ -556,6 +575,7 @@ export class SyncCenterComponent {
     this.selected.set(new Set());
     this.choices.set(new Map());
     this.previews.set(new Map());
+    this.pickedTools.set(null);
     this.confirming.set(false);
     this.phase.set('status');
     this.statusState.set({ status: 'loading' });
