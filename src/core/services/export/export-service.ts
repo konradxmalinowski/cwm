@@ -23,7 +23,9 @@ export type ExportErrorCode =
   | 'unknown-plan'
   | 'plan-expired'
   | 'plan-not-applicable'
-  | 'not-approved';
+  | 'not-approved'
+  /** Odmowa `WriteGate` przed zapisem, np. `gate-plan-changed`. */
+  | `gate-${string}`;
 
 export class ExportError extends Error {
   constructor(
@@ -54,6 +56,15 @@ export const PLAN_TTL_MS = 15 * 60 * 1000;
 export const MAX_PLAN_ITEMS = 500;
 const MAX_PLANS = 8;
 const APPLY_FAILURE = 'Zapis nie powiódł się. Szczegóły są w logu aplikacji.';
+
+/** Rozpoznanie po ksztalcie, bo core nie importuje klasy `WriteGateRefusal` z infra. */
+function isGateRefusal(error: unknown): error is { code: string; message: string } {
+  return (
+    error instanceof Error &&
+    error.name === 'WriteGateRefusal' &&
+    typeof (error as { code?: unknown }).code === 'string'
+  );
+}
 
 export interface PlannedItem {
   readonly itemId: ItemId;
@@ -206,6 +217,10 @@ export class ExportService {
     }
 
     const report = await this.deps.gate.apply(plan, { planId }).catch((error: unknown) => {
+      // Odmowa bramki zapada przed pierwszym zapisem, wiec to odmowa z powodem, nie nieudany zapis.
+      if (isGateRefusal(error)) {
+        throw new ExportError(`gate-${error.code}`, redactPaths(error.message));
+      }
       this.deps.onUnexpected?.(error);
       return null;
     });

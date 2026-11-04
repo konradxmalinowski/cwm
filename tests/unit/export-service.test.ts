@@ -161,6 +161,23 @@ describe('ExportService.apply', () => {
     const applied = await h.service.apply(planId, true);
     expect(applied.entries[0]?.message).not.toContain('/Users');
   });
+
+  it('odmowa bramki przed zapisem wraca jako blad z jej powodem, nie jako nieudany zapis', async () => {
+    const h = await exportHarness();
+    h.gate.apply = () => {
+      const refusal = Object.assign(
+        new Error('Plik zmienił się od przygotowania planu: /Users/ktos/.claude/CLAUDE.md'),
+        { name: 'WriteGateRefusal', code: 'plan-changed' },
+      );
+      return Promise.reject(refusal);
+    };
+    const { planId } = await h.service.plan('claude-code', [h.itemId]);
+    const failure = await h.service.apply(planId, true).catch((e: unknown) => e);
+
+    expect(failure).toMatchObject({ code: 'gate-plan-changed' });
+    expect((failure as Error).message).toContain('Plik zmienił się od przygotowania planu');
+    expect((failure as Error).message).not.toContain('/Users');
+  });
 });
 
 describe('pomocnicze', () => {
