@@ -194,7 +194,7 @@ kolizji wielkości liter (ADR 0017). Normalizacja końców linii (ADR 0016). Prz
 z plików z kwarantanną i triażem przyczyn awarii otwarcia (ADR 0029). Okno przed otwarciem
 indeksu, z widokiem dla odmowy i dla odbudowy (ADR 0029, ARCHITECTURE 13.1).
 
-**Stan (2026-11-05): kawałek B domknięty w kodzie, etap otwarty przez kryteria 1 i 4.** Kawałki A
+**Stan (2026-11-05): wszystkie kryteria mają testy; etap zamyka zielona macierz CI na commicie z indeksem i specami E2E.** Kawałki A
 (warstwa plików i content store, ADR 0031) i C (kanały `library:*`, interfejs biblioteki, widok
 Diagnostyki) są w kodzie. Kawałek B: migracja 4 (`004-library-index.sql`) dodaje tabelę `items`
 z unikalnym indeksem `(kind, slug_key)` (ADR 0017 w bazie obok walidatora) i tabelę FTS5
@@ -268,10 +268,10 @@ Dowody (stan na 2026-11-05):
 
 | Kryterium | Test albo brak | Status |
 |---|---|---|
-| 1 | Serwis: `tests/unit/library-service.test.ts`, `tests/integration/library-acceptance-fs.test.ts`. Przez interfejs testowana jest tylko edycja (`tests/e2e/full-flow.spec.ts`). Brakuje E2E dla tworzenia, wyszukiwania i usunięcia z potwierdzeniem | otwarte |
+| 1 | `tests/e2e/library-crud.spec.ts` (tworzenie, edycja, wyszukiwanie po słowie tylko z treści, usunięcie z potwierdzeniem; asercje na `library/items` i `objects/`), serwis: `tests/unit/library-service.test.ts`, `tests/integration/library-acceptance-fs.test.ts` | spełnione lokalnie, CI do potwierdzenia |
 | 2 | `tests/integration/library-index-restore.test.ts` (usunięcie `index.db`, ponowny start, wyszukiwanie znajduje wszystko; odbudowa uszkodzonego; element nieczytelny w `notRestored`), `tests/e2e/index-startup.spec.ts` (to samo przez zbudowaną aplikację) | spełnione |
 | 3 | `tests/unit/index-startup.test.ts`, `tests/integration/index-store.test.ts`, `tests/integration/quarantine.test.ts`, `tests/integration/index-triage-reachability.test.ts` (prawdziwy plik; asercja negatywna: schemat z przyszłości zostaje nietknięty, bez kwarantanny i bez utraty logu), `tests/e2e/index-startup.spec.ts` | spełnione |
-| 4 | `tests/e2e/index-startup.spec.ts` sprawdza okno i raport, nie tekst widoku (`src/renderer/app/startup-banner.component.ts` bez testu). Raport ma stare zastrzeżenie o bibliotece z Etapu 1 | otwarte |
+| 4 | `tests/e2e/index-recovery-ui.spec.ts` (tekst paska po uszkodzonym indeksie: liczba elementów, lista nieodzyskanych rzeczy, brak ścieżki; indeks z przyszłości: powód i ręczna odbudowa jako jedyne wyjście; wynik z zerem jako niepełny), `tests/e2e/index-startup.spec.ts` | spełnione lokalnie, CI do potwierdzenia |
 | 5 | `tests/integration/index-triage-reachability.test.ts`: każda z pięciu przyczyn (cztery gałęzie triażu) z prawdziwego `SqliteIndexStore`, `native-module` przez podstawione ładowanie sterownika (`loadDriver`); `tests/integration/index-store.test.ts` | spełnione |
 | 6 | `tests/unit/index-rebuild.test.ts` (plan pokazuje utratę logu; `apply` odmawia przy `blocked` i przy planie przeterminowanym; brak ścieżki w ładunku; dwa równoległe wywołania; schemat z przyszłości z potwierdzeniem), `tests/unit/ipc-registry.test.ts`, `tests/e2e/index-startup.spec.ts` (oba kanały w zbudowanej aplikacji) | spełnione |
 | 7 | `tests/e2e/packaged-db.spec.ts` (biblioteka na dysku bez indeksu, start zapakowanej aplikacji, zapytanie FTS na `items_fts` wypełnionej przez paczkę). Wynik na czterech celach daje CI | spełnione lokalnie na macOS, CI do potwierdzenia |
