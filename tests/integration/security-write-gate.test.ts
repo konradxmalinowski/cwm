@@ -1,12 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   chmodSync,
-  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  readlinkSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -14,11 +11,9 @@ import { join } from 'node:path';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
-import type { WritePlan } from '../../src/core/model/plan';
-import { WriteGateRefusal } from '../../src/infra/fs/write-gate';
 import { removeTempTrees } from '../harness/isolation';
 
-import { entry, makeFixture, makePlan, text, type Fixture } from './write-gate-fixture';
+import { entry, expectNoBytesWritten, makeFixture, makePlan, text } from './write-gate-fixture';
 
 /**
  * Kryteria 6 i 8 Etapu 5, uzupelnienie testow `write-gate.test.ts`. Tu: cele niebedace zwyklym
@@ -31,58 +26,6 @@ afterAll(() => {
 
 const posixOnly = it.skipIf(process.platform === 'win32');
 const posixNonRoot = it.skipIf(process.platform === 'win32' || process.getuid?.() === 0);
-
-/** Odcisk calego drzewa: sciezki, rodzaje wpisow, tresc plikow, cele dowiazan i tryby. */
-function treeHash(dir: string): string {
-  const hash = createHash('sha256');
-  const walk = (current: string, rel: string): void => {
-    for (const name of readdirSync(current).sort()) {
-      const abs = join(current, name);
-      const info = lstatSync(abs);
-      const label = `${rel}/${name}`;
-      if (info.isSymbolicLink()) {
-        hash.update(`L ${label} -> ${readlinkSync(abs)}\n`);
-      } else if (info.isDirectory()) {
-        hash.update(`D ${label} ${(info.mode & 0o777).toString(8)}\n`);
-        walk(abs, label);
-      } else if (info.isFile()) {
-        // Plik nieczytelny (test kryterium 8) nie da sie odczytac: bierzemy rozmiar i czas zmiany.
-        let body: string;
-        try {
-          body = createHash('sha256').update(readFileSync(abs)).digest('hex');
-        } catch {
-          body = `nieczytelny:${info.size}:${info.mtimeMs}`;
-        }
-        hash.update(`F ${label} ${(info.mode & 0o777).toString(8)} ${body}\n`);
-      } else {
-        hash.update(`O ${label}\n`);
-      }
-    }
-  };
-  walk(dir, '');
-  return hash.digest('hex');
-}
-
-/** Plan z jednym zdrowym wpisem i jednym zablokowanym; `forged` udaje, ze brama go zatwierdzila. */
-async function expectNoBytesWritten(f: Fixture, blockedPlan: WritePlan): Promise<void> {
-  const probed = await f.gate.probe(blockedPlan);
-  expect(probed.applicable).toBe(false);
-  expect(probed.entries.some((e) => e.recoverability?.status === 'blocked')).toBe(true);
-
-  const before = treeHash(f.tree);
-
-  await expect(f.gate.apply(probed, { planId: probed.planId })).rejects.toBeInstanceOf(
-    WriteGateRefusal,
-  );
-  expect(treeHash(f.tree)).toBe(before);
-
-  // Obrona w glab: podrobiona flaga applicable nie zmienia wyniku, bo apply liczy stan od nowa.
-  const forged: WritePlan = { ...probed, applicable: true };
-  await expect(f.gate.apply(forged, { planId: forged.planId })).rejects.toBeInstanceOf(
-    WriteGateRefusal,
-  );
-  expect(treeHash(f.tree)).toBe(before);
-}
 
 describe('cel niebedacy zwyklym plikiem (kryterium 8)', () => {
   posixOnly('potok FIFO jest blokowany, a zapis nie rusza drzewa', async () => {

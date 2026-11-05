@@ -809,6 +809,12 @@ export class FsWriteGate implements WriteGate {
       if (code === 'EACCES' || code === 'EPERM') {
         throw new Blocked('Plik docelowy jest nieczytelny, więc nie da się zrobić jego kopii.');
       }
+      // Windows: naruszenie wspoldzielenia (inny proces trzyma plik) libuv zwraca jako EBUSY.
+      if (code === 'EBUSY') {
+        throw new Blocked(
+          'Plik docelowy jest otwarty przez inny program, więc nie da się zrobić jego kopii. Zamknij ten program i przygotuj plan ponownie.',
+        );
+      }
       throw error;
     }
   }

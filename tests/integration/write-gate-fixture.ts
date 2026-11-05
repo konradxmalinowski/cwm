@@ -1,11 +1,14 @@
-import { mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { expect } from 'vitest';
 
 import type { ItemId } from '../../src/core/model/item';
 import type { WritePlan, WritePlanEntry } from '../../src/core/model/plan';
 import type { OperationRecord } from '../../src/core/ports/operation-log';
 import type { LinkCapability } from '../../src/core/ports/write-gate';
-import { FsWriteGate, type WriteGateDeps } from '../../src/infra/fs/write-gate';
+import { FsWriteGate, WriteGateRefusal, type WriteGateDeps } from '../../src/infra/fs/write-gate';
 import { LinkCapabilityDetector } from '../../src/infra/fs/link-mode';
 import { FsObjectStore } from '../../src/infra/store/object-store';
 import { createTempTree } from '../harness/isolation';
@@ -115,3 +118,55 @@ export function makeFixture(options: FixtureOptions = {}): Fixture {
 }
 
 export const itemId = (value: string): ItemId => value as ItemId;
+
+/** Odcisk calego drzewa: sciezki, rodzaje wpisow, tresc plikow, cele dowiazan i tryby. */
+export function treeHash(dir: string): string {
+  const hash = createHash('sha256');
+  const walk = (current: string, rel: string): void => {
+    for (const name of readdirSync(current).sort()) {
+      const abs = join(current, name);
+      const info = lstatSync(abs);
+      const label = `${rel}/${name}`;
+      if (info.isSymbolicLink()) {
+        hash.update(`L ${label} -> ${readlinkSync(abs)}\n`);
+      } else if (info.isDirectory()) {
+        hash.update(`D ${label} ${(info.mode & 0o777).toString(8)}\n`);
+        walk(abs, label);
+      } else if (info.isFile()) {
+        // Plik nieczytelny (test kryterium 8) nie da sie odczytac: bierzemy rozmiar i czas zmiany.
+        let body: string;
+        try {
+          body = createHash('sha256').update(readFileSync(abs)).digest('hex');
+        } catch {
+          body = `nieczytelny:${info.size}:${info.mtimeMs}`;
+        }
+        hash.update(`F ${label} ${(info.mode & 0o777).toString(8)} ${body}\n`);
+      } else {
+        hash.update(`O ${label}\n`);
+      }
+    }
+  };
+  walk(dir, '');
+  return hash.digest('hex');
+}
+
+/** Plan z jednym zdrowym wpisem i jednym zablokowanym; `forged` udaje, ze brama go zatwierdzila. */
+export async function expectNoBytesWritten(f: Fixture, blockedPlan: WritePlan): Promise<void> {
+  const probed = await f.gate.probe(blockedPlan);
+  expect(probed.applicable).toBe(false);
+  expect(probed.entries.some((e) => e.recoverability?.status === 'blocked')).toBe(true);
+
+  const before = treeHash(f.tree);
+
+  await expect(f.gate.apply(probed, { planId: probed.planId })).rejects.toBeInstanceOf(
+    WriteGateRefusal,
+  );
+  expect(treeHash(f.tree)).toBe(before);
+
+  // Obrona w glab: podrobiona flaga applicable nie zmienia wyniku, bo apply liczy stan od nowa.
+  const forged: WritePlan = { ...probed, applicable: true };
+  await expect(f.gate.apply(forged, { planId: forged.planId })).rejects.toBeInstanceOf(
+    WriteGateRefusal,
+  );
+  expect(treeHash(f.tree)).toBe(before);
+}
