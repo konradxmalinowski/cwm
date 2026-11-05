@@ -25,7 +25,18 @@
         >.
       </p>
     }
-    <p class="row-actions"><a class="btn btn--small" [href]="diagnosticsHref">Szczegóły</a></p>
+    @if (v.rebuildable) {
+      <p class="notice__text" data-testid="banner-rebuild-hint">
+        Jeśli nie możesz użyć nowszej wersji, jedyne wyjście to ręczna odbudowa indeksu w
+        Diagnostyce. Aplikacja straci wtedy log operacji. Zobaczysz plan, zanim cokolwiek się
+        zmieni.
+      </p>
+    }
+    <p class="row-actions">
+      <a class="btn btn--small" [href]="diagnosticsHref" data-testid="banner-details">{{
+        v.rebuildable ? 'Odbuduj indeks w Diagnostyce' : 'Szczegóły'
+      }}</a>
+    </p>
   </div>
 } @else if (v !== null && v.kind === 'rebuilt' && !startup.bannerDismissed()) {
   <div class="notice notice--info" role="status" data-testid="startup-banner">

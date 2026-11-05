@@ -86,6 +86,188 @@
           </dl>
         </section>
 
+        <section class="section" aria-labelledby="diag-rebuild" data-testid="rebuild-section">
+          <h2 class="section__title" id="diag-rebuild">Odbudowa indeksu</h2>
+          @let r = rebuild();
+          @if (r.status === 'idle') {
+            @if (v.kind === 'refused' && v.reason === 'schema-from-future') {
+              <div class="notice" role="note" data-testid="rebuild-only-exit">
+                <p class="notice__text">
+                  <span class="notice__label">Jedyne wyjście bez nowszej wersji aplikacji.</span>
+                  Indeks zapisała nowsza wersja, więc ta nie ruszy go sama. Ręczna odbudowa odkłada
+                  go do kwarantanny i buduje nowy z plików biblioteki. Aplikacja straci log
+                  operacji.
+                </p>
+              </div>
+            } @else {
+              <p class="notice__text">
+                Odbudowa odkłada obecny plik indeksu do kwarantanny i buduje nowy z plików
+                biblioteki. Żaden plik nie jest usuwany z dysku. Zobaczysz plan, zanim cokolwiek się
+                zmieni.
+              </p>
+            }
+            <p class="row-actions">
+              <button
+                type="button"
+                class="btn"
+                [class.btn--primary]="v.kind === 'refused'"
+                data-testid="rebuild-open"
+                (click)="openRebuild()"
+              >
+                Odbuduj indeks
+              </button>
+            </p>
+          } @else if (r.status === 'planning') {
+            <p role="status" data-testid="rebuild-planning">Przygotowuję plan odbudowy.</p>
+          } @else if (r.status === 'plan' || r.status === 'applying') {
+            @let p = r.plan;
+            @if (p.recoverability === 'blocked') {
+              <div class="notice" role="note" data-testid="rebuild-blocked">
+                <p class="notice__text">
+                  <span class="notice__label">Zablokowane.</span>
+                  {{
+                    p.blockedReason ??
+                      'Aplikacja nie potrafi odłożyć obecnego indeksu do kwarantanny.'
+                  }}
+                </p>
+                <p class="notice__text">
+                  Gdy nie da się zabezpieczyć obecnego pliku, aplikacja odmawia odbudowy zamiast ją
+                  wykonać.
+                </p>
+              </div>
+              <p class="row-actions">
+                <button type="button" class="btn" (click)="cancelRebuild()">Zamknij</button>
+                <button type="button" class="btn" (click)="openRebuild()">Sprawdź ponownie</button>
+              </p>
+            } @else {
+              <div class="rebuild" data-testid="rebuild-plan">
+                <dl class="report__grid">
+                  <dt>Plik w kwarantannie</dt>
+                  <dd class="mono" data-testid="rebuild-quarantine">
+                    {{ baseName(p.quarantineName) }}
+                  </dd>
+                  <dt>Elementy do odtworzenia z plików</dt>
+                  <dd data-testid="rebuild-items">{{ itemsToRestoreText(p.itemsToRestore) }}</dd>
+                  <dt>Kwarantanna</dt>
+                  <dd>Możliwa. Obecny plik indeksu zostaje w całości.</dd>
+                  @if (p.currentOutcome === 'refused') {
+                    <dt>Obecny indeks</dt>
+                    <dd>
+                      Odmówiony przy starcie{{
+                        p.currentReason ? '. ' + reasonText(p.currentReason) : ''
+                      }}
+                    </dd>
+                  }
+                </dl>
+                <p class="notice__text">
+                  <span class="notice__label">Nie zostanie odzyskane:</span>
+                </p>
+                <ul class="notice__list" data-testid="rebuild-unrecoverable">
+                  @for (line of p.notRecoverable; track line) {
+                    <li>{{ line }}</li>
+                  }
+                </ul>
+                <label class="check">
+                  <input
+                    type="checkbox"
+                    data-testid="rebuild-confirm"
+                    [checked]="r.status === 'plan' && r.acknowledged"
+                    [disabled]="r.status === 'applying'"
+                    (change)="acknowledge($any($event.target).checked)"
+                  />
+                  <span>
+                    Rozumiem, że aplikacja straci rzeczy z listy powyżej. Stary plik indeksu zostaje
+                    w kwarantannie.
+                  </span>
+                </label>
+                <p class="row-actions">
+                  <button
+                    type="button"
+                    class="btn btn--primary"
+                    data-testid="rebuild-apply"
+                    [disabled]="r.status !== 'plan' || !r.acknowledged"
+                    (click)="applyRebuild()"
+                  >
+                    {{ r.status === 'applying' ? 'Odbudowuję…' : 'Odbuduj indeks' }}
+                  </button>
+                  <button
+                    type="button"
+                    class="btn"
+                    [disabled]="r.status === 'applying'"
+                    (click)="cancelRebuild()"
+                  >
+                    Anuluj
+                  </button>
+                </p>
+                @if (r.status === 'applying') {
+                  <p role="status">Odbudowuję indeks z plików biblioteki.</p>
+                }
+              </div>
+            }
+          } @else if (r.status === 'done') {
+            @let o = describeOutcome(r.report);
+            <div
+              class="notice"
+              [class.notice--info]="o.kind === 'complete'"
+              role="status"
+              data-testid="rebuild-result"
+              [attr.data-outcome]="o.kind"
+            >
+              <p class="notice__text">
+                <span class="notice__label">{{ o.label }}</span>
+                <span data-testid="rebuild-restored">{{ o.restored }}</span>
+                @if (o.zeroWarning) {
+                  To nie potwierdza, że biblioteka jest pusta ani że indeks jest kompletny.
+                }
+              </p>
+              <p class="notice__text">
+                Poprzedni indeks leży w kwarantannie jako
+                <span class="mono">{{ o.quarantineName }}</span
+                >.
+              </p>
+              @if (o.failed.length > 0) {
+                <p class="notice__text">
+                  <span class="notice__label">Nie udało się wczytać:</span>
+                </p>
+                <ul class="notice__list" data-testid="rebuild-failed">
+                  @for (f of o.failed; track f.id) {
+                    <li>
+                      <span class="mono">{{ f.id }}</span
+                      >: {{ f.reason }}
+                    </li>
+                  }
+                </ul>
+              }
+              <p class="notice__text"><span class="notice__label">Nie odzyskano:</span></p>
+              <ul class="notice__list" data-testid="rebuild-lost">
+                @for (line of o.notRecoverable; track line) {
+                  <li>{{ line }}</li>
+                }
+              </ul>
+            </div>
+            <p class="row-actions">
+              <button type="button" class="btn" (click)="cancelRebuild()">Zamknij</button>
+            </p>
+          } @else {
+            <div class="notice" role="alert" data-testid="rebuild-error">
+              <p class="notice__text">
+                <span class="notice__label">Błąd.</span>
+                {{
+                  r.step === 'plan'
+                    ? 'Nie udało się przygotować planu odbudowy. '
+                    : 'Odbudowa nie została wykonana. '
+                }}{{ r.message }}
+              </p>
+            </div>
+            <p class="row-actions">
+              <button type="button" class="btn" (click)="openRebuild()">
+                {{ r.step === 'plan' ? 'Spróbuj ponownie' : 'Przygotuj plan od nowa' }}
+              </button>
+              <button type="button" class="btn" (click)="cancelRebuild()">Zamknij</button>
+            </p>
+          }
+        </section>
+
         <section class="section" aria-labelledby="diag-db">
           <h2 class="section__title" id="diag-db">Baza</h2>
           <dl class="report__grid">

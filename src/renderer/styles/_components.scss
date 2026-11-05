@@ -416,3 +416,10 @@ app-startup-banner .notice {
     border-right: 0;
   }
 }
+
+// ---- Odbudowa indeksu w Diagnostyce ----
+// Bez czerwieni: nic nie jest usuwane z dysku, stary indeks idzie do kwarantanny (DESIGN.md, Color).
+.rebuild {
+  display: grid;
+  gap: var(--s4);
+}

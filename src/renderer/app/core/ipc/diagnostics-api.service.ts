@@ -1,7 +1,12 @@
 import { Injectable } from '@angular/core';
 
 import type { DiagnosticsReport } from '../../../../core/model/diagnostics';
+import type {
+  RebuildIndexApplyResult,
+  RebuildIndexPlanResult,
+} from '../../../../shared/ipc/diagnostics-contract';
 import type { Result } from '../../../../shared/ipc/library-contract';
+import type { BridgeSurface } from '../../../../shared/ipc/surface';
 import { callBridge, failure } from './ipc-call';
 
 function isReport(value: unknown): value is DiagnosticsReport {
@@ -39,4 +44,31 @@ export class DiagnosticsApiService {
     }
     return { ok: true, value: response.value };
   }
+
+  /** Kanaly z ADR 0030. Ich handlery moga jeszcze nie istniec: odrzucenie daje komunikat, nie wyjatek. */
+  rebuildIndexPlan(): Promise<RebuildIndexPlanResult> {
+    return callBridge((bridge) => rebuildBridge(bridge).rebuildIndexPlan());
+  }
+
+  rebuildIndexApply(planId: string): Promise<RebuildIndexApplyResult> {
+    return callBridge((bridge) =>
+      rebuildBridge(bridge).rebuildIndexApply({ planId, confirmed: true }),
+    );
+  }
+}
+
+interface RebuildBridge {
+  rebuildIndexPlan: () => Promise<unknown>;
+  rebuildIndexApply: (request: { planId: string; confirmed: true }) => Promise<unknown>;
+}
+
+function rebuildBridge(bridge: BridgeSurface): RebuildBridge {
+  const diagnostics = bridge.diagnostics as unknown as Partial<RebuildBridge>;
+  if (
+    typeof diagnostics.rebuildIndexPlan !== 'function' ||
+    typeof diagnostics.rebuildIndexApply !== 'function'
+  ) {
+    throw new Error('Kanaly odbudowy indeksu nie sa dostepne w tej wersji procesu glownego.');
+  }
+  return diagnostics as RebuildBridge;
 }

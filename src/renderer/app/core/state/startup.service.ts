@@ -25,4 +25,13 @@ export class StartupService {
         : { status: 'error', message: result.error.message },
     );
   }
+
+  /** Odswieza raport bez przelaczania widoku na szkielet; blad nie zastepuje poprzedniego raportu. */
+  async refresh(): Promise<void> {
+    const result = await this.api.report();
+    if (result.ok) {
+      this.state.set({ status: 'ready', report: result.value });
+      this.bannerDismissed.set(false);
+    }
+  }
 }

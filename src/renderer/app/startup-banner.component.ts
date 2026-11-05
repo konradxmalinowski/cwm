@@ -39,7 +39,14 @@ export class StartupBannerComponent {
     const quarantined = info.quarantinedAs === undefined ? '' : baseName(info.quarantinedAs);
 
     if (kind === 'refused') {
-      return { kind, reasonLabel, advice, message, quarantined };
+      return {
+        kind,
+        reasonLabel,
+        advice,
+        message,
+        quarantined,
+        rebuildable: info.reason === 'schema-from-future',
+      };
     }
     return { kind, reasonLabel, quarantined, facts: rebuildFacts(info) };
   });
