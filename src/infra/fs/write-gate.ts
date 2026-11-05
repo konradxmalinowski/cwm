@@ -45,6 +45,7 @@ import {
 import { lstatOrNull } from './stat';
 import {
   Blocked,
+  assertRootAnchored,
   assertWritableAncestor,
   checkRelPath,
   locateTarget,
@@ -556,6 +557,8 @@ export class FsWriteGate implements WriteGate {
     if (entry.files !== null && (entry.files.length === 0 || entry.files.length > MAX_DIR_FILES)) {
       throw new Blocked('Wpis katalogowy ma pustą albo zbyt dużą listę plików.');
     }
+
+    await assertRootAnchored(rootPath);
 
     if (entry.action === 'link') {
       return this.analyzeLink(tool, entry, rootPath, fileRoot, capability, claim, materialOwners);

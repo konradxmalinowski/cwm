@@ -261,10 +261,45 @@ describe('eksport Claude Code: hooki w settings.json', () => {
     expect(entryFor(plan, id('hooks'), 'settings.json')!.action).toBe('unchanged');
   });
 
-  it('plik nieistniejacy: odmowa, nie tworzenie od zera', async () => {
+  it('brak settings.json: powstaje plik z samym kluczem hooks', async () => {
     const plan = await adapter.plan([hook('Stop', '/s.sh')], ctx(target({ hooks: null })));
-    expect(plan.entries).toEqual([]);
-    expect(plan.refusals[0]?.reason).toMatch(/nie istnieje/);
+    expect(plan.refusals).toEqual([]);
+    const e = entryFor(plan, id('hooks'), 'settings.json')!;
+    expect([e.action, e.scope, e.previous]).toEqual(['create', 'json-key', null]);
+    expect(JSON.parse(text(e.content))).toEqual({
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: '/s.sh' }] }] },
+    });
+  });
+});
+
+describe('eksport Claude Code: swiezy ~/.claude bez podkatalogow i plikow', () => {
+  it('skill, agent, komenda i CLAUDE.md sa tworzone pod rootami, ktorych jeszcze nie ma', async () => {
+    const fresh = new MemoryReader();
+    fresh.dir(id('skills')).dir(id('agents')).dir(id('commands'));
+    fresh.file(id('global-instructions'), 'CLAUDE.md', null);
+    fresh.file(id('hooks'), 'settings.json', null);
+    const absent = roots.map((r) => ({ ...r, exists: false, active: false }));
+    const items = [
+      toLoaded(draft('skill', 'acme-s')),
+      toLoaded(draft('agent', 'acme-a')),
+      toLoaded(draft('command', 'acme-c')),
+      toLoaded(draft('global-instruction', 'instructions')),
+    ];
+    const plan = await adapter.plan(items, {
+      roots: absent,
+      reader: fresh,
+      materialization: { directory: 'copy', file: 'copy' },
+    });
+    expect(plan.refusals).toEqual([]);
+    expect(plan.entries.map((e) => [e.rootId, e.relPath, e.action])).toEqual([
+      [id('skills'), 'acme-s', 'create'],
+      [id('agents'), 'acme-a.md', 'create'],
+      [id('commands'), 'acme-c.md', 'create'],
+      [id('global-instructions'), 'CLAUDE.md', 'create'],
+    ]);
+    expect(text(entryFor(plan, id('global-instructions'), 'CLAUDE.md')!.content)).toBe(
+      '<!-- ai-skills-manager:start -->\nTresc\n<!-- ai-skills-manager:end -->\n',
+    );
   });
 });
 

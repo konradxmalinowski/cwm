@@ -174,13 +174,14 @@ export function describeExportContract(spec: ExportContractSpec): void {
   const rootsFor = (exists = true): DetectedRoot[] =>
     spec.memoryRoots.map((r, i) => detectedRoot(tool, r.kind, i, exists));
 
-  function memoryTarget(): { reader: MemoryReader; roots: DetectedRoot[] } {
-    const roots = rootsFor();
+  /** `fresh`: katalog glowny narzedzia jest, ale roots w srodku (katalogi i pliki) jeszcze nie. */
+  function memoryTarget(fresh = false): { reader: MemoryReader; roots: DetectedRoot[] } {
+    const roots = rootsFor(!fresh);
     const reader = new MemoryReader();
     spec.memoryRoots.forEach((r, i) => {
       const id = roots[i]?.rootId as RootId;
       if (r.fileName === undefined) reader.dir(id);
-      else reader.file(id, r.fileName, r.initial ?? '');
+      else reader.file(id, r.fileName, fresh ? null : (r.initial ?? ''));
     });
     return { reader, roots };
   }
@@ -236,8 +237,7 @@ export function describeExportContract(spec: ExportContractSpec): void {
       expect(plan.conflicts).toEqual([]);
     });
 
-    it('root nieistniejacy daje odmowe z powodem, bez wpisow i bez dotykania celu', async () => {
-      const roots = rootsFor(false);
+    it('brak wykrytej lokalizacji danego rodzaju daje odmowe z powodem, bez wpisow', async () => {
       const reader = new InstrumentedReader(new MemoryReader());
       const items = [
         toLoaded(d('skill')),
@@ -246,11 +246,46 @@ export function describeExportContract(spec: ExportContractSpec): void {
         toLoaded(d('instruction')),
         toLoaded(d('hook')),
       ];
-      const plan = await adapter.plan(items, ctxOf(roots, reader));
+      const plan = await adapter.plan(items, ctxOf([], reader));
       expect(plan.entries).toEqual([]);
       expect(plan.refusals).toHaveLength(items.length);
-      for (const r of plan.refusals) expect(r.reason).toMatch(/nie istnieje|Nie wykryto/);
+      for (const r of plan.refusals) expect(r.reason).toMatch(/Nie wykryto/);
       expect(reader.calls).toEqual([]);
+    });
+
+    it('swiezy katalog glowny: brakujace roots i pliki sa tworzone, a drugi plan ma same unchanged (ADR 0033)', async () => {
+      const { reader, roots } = memoryTarget(true);
+      const items = [
+        toLoaded(d('skill')),
+        toLoaded(d('agent')),
+        toLoaded(d('command')),
+        toLoaded(d('instruction')),
+        toLoaded(d('hook')),
+      ];
+      const plan = await adapter.plan(items, ctxOf(roots, reader));
+      expect(plan.refusals).toEqual([]);
+      expect(plan.conflicts).toEqual([]);
+      expect(plan.entries.length).toBeGreaterThanOrEqual(5);
+      for (const e of plan.entries) {
+        expect(['create', 'link']).toContain(e.action);
+        expect(e.previous).toBeNull();
+      }
+      for (const e of plan.entries) {
+        if (e.content === null) continue;
+        const body = text(e.content);
+        if (e.relPath.endsWith('.json')) {
+          expect(Object.keys(JSON.parse(body) as object)).toEqual(['hooks']);
+        } else if (e.relPath === 'config.toml') {
+          expect(Object.keys(parse(body))).toEqual(['agents']);
+        } else if (e.scope === 'marker-block') {
+          expect(body).toBe(`${BLOCK_START}\nAcme global rules.\n\nBe brief.\n${BLOCK_END}\n`);
+        }
+      }
+      reader.apply(plan);
+      const again = await adapter.plan(items, ctxOf(roots, reader));
+      expect(again.entries.length).toBe(plan.entries.length);
+      for (const e of again.entries)
+        expect([e.relPath, e.action]).toEqual([e.relPath, 'unchanged']);
     });
 
     it('plan ma spojne metadane i nie uzywa niczego poza odczytem', async () => {

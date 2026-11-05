@@ -171,19 +171,13 @@ export async function planHooks(
     refuseAll(b, items, error.message);
     return;
   }
-  if (previous === null) {
-    refuseAll(
-      b,
-      items,
-      `Plik ${spec.fileName} nie istnieje. Aplikacja nie tworzy konfiguracji narzędzia od zera.`,
-    );
-    return;
-  }
-  let text: string;
-  let parsed: unknown;
+  let text = '';
+  let parsed: unknown = {};
   try {
-    text = decodeRaw(previous);
-    parsed = JSON.parse(text.startsWith(BOM) ? text.slice(1) : text);
+    if (previous !== null) {
+      text = decodeRaw(previous);
+      parsed = JSON.parse(text.startsWith(BOM) ? text.slice(1) : text);
+    }
   } catch {
     refuseAll(
       b,
@@ -232,6 +226,20 @@ export async function planHooks(
         );
       }
     }
+  }
+  if (previous === null) {
+    // Brak pliku: powstaje plik z samym kluczem hooks.
+    b.entry({
+      rootId: root.rootId,
+      relPath: spec.fileName,
+      action: 'create',
+      scope: 'json-key',
+      itemIds: ids,
+      content: encodeUtf8(`${JSON.stringify({ hooks: merged.hooks }, null, 2)}\n`),
+      previous: null,
+      warnings,
+    });
+    return;
   }
   if (!merged.changed) {
     b.entry({

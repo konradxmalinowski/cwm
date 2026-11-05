@@ -338,14 +338,9 @@ async function planAgents(
     if (!(error instanceof TargetReadError)) throw error;
     return refuseAll(error.message);
   }
-  if (configBytes === null) {
-    return refuseAll(
-      'Plik config.toml nie istnieje. Aplikacja nie tworzy konfiguracji narzędzia od zera.',
-    );
-  }
   let configText: string;
   try {
-    configText = decodeRaw(configBytes);
+    configText = configBytes === null ? '' : decodeRaw(configBytes);
   } catch (error) {
     if (!(error instanceof TextDecodeError)) throw error;
     return refuseAll(
@@ -414,10 +409,10 @@ async function planAgents(
   b.entry({
     rootId: registry.root.rootId,
     relPath: 'config.toml',
-    action: edit.changed ? 'modify' : 'unchanged',
+    action: configBytes === null ? 'create' : edit.changed ? 'modify' : 'unchanged',
     scope: 'toml-segment',
     itemIds: prepared.map((p) => p.loaded.item.id),
-    content: edit.changed ? encode(edit.text) : configBytes,
+    content: edit.changed || configBytes === null ? encode(edit.text) : configBytes,
     previous: configBytes,
   });
 }

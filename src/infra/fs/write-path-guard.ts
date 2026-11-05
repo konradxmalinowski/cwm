@@ -1,4 +1,4 @@
-import { access, constants, lstat, realpath } from 'node:fs/promises';
+import { access, constants, lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isPathInside } from '../../core/model/path-containment';
@@ -184,4 +184,27 @@ export async function assertWritableAncestor(
   } catch {
     throw new Blocked('Katalog docelowy jest tylko do odczytu albo brak do niego uprawnień.');
   }
+}
+
+/**
+ * Brakujacy root (katalog skilli, plik instrukcji) wolno utworzyc tylko wtedy, gdy istnieje jego
+ * rodzic, czyli katalog glowny narzedzia (ADR 0033). Bez rodzica zapis tworzylby drzewo narzedzia
+ * od zera.
+ */
+export async function assertRootAnchored(rootPath: string): Promise<void> {
+  try {
+    await lstat(rootPath);
+    return;
+  } catch (error: unknown) {
+    if (errnoCode(error) !== 'ENOENT') throw error;
+  }
+  try {
+    if ((await stat(path.dirname(rootPath))).isDirectory()) return;
+  } catch (error: unknown) {
+    const code = errnoCode(error);
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') throw error;
+  }
+  throw new Blocked(
+    'Katalog główny narzędzia nie istnieje, więc aplikacja nie utworzy tej lokalizacji od zera.',
+  );
 }

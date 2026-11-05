@@ -38,26 +38,15 @@ Trzy odpowiedzi z ARCHITECTURE 2.4:
   w `tests/integration/locations.test.ts`, test planu `toolMissing` w
   `tests/unit/export-service.test.ts` i test `missingTools` w `tests/unit/sync-service.test.ts`.
 
-## Stan wdrożenia na 2026-11-04
+## Stan wdrożenia
 
-Pierwsza połowa decyzji (odmowa bez katalogu głównego) jest w kodzie i ma testy. Druga
-połowa (tworzenie brakujących podkatalogów) jest wdrożona tylko częściowo. `WriteGate` tworzy
-katalogi pośrednie pod rootem, ale adaptery wybierają root przez `pickRoot`
-(`src/adapters/shared/export/plan-support.ts`), który odmawia, gdy sam root danego rodzaju
-nie istnieje. Efekt: w istniejącym `~/.claude`, w którym nie ma jeszcze `skills/`, `agents/`
-ani `commands/`, eksport tych typów jest odrzucany z komunikatem "Aplikacja nie tworzy drzewa
-narzędzia od zera". To samo dotyczy `CLAUDE.md`, `AGENTS.md`, `hooks.json`, `settings.json`
-i `config.toml`, które nie istnieją, bo ich root jest plikiem. Kod jest więc ostrzejszy
-niż decyzja. Rozbieżność jest w backlogu ROADMAP (sekcja 4) i wymaga zmiany kodu, nie decyzji.
-Poprawka musi też rozstrzygnąć `config.toml`: test `brak roota rejestru: odmowa, nie tworzenie
-od zera` w `tests/unit/adapters-export-codex.test.ts` utrwala dziś odmowę, więc zmiana
-zachowania zmienia ten test, a nie tylko dopisuje nowy.
+Obie połowy decyzji są w kodzie. Odmowa bez katalogu głównego: `tests/unit/export-service.test.ts`, `tests/unit/sync-service.test.ts` i `tests/integration/locations.test.ts`. Tworzenie brakujących roots i plików w istniejącym katalogu głównym: `pickRoot` (`src/adapters/shared/export/plan-support.ts`) wybiera pierwszy wykryty root także wtedy, gdy go nie ma, a wpisy dostają `create` (brakujący plik instrukcji to sam blok między markerami, brakujący `settings.json` i `hooks.json` to sam klucz `hooks`, brakujący `config.toml` to same segmenty agentów). `WriteGate` tworzy brakujący root z trybem 0700 i blokuje root, którego rodzica nie ma (`assertRootAnchored`). Testy: `tests/contract/export.test.ts` (świeży katalog główny, oba narzędzia), `tests/unit/adapters-export-claude.test.ts`, `tests/unit/adapters-export-codex.test.ts`, `tests/integration/write-gate-missing-root.test.ts` i `tests/integration/export-fresh-home.test.ts` (prawdziwy `WriteGate` na katalogu tymczasowym). Drugi root skilli Codeksa (`~/.agents/skills`) nie jest tworzony, bo zapis idzie do pierwszego.
 
 ## Konsekwencje
 
 Użytkownik z narzędziem zainstalowanym, ale nieuruchomionym ani razu (bez `~/.codex/skills`),
-zobaczy odmowę do czasu poprawki z backlogu. To jest przyjęty koszt, bo odmowa jest bezpieczna,
-a poprawna alternatywa (tworzenie podkatalogów) wymaga testu na każdym rodzaju roota.
+dostaje podkatalogi i pliki utworzone przy pierwszym eksporcie. Odmowa dotyczy tylko braku
+katalogu głównego.
 
 Eksport do narzędzia, którego nie ma, jest niemożliwy z definicji, więc stan synchronizacji
 takiego narzędzia nie istnieje. Widok Synchronizacja pokazuje je jako brakujące, a nie jako

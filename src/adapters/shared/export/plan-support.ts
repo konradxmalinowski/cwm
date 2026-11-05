@@ -106,8 +106,11 @@ const KIND_LABEL: Readonly<Record<RootKind, string>> = {
 };
 
 /**
- * Pierwszy istniejacy i czytany root danego rodzaju. Brak roota to odmowa z powodem: aplikacja
- * nie tworzy drzewa narzedzia od zera (decyzja wlasciciela z 2026-11-03).
+ * Root do zapisu. Istniejacy i czytany ma pierwszenstwo; gdy zaden nie istnieje, bierzemy
+ * pierwszy wykryty, a jego brak oznacza `create` (ADR 0033: brakujace podkatalogi i pliki
+ * w istniejacym katalogu glownym narzedzia sa tworzone). Drugi root skilli Codeksa nie jest
+ * tworzony, bo zapis idzie do pierwszego. Czy istnieje sam katalog glowny, sprawdza serwis
+ * eksportu przed wywolaniem adaptera, a `WriteGate` blokuje root bez rodzica.
  */
 export function pickRoot(ctx: ExportContext, tool: ToolId, kind: RootKind): RootChoice {
   const candidates = ctx.roots.filter((r) => r.tool === tool && r.kind === kind);
@@ -120,10 +123,7 @@ export function pickRoot(ctx: ExportContext, tool: ToolId, kind: RootKind): Root
       missing: `Nie wykryto lokalizacji ${KIND_LABEL[kind]} dla tego narzędzia.`,
     };
   }
-  return {
-    root: null,
-    missing: `Lokalizacja ${KIND_LABEL[kind]} (${first.label}) nie istnieje. Aplikacja nie tworzy drzewa narzędzia od zera.`,
-  };
+  return { root: first };
 }
 
 /** Odczyt pliku celu; brak pliku to `null`, kazdy inny blad leci jako `TargetReadError`. */

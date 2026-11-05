@@ -168,10 +168,65 @@ describe('eksport Codeksa: agent w dwoch miejscach', () => {
     expect(plan.refusals[0]?.reason).toMatch(/tablica tabel/);
   });
 
-  it('brak roota rejestru: odmowa, nie tworzenie od zera', async () => {
-    const plan = await adapter.plan([agent()], ctx(target(), false));
-    expect(plan.entries).toEqual([]);
-    expect(plan.refusals[0]?.reason).toMatch(/nie istnieje/);
+  it('brak config.toml: powstaje plik z samym segmentem agenta, parsowalny przez smol-toml', async () => {
+    const plan = await adapter.plan([agent()], ctx(target(null), false));
+    expect(plan.refusals).toEqual([]);
+    const cfg = entryFor(plan, id('agent-registry'), 'config.toml')!;
+    expect([cfg.action, cfg.scope, cfg.previous]).toEqual(['create', 'toml-segment', null]);
+    expect(text(cfg.content)).toBe(
+      '[agents.acme-a]\ndescription = "Opis"\nconfig_file = "agents/acme-a.toml"\n',
+    );
+    expect(parse(text(cfg.content))).toEqual({
+      agents: { 'acme-a': { description: 'Opis', config_file: 'agents/acme-a.toml' } },
+    });
+    expect(entryFor(plan, id('agents'), 'acme-a.toml')?.action).toBe('create');
+  });
+
+  it('swiezy ~/.codex: skill, komenda, AGENTS.md i hooks.json powstaja z samej tresci zarzadzanej', async () => {
+    const fresh = new MemoryReader();
+    fresh.dir(id('skills')).dir(id('agents'));
+    fresh.file(id('agent-registry'), 'config.toml', null);
+    fresh.file(id('global-instructions'), 'AGENTS.md', null);
+    fresh.file(id('hooks'), 'hooks.json', null);
+    const absent = roots.map((r) => ({ ...r, exists: false, active: false }));
+    const hook = toLoaded(
+      draft('hook', 'Stop-1', {
+        identity: { slug: 'Stop-1', declaredName: null, aliases: [] },
+        attributes: {
+          hook: {
+            event: 'Stop',
+            matcher: null,
+            command: '/x.sh',
+            pathStyle: 'absolute',
+            timeoutSeconds: null,
+          },
+        },
+      }),
+    );
+    const items = [
+      toLoaded(draft('skill', 'acme-s')),
+      toLoaded(draft('command', 'acme-c')),
+      toLoaded(draft('global-instruction', 'instructions')),
+      hook,
+    ];
+    const plan = await adapter.plan(items, {
+      roots: absent,
+      reader: fresh,
+      materialization: { directory: 'symlink', file: 'symlink' },
+    });
+    expect(plan.refusals).toEqual([]);
+    expect(entryFor(plan, id('skills'), 'acme-s')?.action).toBe('link');
+    expect(entryFor(plan, id('skills'), 'acme-c')?.action).toBe('link');
+    const md = entryFor(plan, id('global-instructions'), 'AGENTS.md')!;
+    expect(md.action).toBe('create');
+    expect(text(md.content)).toMatch(
+      /^<!-- ai-skills-manager:start -->\nTresc\n<!-- ai-skills-manager:end -->\n$/,
+    );
+    const hooks = entryFor(plan, id('hooks'), 'hooks.json')!;
+    expect(hooks.action).toBe('create');
+    expect(JSON.parse(text(hooks.content))).toEqual({
+      hooks: { Stop: [{ hooks: [{ type: 'command', command: '/x.sh' }] }] },
+    });
   });
 
   it('agent z fixture bez zmian jest unchanged w obu miejscach', async () => {
