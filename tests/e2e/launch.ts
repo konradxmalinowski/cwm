@@ -58,6 +58,68 @@ function launchEnv(overrides: Readonly<Record<string, string>> = {}): Record<str
   return { ...env, ...overrides };
 }
 
+/**
+ * Limit od przylaczenia do widocznej powloki. Zmierzone lokalnie na macOS w 506
+ * startach: caly test z uruchomieniem trwa ponizej 1 s, wiec 30 s to zapas, a nie
+ * prog. Limit nie leczy niczego; jego zadaniem jest zamienic cisze do limitu
+ * testu na blad z etapem i stderr.
+ */
+const SHELL_TIMEOUT_MS = 30_000;
+const STDERR_TAIL_LINES = 20;
+
+/**
+ * Electron, ktory nie zaladowal procesu glownego, nie konczy sie: pokazuje okno
+ * bledu i czeka. Sprawdzone na celowo ucietym pliku main - po 8 s proces zyl,
+ * a jedynym sladem byla ta linia na stderr.
+ */
+const MAIN_LOAD_ERROR = 'App threw an error during load';
+
+async function awaitShell(app: ElectronApplication, startedAt: number): Promise<Page> {
+  const child = app.process();
+  const tail: string[] = [];
+  let stage = 'okno';
+  let rejectEarly: (error: Error) => void = () => undefined;
+  const early = new Promise<never>((_, reject) => {
+    rejectEarly = reject;
+  });
+  early.catch(() => undefined);
+
+  const onStderr = (chunk: Buffer): void => {
+    for (const line of chunk.toString('utf8').split(/\r?\n/)) {
+      if (line === '') continue;
+      tail.push(line);
+      if (tail.length > STDERR_TAIL_LINES) tail.shift();
+      if (line.includes(MAIN_LOAD_ERROR)) rejectEarly(new Error('proces glowny nie zaladowal sie'));
+    }
+  };
+  const onExit = (code: number | null, signal: string | null): void => {
+    rejectEarly(new Error(`proces zakonczyl sie przed powloka (kod ${code}, sygnal ${signal})`));
+  };
+  child.stderr?.on('data', onStderr);
+  child.once('exit', onExit);
+
+  try {
+    const page = await Promise.race([app.firstWindow({ timeout: SHELL_TIMEOUT_MS }), early]);
+    stage = 'powloka renderera';
+    await Promise.race([
+      page.waitForSelector('[data-testid="app-shell"]', { timeout: SHELL_TIMEOUT_MS }),
+      early,
+    ]);
+    return page;
+  } catch (error: unknown) {
+    child.kill();
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `start aplikacji utknal na etapie "${stage}" po ${Date.now() - startedAt} ms: ${reason}\n` +
+        `ostatnie linie stderr:\n${tail.join('\n') || '(brak)'}`,
+      { cause: error },
+    );
+  } finally {
+    child.stderr?.off('data', onStderr);
+    child.off('exit', onExit);
+  }
+}
+
 async function launch(
   args: string[],
   executablePath?: string,
@@ -84,7 +146,9 @@ async function launch(
   const app = await electron.launch({
     args: [...args, `--user-data-dir=${userDataDir}`],
     cwd: process.cwd(),
-    ...(executablePath === undefined ? {} : { timeout: PACKAGED_LAUNCH_TIMEOUT_MS }),
+    // Bez jawnego limitu przylaczenie czeka do limitu testu. Tak wisial start
+    // z ucietym plikiem main: "Debugger listening" jest, "DevTools listening" nie.
+    timeout: executablePath === undefined ? SHELL_TIMEOUT_MS : PACKAGED_LAUNCH_TIMEOUT_MS,
     // Bez tego Playwright sam dokłada `--no-sandbox` do argumentow Electrona,
     // czyli test hartowania jechalby z wylaczonym sandboxem systemowym
     // i milczalby o tym. Na Linuksie wymaga to pomocnika chrome-sandbox
@@ -94,8 +158,7 @@ async function launch(
     env: launchEnv(envOverrides),
   });
 
-  const page = await app.firstWindow();
-  await page.waitForSelector('[data-testid="app-shell"]');
+  const page = await awaitShell(app, startedAt);
 
   if (executablePath !== undefined) {
     process.stdout.write(`[e2e] paczka wystartowala po ${Date.now() - startedAt} ms\n`);

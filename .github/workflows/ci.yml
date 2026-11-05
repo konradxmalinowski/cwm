@@ -74,6 +74,9 @@ jobs:
   build:
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    # Ostatnie zabezpieczenie; zwykle 4-6 min. Zawis E2E ma pasc wczesniej,
+    # na limicie kroku, bo anulowany job nie wysyla artefaktu raportu.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -159,10 +162,12 @@ jobs:
 
       - name: Testy E2E (Linux, pod xvfb)
         if: runner.os == 'Linux'
+        timeout-minutes: 15
         run: xvfb-run --auto-servernum npm run test:e2e
 
       - name: Testy E2E
         if: runner.os != 'Linux'
+        timeout-minutes: 15
         run: npm run test:e2e
 
       - name: Raport E2E przy porazce
