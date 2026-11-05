@@ -120,15 +120,23 @@ function matchesQuery(item: LibraryItem, needle: string): boolean {
   );
 }
 
+/**
+ * `matches` to identyfikatory z indeksu pelnotekstowego. Bez nich (`null`: indeks niedostepny albo
+ * nieaktualny, zapytanie bez slow) zostaje filtr podlancucha po plikach jako tryb awaryjny.
+ */
 export function toListDto(
   result: ListResult,
   query: string | undefined,
   kind?: ItemKindDto,
+  matches: ReadonlySet<string> | null = null,
 ): LibraryListDto {
   const needle = query?.trim().toLowerCase() ?? '';
   const items = result.items
     .filter((item) => kind === undefined || item.kind === kind)
-    .filter((item) => needle.length === 0 || matchesQuery(item, needle))
+    .filter((item) => {
+      if (needle.length === 0) return true;
+      return matches === null ? matchesQuery(item, needle) : matches.has(item.id);
+    })
     .map(toSummaryDto);
 
   const inconsistent: InconsistentDto[] = result.inconsistent.map((entry) => ({
@@ -237,9 +245,18 @@ export function registerLibraryHandlers(registry: IpcRegistry, deps: LibraryHand
 
   registry.register(
     'library:list',
-    guarded(parseListRequest, async (service, request) =>
-      ok(toListDto(await service.list(), request.query, request.kind)),
-    ),
+    guarded(parseListRequest, async (service, request) => {
+      const needle = request.query?.trim() ?? '';
+      const found = needle.length === 0 ? null : service.search(needle, request.kind);
+      return ok(
+        toListDto(
+          await service.list(),
+          request.query,
+          request.kind,
+          found === null ? null : new Set<string>(found),
+        ),
+      );
+    }),
   );
 
   registry.register(

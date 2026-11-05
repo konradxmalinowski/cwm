@@ -709,9 +709,15 @@ udaje wyniku): `diff:compute`, `profiles:list`, `profiles:save`, `profiles:expor
 w planie eksportu.
 
 Nie ma w liście, choć wcześniejsza wersja tego dokumentu je przewidywała: `library:delete` (zastąpiły
-go `delete-plan` i `delete-apply`), `sync:verify` (weryfikacja jest częścią zapisu) oraz
-`diagnostics:rebuild-index-plan` i `diagnostics:rebuild-index-apply` z ADR 0030, które czekają na
-kawałek B Etapu 2 (ROADMAP sekcja 3).
+go `delete-plan` i `delete-apply`) oraz `sync:verify` (weryfikacja jest częścią zapisu).
+
+`diagnostics:rebuild-index-plan` i `diagnostics:rebuild-index-apply` (ADR 0030) są na liście i mają
+handlery. Żaden nie przyjmuje ścieżki: parser `apply` buduje wynik z dwóch pól (`planId`,
+`confirmed`), a plan ignoruje ładunek. Plan żyje w main (10 minut, jednorazowy, odcisk stanu:
+liczba katalogów w `library/items`, wynik otwarcia indeksu, obecność pliku). Kanały zapisujące
+(`library:save`, `library:delete-apply`, `library:repair`, `import:apply`, `export:apply`,
+`sync:apply`, `history:rollback`) wchodzą pod wspólną blokadę `OperationLock`; w trakcie
+odbudowy odpowiadają kodem `busy`, a odbudowa nie startuje, gdy któryś z nich trwa.
 
 Zdarzenia main do renderera, `progress` i `operation-log`, są zadeklarowane w `IPC_EVENTS` i
 dostępne w moście, ale main nie nadaje żadnego z nich. Mają nieść tylko postęp i log, nigdy treść
@@ -920,7 +926,7 @@ Windowsie, dostajemy brak efektu i pokazujemy zieloną kontrolkę.
       assets/...           pliki pomocnicze
       snapshots/<tool>/... surowe zrodlo, bajt w bajt
     items/.<itemId>.<work|ready|old>.<pid>.<hex12>/   katalog pomocniczy zapisu, nie element (patrz nizej)
-  index.db                 indeks SQLite: schema_migrations, operation_log, sync_state
+  index.db                 indeks SQLite: schema_migrations, operation_log, sync_state, items, items_fts
   objects/<aa>/<sha256>    content-addressed store (wersje elementow, kopie zapisow)
   backups/<id>/            kopia przed zapisem do narzedzia: files/ plus MANIFEST (id to znacznik czasu i 3 bajty losowe)
   materialized/<tool>/...  wyrenderowane kopie elementow, do ktorych wskazuja dowiazania (ADR 0015)
@@ -930,18 +936,24 @@ Windowsie, dostajemy brak efektu i pokazujemy zieloną kontrolkę.
   tmp/                     proby wykrywania zdolnosci dowiazan, sprzatane po probie
 ```
 
-Tabele indeksu: `schema_migrations` (rejestr, migracje 1 do 3), `operation_log` (log operacji
+Tabele indeksu: `schema_migrations` (rejestr, migracje 1 do 4), `operation_log` (log operacji
 biblioteki i zapisów do narzędzi, z kolumnami `tool`, `backup_id` i `reverts`, dzięki którym
 historia grupuje wiersze jednej operacji i wie, która operacja cofnęła którą) oraz `sync_state`
 (rekord ostatniej synchronizacji per element i narzędzie: rewizja, hash treści, lista plików
-z hashami, `backup_id`). Biblioteki w indeksie nie ma, nie ma też tabeli FTS ani indeksu slugów.
+z hashami, `backup_id`). Od migracji 4 indeks trzyma też kopię biblioteki do wyszukiwania i
+sprawdzania kolizji: `items` (id, typ, slug, `slug_key`, tytuł, opis, rewizja, hash treści,
+data; unikalny indeks `(kind, slug_key)` z ADR 0017) oraz `items_fts` (FTS5 po tytule, opisie,
+treści i slugu, `unicode61 remove_diacritics 2`). To kopia, nie źródło prawdy: zapis idzie
+najpierw do plików, potem do indeksu, a przy starcie indeks wypełnia się z plików, gdy jest
+świeży albo liczba elementów się nie zgadza (ADR 0014). Kolumna `operation_log.note` niesie
+krótki wynik operacji, np. ręcznej odbudowy indeksu (ADR 0030).
 
 Dwie reguły tego układu:
 
 **Pliki są prawdą, baza jest indeksem.** Elementy to w istocie pliki Markdown z metadanymi,
 więc trzymanie ich jako BLOB-ów w SQLite utrudniłoby wszystko, co użytkownik może chcieć zrobić
 poza aplikacją (podejrzeć, zacommitować, zgrepować). Baza trzyma to, co służy śledzeniu stanu, a
-wyszukiwanie ma w planie (dziś jest filtrem w main, ROADMAP sekcja 3, Etap 2). Utrata `index.db`
+wyszukiwanie ma w FTS5 (zapytanie użytkownika jest escapowane: każde słowo w cudzysłowie z prefiksem `*`). Utrata `index.db`
 nie kosztuje żadnego elementu biblioteki. Kosztuje log operacji, który z definicji nie wraca z
 plików (ADR 0014, 0029), oraz stan synchronizacji: każdy element wygląda wtedy na niezsynchronizowany,
 a następny plan pokaże różnicę. To jest warunek zaufania do aplikacji, która ma być jedynym miejscem

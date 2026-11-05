@@ -8,6 +8,7 @@ import { expect, test } from '@playwright/test';
 
 import { createTempTree, removeTempTrees } from '../harness/isolation';
 import { packagedExecutable } from './launch';
+import { seedLibrary } from './seed-library';
 
 /**
  * Dowod na ryzyko R2, oddzielony od narzedzia, ktorym go zdobywamy.
@@ -63,7 +64,39 @@ async function waitForLedger(dbPath: string): Promise<MigrationRow[]> {
   );
 }
 
-async function runPackagedOnce(userDataDir: string): Promise<{ output: string }> {
+/**
+ * Czeka, az zapakowana aplikacja wypelni indeks biblioteki z plikow. Rejestr migracji powstaje
+ * wczesniej, wiec jego obecnosc nie dowodzi jeszcze, ze wpisy FTS zostaly zapisane.
+ */
+function readIndexedSlugs(dbPath: string, ftsQuery: string): string[] | null {
+  if (!existsSync(dbPath)) return null;
+  let db: Database.Database | null = null;
+  try {
+    db = new Database(dbPath, { readonly: true });
+    const rows = db
+      .prepare(
+        `SELECT items.slug AS slug FROM items_fts JOIN items ON items.seq = items_fts.rowid
+         WHERE items_fts MATCH ? ORDER BY items.slug`,
+      )
+      .all(ftsQuery) as { slug: string }[];
+    return rows.map((row) => row.slug);
+  } catch {
+    return null;
+  } finally {
+    db?.close();
+  }
+}
+
+async function waitForIndexedItems(dbPath: string, expected: number): Promise<void> {
+  const deadline = Date.now() + READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if ((readIndexedSlugs(dbPath, 'acme*')?.length ?? 0) >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+  throw new Error(`zapakowana aplikacja nie wypelnila indeksu biblioteki w ${READY_TIMEOUT_MS} ms`);
+}
+
+async function runPackagedOnce(userDataDir: string, untilIndexed = 0): Promise<{ output: string }> {
   const child: ChildProcess = spawn(executable as string, [`--user-data-dir=${userDataDir}`], {
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -78,6 +111,7 @@ async function runPackagedOnce(userDataDir: string): Promise<{ output: string }>
 
   try {
     await waitForLedger(join(userDataDir, 'index.db'));
+    if (untilIndexed > 0) await waitForIndexedItems(join(userDataDir, 'index.db'), untilIndexed);
     return { output };
   } catch (error: unknown) {
     throw new Error(
@@ -102,8 +136,8 @@ test.describe('zapakowana aplikacja, dowod przez stan na dysku', () => {
 
     const ledger = readLedger(join(userDataDir, 'index.db'));
     expect(ledger).not.toBeNull();
-    // Dwie migracje: 001 (indeks) i 002 (log operacji). Obie musza przyjsc z paczki.
-    expect(ledger?.map((row) => row.version)).toEqual([1, 2, 3]);
+    // Cztery migracje (rejestr, log operacji, stan synchronizacji, indeks biblioteki) musza przyjsc z paczki.
+    expect(ledger?.map((row) => row.version)).toEqual([1, 2, 3, 4]);
     // Data w rejestrze dowodzi, ze wykonal sie INSERT, a nie tylko CREATE TABLE.
     expect(Number.isNaN(Date.parse(ledger?.[0]?.applied_at ?? ''))).toBe(false);
   });
@@ -118,17 +152,31 @@ test.describe('zapakowana aplikacja, dowod przez stan na dysku', () => {
     const afterSecond = readLedger(join(userDataDir, 'index.db'));
 
     expect(afterSecond).toEqual(afterFirst);
-    expect(afterSecond).toHaveLength(3);
+    expect(afterSecond).toHaveLength(4);
   });
 
   /**
-   * FTS5 jest fundamentem ADR 0007, ale w Etapie 1 nie ma jeszcze tabeli
-   * pelnotekstowej w schemacie produkcyjnym i nie bedzie dodana po to, zeby
-   * test mial co sprawdzic. Dowod jest wiec dwuczesciowy: binding natywny
-   * dostarczony w paczce jest bajt w bajt tym samym plikiem, ktory laduje
-   * proces testu, a w tym procesie FTS5 dziala. Pelny, bezposredni dowod
-   * domknie sie w Etapie 2 razem z prawdziwa tabela pelnotekstowa.
+   * Kryterium 7 Etapu 2: zapytanie FTS na prawdziwej tabeli pelnotekstowej biblioteki, po
+   * zapisie wykonanym przez zapakowana aplikacje. Biblioteka lezy na dysku bez indeksu, wiec
+   * paczka sama tworzy `items_fts` (migracja 4) i wypelnia ja z plikow; test czyta stan na dysku
+   * i odpytuje FTS5, tak jak przy rejestrze migracji. Wpisy w `items_fts` mogly powstac tylko
+   * tak, ze w paczce zaladowal sie modul natywny z FTS5 i wykonal INSERT do tabeli wirtualnej.
    */
+  test('FTS5 w paczce: tabela items_fts jest wypelniona z plikow i odpowiada na zapytania', async () => {
+    const userDataDir = createTempTree('acme-packaged-fts-');
+    const seeded = await seedLibrary(userDataDir);
+    const dbPath = join(userDataDir, 'index.db');
+
+    await runPackagedOnce(userDataDir, seeded.length);
+
+    // Dopasowanie prefiksowe, bez rozrozniania wielkosci liter i znakow diakrytycznych.
+    expect(readIndexedSlugs(dbPath, 'acme*')).toEqual(seeded.map((item) => item.slug).sort());
+    expect(readIndexedSlugs(dbPath, 'przeglad*')).toEqual(['acme-przeglad']);
+    expect(readIndexedSlugs(dbPath, 'lodzki*')).toEqual(['acme-lodz']);
+    expect(readIndexedSlugs(dbPath, 'znacznikfts')).toEqual(['acme-lodz']);
+    expect(readIndexedSlugs(dbPath, 'nieistniejace*')).toEqual([]);
+  });
+
   test('binding w paczce jest tym samym plikiem, ktory laduje test, a FTS5 w nim dziala', () => {
     const packagedRoot = join(dirname(executable as string), '..', 'Resources');
     const candidates = [
@@ -168,6 +216,7 @@ test.describe('zapakowana aplikacja, dowod przez stan na dysku', () => {
 
     expect(hash(shipped as string)).toBe(hash(local));
 
+    // Probka na pamieci zostaje jako dodatkowy dowod, ze ten sam binding obsluguje FTS5 w procesie testu.
     const db = new Database(':memory:');
     try {
       db.exec('CREATE VIRTUAL TABLE acme_fts USING fts5(body);');

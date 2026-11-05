@@ -95,6 +95,8 @@ function summaryOf(kind: string, group: OperationGroup, count: number): string {
       return `Przyjęto stan z dysku dla: ${named}`;
     case 'restore':
       return `Przywrócono wersję: ${named}`;
+    case 'rebuild-index':
+      return 'Odbudowano indeks biblioteki';
     default:
       return 'Operacja';
   }
@@ -113,7 +115,9 @@ export class HistoryService {
 
   private async entryOf(group: OperationGroup): Promise<HistoryEntry> {
     const kind = kindOf(group);
-    const itemIds = [...new Set(group.rows.map((r) => r.itemId as string))];
+    // Wpis odbudowy indeksu nie dotyczy zadnego elementu: jego `itemId` to stala.
+    const itemIds =
+      kind === 'rebuild-index' ? [] : [...new Set(group.rows.map((r) => r.itemId as string))];
     const backupId = group.rows.find((r) => r.backupId !== undefined)?.backupId ?? null;
     const writes = WRITE_KINDS.has(kind) && backupId !== null;
     const revertedBy =

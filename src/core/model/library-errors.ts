@@ -58,7 +58,7 @@ export interface ValidationIssue {
 
 /** Ostrzezenie nie blokuje zapisu (ADR 0026). */
 export interface LibraryWarning {
-  readonly code: 'slug-differs-from-declared-name' | 'operation-log-failed';
+  readonly code: 'slug-differs-from-declared-name' | 'operation-log-failed' | 'index-update-failed';
   readonly message: string;
 }
 

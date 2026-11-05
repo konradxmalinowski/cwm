@@ -194,32 +194,31 @@ kolizji wielkości liter (ADR 0017). Normalizacja końców linii (ADR 0016). Prz
 z plików z kwarantanną i triażem przyczyn awarii otwarcia (ADR 0029). Okno przed otwarciem
 indeksu, z widokiem dla odmowy i dla odbudowy (ADR 0029, ARCHITECTURE 13.1).
 
-**Stan (2026-11-05): otwarty.** Kawałki A (warstwa plików i content store, ADR 0031) i C (kanały
-`library:*`, interfejs biblioteki, widok Diagnostyki) są w kodzie. Kawałek B jest zrobiony w
-połowie: log operacji w `index.db` istnieje (migracja 2, `operation_log`) i zasila historię,
-ale indeks nie trzyma biblioteki. Schemat to trzy migracje: rejestr, `operation_log` i
-`sync_state`. Nie ma indeksu slugów, tabeli FTS ani odbudowy z plików, więc wyszukiwanie jest
-filtrem podłańcucha w main (`toListDto` w `src/main/ipc/handlers/library.ts`) nad wynikiem
-`LibraryService.list()`. Ostatni przebieg CI na `main` (`41991403641`, commit `c37e40d`) jest zielony na czterech
-celach. Cztery z dziesięciu kryteriów mają test (3, 8, 9, 10), sześć jest otwartych; tabela
-pod kryteriami mówi, czego brakuje.
+**Stan (2026-11-05): kawałek B domknięty w kodzie, etap otwarty przez kryteria 1 i 4.** Kawałki A
+(warstwa plików i content store, ADR 0031) i C (kanały `library:*`, interfejs biblioteki, widok
+Diagnostyki) są w kodzie. Kawałek B: migracja 4 (`004-library-index.sql`) dodaje tabelę `items`
+z unikalnym indeksem `(kind, slug_key)` (ADR 0017 w bazie obok walidatora) i tabelę FTS5
+`items_fts` (`unicode61 remove_diacritics 2`). `LibraryService` po każdym udanym zapisie plików
+aktualizuje indeks (port `LibraryIndex`, implementacja `src/infra/db/library-index.ts`); awaria
+indeksu daje ostrzeżenie `index-update-failed` i odbiera mu zaufanie, a slugi i wyszukiwanie
+wracają do plików. Przy starcie indeks wypełnia się z plików, gdy jest świeży po odbudowie albo
+liczba elementów w nim nie zgadza się z liczbą katalogów w `library/items`
+(`src/main/bootstrap/library-index.ts`). Wyszukiwanie w `library:list` idzie przez FTS z
+dopasowaniem prefiksowym na tokenach. Ręczna odbudowa działa przez `diagnostics:rebuild-index-plan`
+i `-apply` (`src/main/services/index-rebuild.ts`), pod wspólną blokadą z zapisami
+(`src/main/services/write-lock.ts`). Kryteria 1 i 4 należą do interfejsu i nie są tu rozstrzygane.
 
-Z kawałka B zostaje to, czego nikt nie zrobił:
+Ograniczenia tego kawałka:
 
-- **Indeks slugów** zamiast odczytu wszystkich `item.json` przy każdym zapisie
-  (`LibraryService.existingSlugs`). Koszt jest liniowy względem liczby elementów. Ma wynikać
-  z indeksu unikalności `lower(slug)` + typ (ADR 0017), z komunikatem walidatora, nie z
-  naruszenia ograniczenia bazy (kryterium 8).
-- **FTS i odbudowa indeksu z plików.** Odbudowa ma czytać bibliotekę przez
-  `LibraryService.list()`, który zwraca osobno elementy poprawne, niespójne i problemy; raport
-  odbudowy (kryterium 4) ma wymienić wszystkie trzy grupy. Dziś `restoredItems` jest zawsze 0,
-  a lista "nieodzyskanego" nadal mówi, że zawartość biblioteki powstaje dopiero w Etapie 2
-  (`src/main/bootstrap/index-startup.ts`).
-- **Dwa kanały ręcznej odbudowy** z ADR 0030 (`diagnostics:rebuild-index-plan` i
-  `diagnostics:rebuild-index-apply`). Nie ma ich w `IPC_CHANNELS`.
-
-Dwa zadania odziedziczone po Etapie 1, oba konkretne: bezpośredni dowód FTS5 w zapakowanej
-aplikacji (domyka ryzyko R2) oraz docelowy model awarii startu indeksu.
+- Zgodność indeksu z plikami przy starcie sprawdza tylko liczba elementów. Jeśli aktualizacja
+  indeksu padła po zapisie plików, a liczby się zgadzają, po restarcie indeks może mieć starą
+  treść do czasu ręcznej odbudowy z Diagnostyki.
+- Gdy w `library/items` jest katalog, którego nie da się wczytać (problem albo niespójność),
+  liczby nigdy się nie zgadzają i indeks wypełnia się przy każdym starcie.
+- `unicode61` nie zdejmuje kreski z polskiego l, więc indeks składa je do zwykłego `l` po obu
+  stronach (treść i zapytanie).
+- Wyszukiwanie jest prefiksowe po tokenach, nie po podłańcuchu: fragment ze środka słowa już nie
+  pasuje. Zapytanie bez żadnego słowa (same znaki specjalne) wraca do filtra podłańcucha po plikach.
 
 Kryteria akceptacji:
 1. Tworzenie, edycja, wyszukiwanie i usuwanie elementu działa z końca na koniec, przez interfejs,
@@ -270,12 +269,12 @@ Dowody (stan na 2026-11-05):
 | Kryterium | Test albo brak | Status |
 |---|---|---|
 | 1 | Serwis: `tests/unit/library-service.test.ts`, `tests/integration/library-acceptance-fs.test.ts`. Przez interfejs testowana jest tylko edycja (`tests/e2e/full-flow.spec.ts`). Brakuje E2E dla tworzenia, wyszukiwania i usunięcia z potwierdzeniem | otwarte |
-| 2 | Brak. Indeks nie trzyma biblioteki, więc nie ma czego odtwarzać z plików; usunięcie `index.db` kasuje `operation_log` i `sync_state` | otwarte |
-| 3 | `tests/unit/index-startup.test.ts`, `tests/integration/index-store.test.ts`, `tests/integration/quarantine.test.ts`, `tests/e2e/index-startup.spec.ts` (odbudowa i odmowa ze schematem z przyszłości) | spełnione |
+| 2 | `tests/integration/library-index-restore.test.ts` (usunięcie `index.db`, ponowny start, wyszukiwanie znajduje wszystko; odbudowa uszkodzonego; element nieczytelny w `notRestored`), `tests/e2e/index-startup.spec.ts` (to samo przez zbudowaną aplikację) | spełnione |
+| 3 | `tests/unit/index-startup.test.ts`, `tests/integration/index-store.test.ts`, `tests/integration/quarantine.test.ts`, `tests/integration/index-triage-reachability.test.ts` (prawdziwy plik; asercja negatywna: schemat z przyszłości zostaje nietknięty, bez kwarantanny i bez utraty logu), `tests/e2e/index-startup.spec.ts` | spełnione |
 | 4 | `tests/e2e/index-startup.spec.ts` sprawdza okno i raport, nie tekst widoku (`src/renderer/app/startup-banner.component.ts` bez testu). Raport ma stare zastrzeżenie o bibliotece z Etapu 1 | otwarte |
-| 5 | Osiągalność `corrupted`, `unknown-schema`, `schema-from-future` i `not-writable`: `tests/integration/index-store.test.ts`. Brak testu osiągalności gałęzi `native-module` | otwarte |
-| 6 | Brak kanałów `diagnostics:rebuild-index-plan` i `-apply` | otwarte |
-| 7 | Brak tabeli FTS w schemacie, więc nie ma zapytania do wykonania w paczce. Test `packaged-db.spec.ts:132` dowodzi tylko FTS5 w procesie testu (R2) | otwarte |
+| 5 | `tests/integration/index-triage-reachability.test.ts`: każda z pięciu przyczyn (cztery gałęzie triażu) z prawdziwego `SqliteIndexStore`, `native-module` przez podstawione ładowanie sterownika (`loadDriver`); `tests/integration/index-store.test.ts` | spełnione |
+| 6 | `tests/unit/index-rebuild.test.ts` (plan pokazuje utratę logu; `apply` odmawia przy `blocked` i przy planie przeterminowanym; brak ścieżki w ładunku; dwa równoległe wywołania; schemat z przyszłości z potwierdzeniem), `tests/unit/ipc-registry.test.ts`, `tests/e2e/index-startup.spec.ts` (oba kanały w zbudowanej aplikacji) | spełnione |
+| 7 | `tests/e2e/packaged-db.spec.ts` (biblioteka na dysku bez indeksu, start zapakowanej aplikacji, zapytanie FTS na `items_fts` wypełnionej przez paczkę). Wynik na czterech celach daje CI | spełnione lokalnie na macOS, CI do potwierdzenia |
 | 8 | `tests/unit/library-service.test.ts` (kryterium 8), `tests/integration/library-acceptance-fs.test.ts`; macierz `npm test` na czterech celach | spełnione |
 | 9 | `tests/unit/library-service.test.ts` (spacje, polskie litery, CJK), `tests/integration/library-service-fs.test.ts` | spełnione |
 | 10 | `tests/integration/library-fixture.test.ts` na fixture `tests/fixtures/library-linux/` | spełnione |
@@ -563,10 +562,9 @@ miejsce w kodzie albo ADR, w którym jest opisana.
 | Zmiana samej wartości sekretu jest niewidoczna w zredagowanym diffie, bo obie strony dają ten sam znacznik | `redactSecrets`, ARCHITECTURE 8.4 |
 | Reguła lintu zakazuje `child_process` w `core/`, `adapters/` i `renderer/`, ale nie w `main/`, `infra/` i `preload/` | `eslint.config.mjs`, ADR 0008 |
 | Slug jest tylko ASCII, więc nazwa z polskimi literami dostaje slug przybliżony, a oryginał trafia do aliasów | `validate.ts`, R7 |
-| Brak indeksu slugów: każdy zapis czyta wszystkie `item.json` | `LibraryService.existingSlugs`, Etap 2 |
 | Kopia reguły zawierania w `tests/harness/isolation.ts` blokuje za dużo | `tests/harness/isolation.ts`, ARCHITECTURE 12.5 |
 | Kanarek harnessu na `~/.claude.json` daje fałszywe alarmy, gdy Claude Code zapisuje ten plik w trakcie sesji | `tests/harness/isolation.ts` |
-| Wyszukiwanie w bibliotece nie używa FTS: to filtr podłańcucha po slugu, tytule, opisie i treści, liczony w main nad całą listą. Przy dużej bibliotece koszt rośnie liniowo | `toListDto` w `src/main/ipc/handlers/library.ts`, Etap 2 |
+| Zgodność indeksu z plikami przy starcie sprawdza tylko liczba elementów; nieudana aktualizacja indeksu przy zgodnej liczbie zostawia starą treść do ręcznej odbudowy | `syncIndex` w `LibraryService`, Etap 2 |
 
 ---
 
@@ -661,8 +659,8 @@ pełnotekstowa biblioteki musi mieć test wykonujący zapytanie FTS **wewnątrz 
 aplikacji**, nie w procesie testu. Jest to kryterium akceptacji Etapu 2, a nie zadanie "przy
 okazji". W tym momencie R2 domyka się w całości i wypada z listy ryzyk.
 
-Stan na 2026-11-05: nadal otwarte. Biblioteka nie ma tabeli pełnotekstowej (wyszukiwanie to
-filtr w main, sekcja 4), więc nie ma jeszcze zapytania FTS do udowodnienia w paczce.
+Stan na 2026-11-05: test jest (`tests/e2e/packaged-db.spec.ts`, tabela `items_fts` z migracji 4)
+i przechodzi lokalnie na macOS. R2 wypada z listy po zielonym przebiegu CI na czterech celach.
 
 #### Awaria Windowsa z pierwszego przebiegu i jej ogólniejszy wniosek
 

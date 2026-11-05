@@ -58,6 +58,8 @@ describe('triaz awarii indeksu (ADR 0029)', () => {
       // Zero wczytanych elementow nie moze wygladac na sukces.
       expect(result.info.restoredItems).toBe(0);
       expect(result.info.notRestored?.join(' ')).toMatch(/log operacji/);
+      expect(result.info.notRestored?.join(' ')).toMatch(/stan synchronizacji/);
+      expect(result.info.notRestored?.join(' ')).not.toMatch(/Etapie 2/);
     });
   }
 

@@ -7,9 +7,8 @@ import type { HistoryService } from '../core/services/history/history-service';
 import type { SyncService } from '../core/services/sync/sync-service';
 import type { LibraryService } from '../core/services/library/library-service';
 import { IndexStoreOpenError, SqliteIndexStore } from '../infra/db/index-store';
-import { quarantineIndex } from '../infra/db/quarantine';
+import { probeQuarantine, quarantineIndex } from '../infra/db/quarantine';
 import { createLogger, logFilePath, type Logger } from '../infra/logging/logger';
-import { redactHomePath } from '../infra/logging/redact';
 import { databaseFile, quarantineRoot, rendererRoot } from './bootstrap/paths';
 import { startIndex, type IndexOpenFailure } from './bootstrap/index-startup';
 import { handleAppScheme, registerAppScheme } from './bootstrap/protocol';
@@ -18,12 +17,16 @@ import { createMainWindow } from './bootstrap/window';
 import { startExport } from './bootstrap/export';
 import { startImport } from './bootstrap/import';
 import { startLibrary } from './bootstrap/library';
+import { restoreLibraryIndex } from './bootstrap/library-index';
 import { registerDiagnosticsHandler, type IndexState } from './ipc/handlers/diagnostics';
 import { registerExportHandlers } from './ipc/handlers/export';
 import { registerSyncHandlers } from './ipc/handlers/sync';
 import { registerImportHandlers } from './ipc/handlers/import';
 import { registerLibraryHandlers } from './ipc/handlers/library';
 import { IpcRegistry } from './ipc/registry';
+import { IndexRebuildService } from './services/index-rebuild';
+import { OperationLock } from './services/write-lock';
+import { systemClock } from '../core/ports/clock';
 import { homedir } from 'node:os';
 
 registerAppScheme();
@@ -35,6 +38,10 @@ let importService: ImportService | null = null;
 let exportService: ExportService | null = null;
 let syncService: SyncService | null = null;
 let historyService: HistoryService | null = null;
+
+/** Konczy sie, gdy start wypelnil indeks biblioteki z plikow; raport diagnostyczny na to czeka. */
+let startupSettled: Promise<void> = Promise.resolve();
+const writeLock = new OperationLock();
 
 let loggerInstance: Logger | null = null;
 
@@ -120,8 +127,39 @@ function start(): void {
     blockOutboundNetwork();
     denyAllPermissions();
 
-    const registry = new IpcRegistry(ipcMain);
-    registerDiagnosticsHandler(registry, () => indexState);
+    const userData = app.getPath('userData');
+    const dbPath = databaseFile(userData);
+    const home = homedir();
+
+    const registry = new IpcRegistry(ipcMain, { lock: writeLock });
+    const rebuild = new IndexRebuildService({
+      runtime: {
+        current: () => indexState,
+        replace: (next) => {
+          indexState = next;
+        },
+      },
+      library: () => libraryService,
+      lock: writeLock,
+      clock: systemClock,
+      probe: () => probeQuarantine(dbPath, quarantineRoot(userData)),
+      quarantine: (stamp) => {
+        quarantineIndex(dbPath, quarantineRoot(userData), stamp);
+      },
+      openStore: () => SqliteIndexStore.open(dbPath, { home }),
+      describeFailure,
+      operationLogOf: (store) => (store instanceof SqliteIndexStore ? store.operationLog() : null),
+      logUnexpected: (error) => {
+        log().error(
+          '[uasm] nieoczekiwany blad odbudowy indeksu:',
+          error instanceof Error ? error.name : 'nieznany',
+        );
+      },
+    });
+    registerDiagnosticsHandler(registry, () => indexState, {
+      rebuild,
+      startupSettled: () => startupSettled,
+    });
     registerLibraryHandlers(registry, {
       service: () => libraryService,
       logUnexpected: (error) => {
@@ -151,8 +189,6 @@ function start(): void {
     // istnialo niezaleznie od tego, czy indeks da sie otworzyc.
     createMainWindow();
 
-    const userData = app.getPath('userData');
-
     // Biblioteka powstaje po oknie i niezaleznie od indeksu: jej awaria nie blokuje startu,
     // a log operacji czyta indeks leniwie, dopiero przy zapisie.
     const library = startLibrary(userData, () => indexState.store);
@@ -173,25 +209,34 @@ function start(): void {
         .catch(logExportError);
     }
 
-    const dbPath = databaseFile(userData);
-    const home = homedir();
-
     const result = startIndex({
       openStore: () => SqliteIndexStore.open(dbPath, { home }),
+      // Nazwa pliku w kwarantannie (kontrakt `quarantinedAs`), nie katalog.
       quarantine: () =>
-        redactHomePath(
-          quarantineIndex(
-            dbPath,
-            quarantineRoot(userData),
-            new Date().toISOString().replace(/[:.]/g, '-'),
-          ).directory,
-          home,
-        ),
+        quarantineIndex(
+          dbPath,
+          quarantineRoot(userData),
+          new Date().toISOString().replace(/[:.]/g, '-'),
+        ).movedFiles[0] ?? '',
       describeFailure,
     });
 
     indexState = { store: result.store, info: result.info };
     reportIndexStartup(result.info);
+
+    // Indeks biblioteki wypelnia sie z plikow, gdy jest swiezy albo liczba elementow sie nie
+    // zgadza (ADR 0014). Blokada nie wpuszcza w tym czasie recznej odbudowy.
+    const releaseStartup = writeLock.tryEnterWrite();
+    startupSettled = restoreLibraryIndex(libraryService, result.info, (error) => {
+      log().error(
+        '[uasm] nie udalo sie wypelnic indeksu biblioteki:',
+        error instanceof Error ? error.name : 'nieznany',
+      );
+    })
+      .then((info) => {
+        indexState = { store: indexState.store, info };
+      })
+      .finally(() => releaseStartup?.());
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

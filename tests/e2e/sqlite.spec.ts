@@ -40,7 +40,7 @@ test('better-sqlite3 laduje sie w zbudowanej aplikacji i wykonuje zapytanie', as
     expect(report.database.status).toBe('ok');
     expect(report.database.engine).toBe('better-sqlite3');
     expect(report.database.sqliteVersion).toMatch(/^\d+\.\d+\.\d+$/);
-    expect(report.database.schemaVersion).toBe(3);
+    expect(report.database.schemaVersion).toBe(4);
     expect(report.database.fts5Available).toBe(true);
     expect(report.database.journalMode).toBe('wal');
   } finally {

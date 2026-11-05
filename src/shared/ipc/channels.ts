@@ -30,6 +30,8 @@ export const IPC_CHANNELS = [
   'settings:get',
   'settings:set',
   'diagnostics:report',
+  'diagnostics:rebuild-index-plan',
+  'diagnostics:rebuild-index-apply',
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];
@@ -62,6 +64,8 @@ export const IMPLEMENTED_CHANNELS = [
   'history:list',
   'history:rollback',
   'diagnostics:report',
+  'diagnostics:rebuild-index-plan',
+  'diagnostics:rebuild-index-apply',
 ] as const;
 
 const CHANNEL_SET: ReadonlySet<string> = new Set(IPC_CHANNELS);

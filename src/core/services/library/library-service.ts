@@ -32,6 +32,7 @@ import {
   failureCodeOf,
   type StoreFailureCode,
 } from '../../ports/store-failure';
+import type { LibraryIndex, LibraryIndexEntry } from '../../ports/library-index';
 import type { ObjectStore } from '../../ports/object-store';
 import type { OperationLog, OperationRecord, OperationState } from '../../ports/operation-log';
 import { sha256Bytes, sha256Text } from '../normalization/hash';
@@ -51,6 +52,7 @@ import {
   type InspectedItem,
 } from './item-codec';
 import {
+  collisionKey,
   findSlugCollision,
   parseItemMeta,
   slugDeclaredNameWarning,
@@ -68,6 +70,26 @@ export interface LibraryServiceDeps {
   readonly log: OperationLog;
   readonly ids: IdGenerator;
   readonly clock: Clock;
+  /**
+   * Indeks wyszukiwania i slugow. Dostep leniwy: `null`, gdy indeks jest niedostepny (odmowa
+   * startu) albo wlasnie jest wymieniany. Brak tej zaleznosci oznacza prace wylacznie na plikach.
+   */
+  readonly index?: () => LibraryIndex | null;
+}
+
+/** Wynik wypelniania indeksu z plikow. `failed` to elementy, ktorych nie dalo sie wpisac do indeksu. */
+export interface IndexSyncReport {
+  readonly status: 'unavailable' | 'current' | 'rebuilt';
+  /** Elementy poprawne wpisane do indeksu. */
+  readonly restored: number;
+  readonly failed: readonly { readonly id: string; readonly reason: string }[];
+}
+
+export interface IndexSyncOptions {
+  /** Wypelnia indeks niezaleznie od liczby elementow (po odbudowie albo recznej odbudowie). */
+  readonly force?: boolean;
+  /** Wymiana pliku indeksu (kwarantanna i nowy indeks) wewnatrz kolejki, miedzy zapisami. */
+  readonly prepare?: () => void | Promise<void>;
 }
 
 export interface MutationResult {
@@ -96,6 +118,14 @@ export interface InconsistentItem {
   readonly slug: string;
   readonly kind: ItemKind;
   readonly files: readonly FileMismatch[];
+  /** Metadane z `item.json`, potrzebne indeksowi; tresc elementu nie jest wiarygodna. */
+  readonly meta: {
+    readonly title: string;
+    readonly description: string;
+    readonly revision: number;
+    readonly contentHash: Sha256;
+    readonly updatedAt: Timestamp;
+  };
 }
 
 /**
@@ -191,6 +221,8 @@ export class LibraryService {
   private queue: Promise<unknown> = Promise.resolve();
   /** Hashe juz wlozone do ObjectStore w biezacej operacji: kazdy trafia tam najwyzej raz. */
   private readonly putSeen = new Set<Sha256>();
+  /** Czy indeks odpowiada plikom na tyle, by czytac z niego slugi i wyniki wyszukiwania. */
+  private indexTrusted = false;
 
   constructor(private readonly deps: LibraryServiceDeps) {}
 
@@ -212,13 +244,17 @@ export class LibraryService {
       const built = await this.build(draft, { id, previous: null });
       await this.commit(built);
 
+      const indexWarnings = this.updateIndex((index) => index.upsert(entryOf(built.loaded.item)));
       const warnings = await this.record({
         operation: 'create',
         ...identityOf(built.loaded.item),
         before: null,
         after: built.encoded.state,
       });
-      return { item: built.loaded.item, warnings: [...built.warnings, ...warnings] };
+      return {
+        item: built.loaded.item,
+        warnings: [...built.warnings, ...indexWarnings, ...warnings],
+      };
     });
   }
 
@@ -232,13 +268,17 @@ export class LibraryService {
       const before = await this.archiveAll(tree.salvage, previous, null);
       await this.commit(built);
 
+      const indexWarnings = this.updateIndex((index) => index.upsert(entryOf(built.loaded.item)));
       const warnings = await this.record({
         operation: 'update',
         ...identityOf(built.loaded.item),
         before,
         after: built.encoded.state,
       });
-      return { item: built.loaded.item, warnings: [...built.warnings, ...warnings] };
+      return {
+        item: built.loaded.item,
+        warnings: [...built.warnings, ...indexWarnings, ...warnings],
+      };
     });
   }
 
@@ -266,13 +306,17 @@ export class LibraryService {
       const before = await this.archiveSalvage(tree.salvage, inspected.meta);
       await this.commit(built);
 
+      const indexWarnings = this.updateIndex((index) => index.upsert(entryOf(built.loaded.item)));
       const warnings = await this.record({
         operation: 'adopt-disk',
         ...identityOf(built.loaded.item),
         before,
         after: built.encoded.state,
       });
-      return { item: built.loaded.item, warnings: [...built.warnings, ...warnings] };
+      return {
+        item: built.loaded.item,
+        warnings: [...built.warnings, ...indexWarnings, ...warnings],
+      };
     });
   }
 
@@ -290,13 +334,17 @@ export class LibraryService {
       const before = await this.archiveSalvage(tree.salvage, inspected.meta);
       await this.commit(built);
 
+      const indexWarnings = this.updateIndex((index) => index.upsert(entryOf(built.loaded.item)));
       const warnings = await this.record({
         operation: 'restore',
         ...identityOf(built.loaded.item),
         before,
         after: built.encoded.state,
       });
-      return { item: built.loaded.item, warnings: [...built.warnings, ...warnings] };
+      return {
+        item: built.loaded.item,
+        warnings: [...built.warnings, ...indexWarnings, ...warnings],
+      };
     });
   }
 
@@ -307,6 +355,108 @@ export class LibraryService {
 
   async list(): Promise<ListResult> {
     return this.exclusive(() => this.listUnlocked());
+  }
+
+  /**
+   * Identyfikatory pasujace do zapytania z indeksu, od najlepszego trafienia. `null` oznacza,
+   * ze indeks nie jest gotowy albo aktualny i wolajacy ma przeszukac pliki sam.
+   */
+  search(query: string, kind?: ItemKind): readonly ItemId[] | null {
+    const index = this.trustedIndex();
+    if (index === null) return null;
+    try {
+      return index.search(query, kind);
+    } catch {
+      this.indexTrusted = false;
+      return null;
+    }
+  }
+
+  /**
+   * Wypelnia indeks z plikow (ADR 0014), gdy jest swiezy albo liczba elementow sie nie zgadza.
+   * Idzie w kolejce zapisow, wiec zaden zapis nie wchodzi w srodku. Elementy, ktorych nie da sie
+   * wczytac, wracaja w `failed` z powodem; niespojne trafiaja do indeksu tylko po nazwie.
+   */
+  async syncIndex(options: IndexSyncOptions = {}): Promise<IndexSyncReport> {
+    return this.exclusive(async () => {
+      if (options.prepare !== undefined) {
+        this.indexTrusted = false;
+        await options.prepare();
+      }
+      const index = this.deps.index?.() ?? null;
+      if (index === null) {
+        this.indexTrusted = false;
+        return { status: 'unavailable', restored: 0, failed: [] };
+      }
+
+      const names = await this.listNames();
+      try {
+        if (options.force !== true && index.count() === names.length) {
+          this.indexTrusted = true;
+          return { status: 'current', restored: index.count(), failed: [] };
+        }
+
+        const listed = await this.listUnlocked();
+        const entries: LibraryIndexEntry[] = [
+          ...listed.items.map(entryOf),
+          ...listed.inconsistent.map(inconsistentEntryOf),
+        ];
+        const { rejected } = index.replaceAll(entries);
+        this.indexTrusted = true;
+
+        const rejectedIds = new Set<string>(rejected.map((r) => r.id));
+        const failed = [
+          ...listed.problems.map((p) => ({ id: p.id, reason: p.message })),
+          ...listed.inconsistent
+            .filter((i) => !rejectedIds.has(i.id))
+            .map((i) => ({
+              id: i.id,
+              reason:
+                'pliki nie zgadzaja sie z item.json; element nie jest przeszukiwany, ale jego nazwa nadal blokuje kolizje',
+            })),
+          ...rejected.map((r) => ({ id: r.id, reason: r.reason })),
+        ];
+        return {
+          status: 'rebuilt',
+          restored: listed.items.filter((i) => !rejectedIds.has(i.id)).length,
+          failed,
+        };
+      } catch (error: unknown) {
+        this.indexTrusted = false;
+        throw error;
+      }
+    });
+  }
+
+  private trustedIndex(): LibraryIndex | null {
+    if (!this.indexTrusted) return null;
+    return this.deps.index?.() ?? null;
+  }
+
+  /**
+   * Zapis do indeksu po zapisie plikow (ADR 0014). Awaria nie cofa zapisu: element jest na dysku,
+   * a indeks przestaje byc zaufany, wiec slugi i wyszukiwanie wracaja do plikow.
+   */
+  private updateIndex(change: (index: LibraryIndex) => void): LibraryWarning[] {
+    const index = this.deps.index?.() ?? null;
+    if (index === null) {
+      this.indexTrusted = false;
+      return [];
+    }
+    try {
+      change(index);
+      return [];
+    } catch {
+      this.indexTrusted = false;
+      return [
+        {
+          code: 'index-update-failed',
+          message:
+            'Operacja została wykonana, ale nie udało się zaktualizować indeksu wyszukiwania. ' +
+            'Wyszukiwanie korzysta z plików do czasu odbudowy indeksu w Diagnostyce.',
+        },
+      ];
+    }
   }
 
   private async listUnlocked(): Promise<ListResult> {
@@ -333,6 +483,13 @@ export class LibraryService {
             slug: inspected.meta.identity.slug,
             kind: inspected.meta.kind,
             files: inspected.mismatches,
+            meta: {
+              title: inspected.meta.content.title,
+              description: inspected.meta.content.description,
+              revision: inspected.meta.version.revision,
+              contentHash: inspected.meta.version.contentHash,
+              updatedAt: inspected.meta.version.updatedAt,
+            },
           });
         } else {
           items.push(loadedFromInspected(inspected, files).item);
@@ -526,6 +683,7 @@ export class LibraryService {
         throw storeFailed('usunąć', error);
       }
 
+      const indexWarnings = this.updateIndex((index) => index.remove(plan.itemId));
       const warnings = await this.record({
         operation: 'delete',
         itemId: plan.itemId,
@@ -534,7 +692,7 @@ export class LibraryService {
         before,
         after: null,
       });
-      return { warnings };
+      return { warnings: [...indexWarnings, ...warnings] };
     });
   }
 
@@ -676,6 +834,14 @@ export class LibraryService {
   }
 
   private async existingSlugs(): Promise<SlugEntry[]> {
+    const index = this.trustedIndex();
+    if (index !== null) {
+      try {
+        return index.slugs().map((s) => ({ id: s.id, kind: s.kind, slug: s.slug }));
+      } catch {
+        this.indexTrusted = false;
+      }
+    }
     const entries: SlugEntry[] = [];
     for (const name of await this.listNames()) {
       if (!isItemId(name)) continue;
@@ -981,6 +1147,37 @@ interface BuiltItem {
     readonly itemJson: Uint8Array;
     readonly record: Uint8Array;
     readonly state: OperationState;
+  };
+}
+
+function entryOf(item: LibraryItem): LibraryIndexEntry {
+  return {
+    id: item.id,
+    kind: item.kind,
+    slug: item.identity.slug,
+    slugKey: collisionKey(item.identity.slug),
+    title: item.content.title,
+    description: item.content.description,
+    body: item.content.body,
+    revision: item.version.revision,
+    contentHash: item.version.contentHash,
+    updatedAt: item.version.updatedAt,
+  };
+}
+
+/** Element niespojny jest w indeksie tylko po nazwie i metadanych z `item.json`; jego tresc na dysku nie jest wiarygodna. */
+function inconsistentEntryOf(entry: InconsistentItem): LibraryIndexEntry {
+  return {
+    id: entry.id,
+    kind: entry.kind,
+    slug: entry.slug,
+    slugKey: collisionKey(entry.slug),
+    title: entry.meta.title,
+    description: entry.meta.description,
+    body: '',
+    revision: entry.meta.revision,
+    contentHash: entry.meta.contentHash,
+    updatedAt: entry.meta.updatedAt,
   };
 }
 

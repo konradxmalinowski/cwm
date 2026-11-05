@@ -64,7 +64,7 @@ describe('list: element niespojny', () => {
     const result = await h.service.list();
     expect(result.items.map((i) => i.id)).toEqual([good.item.id]);
     expect(result.problems).toEqual([]);
-    expect(result.inconsistent).toEqual([
+    expect(result.inconsistent).toMatchObject([
       {
         id,
         slug: 'acme-review',

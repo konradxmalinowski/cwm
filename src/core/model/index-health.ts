@@ -18,10 +18,15 @@ export interface IndexStartupInfo {
   readonly quarantinedAs?: string;
   /**
    * Ile elementow udalo sie wczytac z plikow przy odbudowie i czego nie dalo
-   * sie odzyskac. W Etapie 1 odbudowa odtwarza pusty indeks, bo warstwa
-   * biblioteki powstaje w Etapie 2 (ADR 0023) - raport mowi o tym wprost,
-   * zamiast podawac zero jako sukces.
+   * sie odzyskac: elementy, ktorych nie wczytano (z powodem), oraz to, co z
+   * definicji nie wraca z plikow (log operacji, stan synchronizacji).
    */
   readonly restoredItems?: number;
   readonly notRestored?: readonly string[];
 }
+
+/** Co z definicji nie wraca z plikow po odbudowie (ADR 0014, ADR 0029 punkt 3). */
+export const NOT_RECOVERABLE_FROM_FILES = [
+  'log operacji (nieodtwarzalny z plikow, ADR 0014)',
+  'stan synchronizacji z narzedziami (nieodtwarzalny z plikow, ADR 0029)',
+] as const;

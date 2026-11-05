@@ -1,4 +1,8 @@
-import type { IndexFailureReason, IndexStartupInfo } from '../../core/model/index-health';
+import {
+  NOT_RECOVERABLE_FROM_FILES,
+  type IndexFailureReason,
+  type IndexStartupInfo,
+} from '../../core/model/index-health';
 import type { IndexStore } from '../../core/ports/index-store';
 
 /**
@@ -33,15 +37,6 @@ const REBUILDABLE: ReadonlySet<IndexFailureReason> = new Set<IndexFailureReason>
   'corrupted',
   'unknown-schema',
 ]);
-
-/**
- * Czego odbudowa nie przywraca w tym etapie. Mowimy to wprost, zeby zero
- * wczytanych elementow nie wygladalo na sukces.
- */
-const NOT_RESTORED = [
-  'log operacji (nieodtwarzalny z plikow, ADR 0014)',
-  'zawartosc biblioteki (warstwa danych powstaje w Etapie 2, ADR 0023)',
-] as const;
 
 function refused(
   failure: IndexOpenFailure,
@@ -106,8 +101,9 @@ export function startIndex(deps: IndexStartupDeps): IndexStartupResult {
         reason: failure.reason,
         message: failure.message,
         quarantinedAs,
+        // Poczatkowy stan; po wypelnieniu indeksu z plikow main podmienia liczbe i liste.
         restoredItems: 0,
-        notRestored: NOT_RESTORED,
+        notRestored: NOT_RECOVERABLE_FROM_FILES,
       },
     };
   } catch (error: unknown) {

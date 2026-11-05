@@ -15,8 +15,8 @@ const id = 'ITEM1' as ItemId;
 const hash = 'a'.repeat(64) as Sha256;
 
 describe('indeks: stan synchronizacji i grupowanie logu', () => {
-  it('schemat ma wersje 3', () => {
-    expect(SCHEMA_VERSION).toBe(3);
+  it('schemat ma wersje 4', () => {
+    expect(SCHEMA_VERSION).toBe(4);
   });
 
   it('zapisuje, czyta, nadpisuje i usuwa rekord', async () => {

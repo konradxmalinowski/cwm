@@ -18,9 +18,11 @@ import type {
   OperationType,
 } from '../../core/ports/operation-log';
 import type { SyncRecord, SyncStateStore, SyncedFile } from '../../core/ports/sync-state';
+import type { LibraryIndex } from '../../core/ports/library-index';
 import { redactHomePath } from '../logging/redact';
+import { SqliteLibraryIndex } from './library-index';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 function schemaDir(): string {
   return join(__dirname, 'schema');
@@ -37,12 +39,15 @@ function migrationList(firstFile: string | undefined): readonly Migration[] {
     { version: 1, file: firstFile ?? join(schemaDir(), '001-init.sql') },
     { version: 2, file: join(schemaDir(), '002-operation-log.sql') },
     { version: 3, file: join(schemaDir(), '003-sync-state.sql') },
+    { version: 4, file: join(schemaDir(), '004-library-index.sql') },
   ];
 }
 
 export interface IndexStoreOptions {
   readonly home?: string;
   readonly schemaFile?: string;
+  /** Szew testowy: podmienia surowe wczytanie modulu natywnego; rozpoznanie bledu zostaje po stronie `open` (ADR 0029 punkt 4). */
+  readonly loadDriver?: () => typeof DatabaseConstructor;
 }
 
 export class IndexStoreOpenError extends Error {
@@ -84,6 +89,7 @@ interface RawLogRow {
   readonly tool: string | null;
   readonly backup_id: string | null;
   readonly reverts: string | null;
+  readonly note: string | null;
 }
 
 function toOperationRow(row: RawLogRow): OperationRow {
@@ -111,6 +117,7 @@ function toOperationRow(row: RawLogRow): OperationRow {
     ...(row.tool === null ? {} : { tool: row.tool as ToolId }),
     ...(row.backup_id === null ? {} : { backupId: row.backup_id }),
     ...(row.reverts === null ? {} : { reverts: row.reverts }),
+    ...(row.note === null ? {} : { note: row.note }),
   };
 }
 
@@ -153,10 +160,14 @@ function toSyncRecord(row: RawSyncRow): SyncRecord | null {
  * proces zanim jakikolwiek kod zdazy cokolwiek pokazac. Leniwe wczytanie
  * zamienia awarie procesu w rozpoznana przyczyne.
  */
-function loadDriver(): typeof DatabaseConstructor {
+function requireDriver(): typeof DatabaseConstructor {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('better-sqlite3') as typeof DatabaseConstructor;
+}
+
+function loadDriver(load: () => typeof DatabaseConstructor): typeof DatabaseConstructor {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require('better-sqlite3') as typeof DatabaseConstructor;
+    return load();
   } catch (error: unknown) {
     throw new IndexStoreOpenError(
       'native-module',
@@ -212,14 +223,22 @@ function readPackagedVersion(): string {
  * procesu glownego (ADR 0029).
  */
 export class SqliteIndexStore implements IndexStore {
+  private libraryIndexCache: SqliteLibraryIndex | null = null;
+
   private constructor(
     private readonly db: Database,
     private readonly locationLabel: string,
   ) {}
 
+  /** Indeks biblioteki na tym polaczeniu (migracja 4); zapytania sa przygotowane raz. */
+  libraryIndex(): LibraryIndex {
+    this.libraryIndexCache ??= new SqliteLibraryIndex(this.db);
+    return this.libraryIndexCache;
+  }
+
   static open(dbPath: string, options: IndexStoreOptions = {}): SqliteIndexStore {
     const label = redactHomePath(dbPath, options.home ?? homedir());
-    const driver = loadDriver();
+    const driver = loadDriver(options.loadDriver ?? requireDriver);
 
     try {
       mkdirSync(dirname(dbPath), { recursive: true });
@@ -344,8 +363,8 @@ export class SqliteIndexStore implements IndexStore {
          operation, item_id, item_kind, slug, at,
          before_revision, before_content_hash, before_version_hash,
          after_revision, after_content_hash, after_version_hash,
-         tool, backup_id, reverts
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         tool, backup_id, reverts, note
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     return {
       append: (record: OperationRecord): Promise<void> => {
@@ -365,6 +384,7 @@ export class SqliteIndexStore implements IndexStore {
             record.tool ?? null,
             record.backupId ?? null,
             record.reverts ?? null,
+            record.note ?? null,
           );
           return Promise.resolve();
         } catch (error: unknown) {

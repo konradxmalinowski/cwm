@@ -11,7 +11,9 @@ export type OperationType =
   /** Synchronizacja z narzedziem (eksport albo przyjecie zmian z narzedzia, Etap 5). */
   | 'sync'
   /** Cofniecie wczesniejszego zapisu do narzedzia z jego kopii (ADR 0019). */
-  | 'rollback';
+  | 'rollback'
+  /** Reczna odbudowa indeksu z Diagnostyki (ADR 0030); `itemId` to stala `index`. */
+  | 'rebuild-index';
 
 export interface OperationState {
   readonly revision: number;
@@ -41,6 +43,8 @@ export interface OperationRecord {
   readonly backupId?: string;
   /** `backupId` operacji, ktora ten zapis cofa. */
   readonly reverts?: string;
+  /** Krotki opis wyniku operacji, bez sciezek (np. odbudowa indeksu). */
+  readonly note?: string;
 }
 
 export interface OperationLog {

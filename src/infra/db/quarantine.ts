@@ -1,5 +1,5 @@
-import { chmodSync, existsSync, mkdirSync, renameSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, renameSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 
 /**
  * Kwarantanna pliku indeksu przed odbudowa (ADR 0029 punkt 2).
@@ -61,4 +61,48 @@ export function quarantineIndex(
   }
 
   return { directory: quarantineRoot, movedFiles: moved };
+}
+
+export interface QuarantineProbe {
+  readonly indexFilePresent: boolean;
+  readonly status: 'recoverable' | 'blocked';
+  readonly reason: string | null;
+}
+
+/** Najblizszy istniejacy katalog nad `target`; tam zalozylibysmy brakujaca kwarantanne. */
+function nearestExisting(target: string): string {
+  let current = target;
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return current;
+}
+
+/**
+ * Sonda kwarantanny przed odbudowa (ADR 0030): sprawdza odczytem, czy plik indeksu da sie
+ * przeniesc, bez przenoszenia i bez zakladania katalogow. Brak pliku nie blokuje: nie ma
+ * czego odkladac. Sonda moze sie mylic w wyscigu z dyskiem, dlatego `apply` i tak idzie przez
+ * `quarantineIndex`, ktory rzuca, gdy przeniesienie sie nie uda.
+ */
+export function probeQuarantine(dbPath: string, quarantineRoot: string): QuarantineProbe {
+  const indexFilePresent = existsSync(dbPath);
+  const blocked = (reason: string): QuarantineProbe => ({
+    indexFilePresent,
+    status: 'blocked',
+    reason,
+  });
+  try {
+    if (indexFilePresent) {
+      accessSync(dbPath, constants.R_OK | constants.W_OK);
+      accessSync(dirname(dbPath), constants.W_OK);
+    }
+    accessSync(nearestExisting(quarantineRoot), constants.W_OK);
+  } catch {
+    return blocked(
+      'Nie można odłożyć obecnego indeksu do kwarantanny (brak uprawnień do zapisu w katalogu danych), więc odbudowa nie zostanie uruchomiona.',
+    );
+  }
+  return { indexFilePresent, status: 'recoverable', reason: null };
 }

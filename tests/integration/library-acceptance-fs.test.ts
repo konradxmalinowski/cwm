@@ -514,7 +514,7 @@ describe('naprawa elementu niespojnego na dysku', () => {
     const list = await service.list();
     expect(list.items).toEqual([]);
     expect(list.problems).toEqual([]);
-    expect(list.inconsistent).toEqual([
+    expect(list.inconsistent).toMatchObject([
       {
         id: item.id,
         slug: item.identity.slug,

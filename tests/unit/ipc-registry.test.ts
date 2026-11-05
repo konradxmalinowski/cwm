@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { IpcRegistry, type IpcHandleTarget } from '../../src/main/ipc/registry';
-import { IMPLEMENTED_CHANNELS, type IpcChannel } from '../../src/shared/ipc/channels';
+import { IMPLEMENTED_CHANNELS, IPC_CHANNELS, type IpcChannel } from '../../src/shared/ipc/channels';
 
 function fakeTarget(): IpcHandleTarget & { channels: string[] } {
   const channels: string[] = [];
@@ -54,5 +54,32 @@ describe('rejestr IPC wymusza zamknieta liste', () => {
 
     handlers.get('diagnostics:report')?.({ senderId: 7 }, { scope: 'full' });
     expect(handler).toHaveBeenCalledWith({ scope: 'full' });
+  });
+});
+
+describe('kanaly recznej odbudowy indeksu (ADR 0030)', () => {
+  const REBUILD = ['diagnostics:rebuild-index-plan', 'diagnostics:rebuild-index-apply'] as const;
+
+  it('sa na zamknietej liscie i oznaczone jako zaimplementowane', () => {
+    for (const channel of REBUILD) {
+      expect(IPC_CHANNELS).toContain(channel);
+      expect(IMPLEMENTED_CHANNELS).toContain(channel);
+    }
+  });
+
+  it('kazdy zaimplementowany kanal jest na liscie, bez duplikatow', () => {
+    for (const channel of IMPLEMENTED_CHANNELS) expect(IPC_CHANNELS).toContain(channel);
+    expect(new Set(IPC_CHANNELS).size).toBe(IPC_CHANNELS.length);
+    expect(new Set(IMPLEMENTED_CHANNELS).size).toBe(IMPLEMENTED_CHANNELS.length);
+  });
+
+  it('rejestr przyjmuje oba kanaly i odmawia pominiecia ktoregokolwiek', () => {
+    const registry = new IpcRegistry(fakeTarget());
+    for (const channel of IMPLEMENTED_CHANNELS) {
+      if (channel !== REBUILD[1]) registry.register(channel, () => null);
+    }
+    expect(() => registry.assertImplementedRegistered()).toThrow(/diagnostics:rebuild-index-apply/);
+    registry.register(REBUILD[1], () => null);
+    expect(() => registry.assertImplementedRegistered()).not.toThrow();
   });
 });

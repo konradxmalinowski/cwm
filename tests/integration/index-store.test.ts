@@ -63,7 +63,7 @@ describe('indeks SQLite', () => {
     expect(schemaObjects(dbPath)).toContain('schema_migrations');
 
     const ledger = readLedger(dbPath);
-    expect(ledger.map((row) => row.version)).toEqual([1, 2, SCHEMA_VERSION]);
+    expect(ledger.map((row) => row.version)).toEqual([1, 2, 3, 4]);
     expect(ledger.every((row) => !Number.isNaN(Date.parse(row.applied_at)))).toBe(true);
     expect(schemaObjects(dbPath)).toContain('operation_log');
   });

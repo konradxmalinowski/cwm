@@ -59,6 +59,10 @@ export function startLibrary(
     log: indexBackedOperationLog(indexStore),
     ids: createUlidGenerator(systemClock, cryptoRandomBytes),
     clock: systemClock,
+    index: () => {
+      const store = indexStore();
+      return store instanceof SqliteIndexStore ? store.libraryIndex() : null;
+    },
   });
   return { service };
 }
