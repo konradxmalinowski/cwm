@@ -5,8 +5,9 @@ mówią co i dlaczego, ten dokument mówi jak i gdzie, z uzasadnieniem każdej d
 Decyzje mają swoje rekordy w `docs/adr/`. Plan etapów, struktura katalogów i ryzyka są
 w `docs/ROADMAP.md`.
 
-Stan: projekt nie istnieje. Nie powstał żaden szkielet, nie zainstalowano żadnej zależności,
-nie wykonano żadnej operacji gitowej. Dokument czeka na akceptację właściciela produktu.
+Stan (2026-11-05): Etapy 1 do 5 są w kodzie. Dokument opisuje architekturę i tam, gdzie kod ją
+zawęża albo od niej odstaje, sekcja mówi to wprost. Status etapów i otwarte kryteria są w
+`docs/ROADMAP.md` sekcja 3.
 
 ---
 
@@ -245,7 +246,7 @@ graph TB
   subgraph EXT["System plikow (dane niezaufane)"]
     CL["~/.claude<br/>agents, skills, commands,<br/>CLAUDE.md, settings.json"]
     CX["~/.codex<br/>agents, skills, config.toml,<br/>AGENTS.md, hooks.json"]
-    UD["userData: library, index.sqlite,<br/>objects, backups, logs"]
+    UD["userData: library, index.db,<br/>objects, backups, materialized, logs"]
   end
 
   IPCC --> BR --> IPCH
@@ -264,64 +265,130 @@ graph TB
 sequenceDiagram
   participant U as Uzytkownik
   participant RD as Renderer
-  participant MN as Main / serwisy
+  participant MN as ImportService (main)
+  participant LC as LocationCatalog
   participant AD as Adapter narzedzia
-  participant FS as System plikow (read-only)
+  participant FS as SourceReader (read-only)
+  participant LB as LibraryService
 
   U->>RD: Otwiera kreator importu
   RD->>MN: import:detect
-  MN->>AD: detectLocations()
-  AD->>FS: odczyt kandydatow na roota
-  AD-->>MN: lista rootow + wersja narzedzia + czego brakuje
-  MN-->>RD: rootId (nieprzezroczysty) + opis
-  U->>RD: Wybiera root albo pojedyncze pliki
-  RD->>MN: import:scan { rootId }
-  MN->>AD: scan(rootId)
-  AD->>FS: przejscie drzewa, limity rozmiaru i glebokosci
-  AD-->>MN: surowe elementy + klasyfikacja plikow
-  MN->>MN: Normalization: mapowanie do modelu kanonicznego
-  MN->>MN: SecretClassifier: oznaczenie sekretow
-  MN->>MN: Library: wykrycie duplikatow i roznic wersji
-  MN-->>RD: podglad: nowe / duplikaty / rozne / pominiete / sekrety
-  U->>RD: Odznacza elementy, zatwierdza
-  RD->>MN: import:apply { wybor }
-  MN->>MN: zapis do biblioteki (pliki + indeks + snapshot zrodla)
-  MN-->>RD: raport: co weszlo, co pominieto i dlaczego
+  MN->>LC: detect()
+  LC-->>MN: DetectedRoot[] (rootId, etykieta, exists, active)
+  MN-->>RD: rooty bez sciezek
+  U->>RD: Wybiera rooty
+  RD->>MN: import:scan { rootIds }
+  loop kazdy wybrany root
+    MN->>AD: scan(root, reader)
+    AD->>FS: lista i odczyt, limity rozmiaru i glebokosci
+    AD-->>MN: kandydaci (szkic kanoniczny) + pominiete z powodem
+  end
+  MN->>AD: finalize(skany jednego narzedzia)
+  MN->>MN: SecretClassifier na plikach kandydata
+  MN->>LB: list(): porownanie ze stanem biblioteki
+  MN-->>RD: scanToken + kandydaci ze statusem + pominiete
+  U->>RD: Odznacza, potwierdza sekrety, wybiera zamiany
+  RD->>MN: import:apply { scanToken, candidateIds, confirmedSecrets, replaceChanged }
+  MN->>LB: create albo update (pliki elementu + snapshot zrodla)
+  MN-->>RD: imported / skipped z powodem / failed
   Note over FS: zrodlo nie jest modyfikowane ani raz
 ```
+
+Rooty pochodzą wyłącznie z tabeli `CANDIDATES` (`src/infra/platform/locations.ts`), czyli z
+konfiguracji globalnych (ADR 0032); renderer nie podaje żadnej ścieżki. `finalize` to opcjonalny
+krok adaptera po skanie wszystkich rootów jednego narzędzia, dla zależności między rootami (agent
+Codeksa w jednym katalogu, wpis rejestracyjny w `config.toml` w drugim). Błąd adaptera w
+`finalize` nie psuje wyniku pozostałych rootów.
+
+Każdy kandydat dostaje jeden z pięciu statusów:
+
+| Status | Znaczenie | Domyślnie zaznaczony |
+|---|---|---|
+| `new` | Nie ma go w bibliotece | tak, jeśli bez sekretów |
+| `unchanged` | Jest w bibliotece z tą samą treścią (końce linii ignorowane, ADR 0016) | nie |
+| `changed` | Ten sam typ i slug, inna treść | tak, jeśli bez sekretów; zastąpienie wymaga wpisu w `replaceChanged` |
+| `duplicate` | Ten sam element w dwóch rootach jednego narzędzia albo alias; `duplicateOf` wskazuje kandydata, którego narzędzie faktycznie czyta (ADR 0024, 0026) | nie |
+| `conflict` | Kolizja `lower(slug)` + typ z elementem biblioteki albo z innym kandydatem tego skanu (ADR 0017) | nie |
+
+`import:apply` działa wyłącznie na kandydatach z danego `scanToken` (ważny 30 minut, najwyżej
+osiem skanów naraz). `duplicate`, `unchanged` i `conflict` są pomijane nawet po jawnym wyborze;
+kandydat z trafieniem klasyfikatora sekretów wymaga wpisu w `confirmedSecrets`; drugi kandydat
+z tym samym slugiem w jednym imporcie jest pomijany. Raport podaje powód każdego pominięcia
+(`ApplySkipReason`), a błąd jednego elementu nie przerywa reszty. Duplikat z innego narzędzia o tej
+samej treści nie tworzy drugiego elementu, tylko dołącza swój snapshot do głównego (ADR 0023).
 
 ### 3.5 Przepływ danych: synchronizacja
 
 ```mermaid
 sequenceDiagram
   participant U as Uzytkownik
-  participant MN as SyncPlanner
-  participant AD as Adapter celu
+  participant RD as Renderer
+  participant SY as SyncService
+  participant EX as ExportService
+  participant AD as ToolExporter
   participant WG as WriteGate
-  participant HS as History + ObjectStore
+  participant HS as sync_state + operation_log
 
-  U->>MN: sync:plan { elementy, cele }
-  MN->>AD: readCurrentState(cel)
-  AD-->>MN: stan celu + hashe
-  MN->>AD: capabilities(typ elementu)
-  AD-->>MN: poziom zgodnosci + ostrzezenia
-  MN->>MN: plan: create / modify / skip / conflict / unsupported
-  MN-->>U: plan zmian + diff per plik + lista konfliktow
-  U->>MN: sync:apply (jawne zatwierdzenie)
-  MN->>HS: backup stanu celu do content store, wpis operacji
-  MN->>WG: zapis atomowy kazdego pliku
-  WG->>WG: realpath + kontrola prefiksu + przepisanie trybu
-  WG-->>MN: wynik per plik
-  MN->>AD: verify(cel)
-  AD-->>MN: wynik weryfikacji
-  alt weryfikacja nie przeszla
-    MN->>HS: rollback z content store
-    MN-->>U: operacja wycofana, stan jak przed
-  else wszystko zgodne
-    MN->>HS: zamkniecie operacji w historii
-    MN-->>U: raport + mozliwosc cofniecia
+  RD->>SY: sync:status { tools? }
+  SY->>SY: toolHomeExists? brak = missingTools
+  SY->>HS: rekordy ostatniej synchronizacji
+  SY-->>RD: stan per element i narzedzie + sieroty
+  U->>RD: Wybiera elementy, narzedzia, rozstrzygniecia
+  RD->>SY: sync:plan { tools, itemIds, resolutions }
+  SY->>EX: preview(tool, itemIds)
+  EX->>AD: plan(items, ctx)
+  AD-->>EX: WritePlan: wpisy, odmowy, konflikty, sieroty
+  EX->>WG: probe(plan)
+  WG-->>EX: recoverability per wpis, applicable
+  SY-->>RD: syncId + plany per narzedzie (diff po redakcji) + adopcje + pominiete
+  U->>RD: Jawne zatwierdzenie
+  RD->>SY: sync:apply { syncId, approved: true }
+  loop plan kazdego narzedzia
+    SY->>EX: apply(planId, true)
+    EX->>WG: apply(plan, { planId })
+    WG->>WG: kopia, zapis atomowy, odczyt kontrolny
+    alt zapis albo odczyt kontrolny nie przeszedl
+      WG->>WG: rollback z dziennika, rolledBack = true
+    else wszystko zgodne
+      EX->>HS: SyncRecorder: rekord w sync_state + wpis w operation_log
+    end
   end
+  SY->>SY: tool-wins: LibraryService.update dla zaadoptowanych
+  SY-->>RD: wyniki per plan + adopted
 ```
+
+Stan elementu względem narzędzia wynika z dwóch porównań: biblioteka kontra rekord ostatniej
+synchronizacji (rewizja i hash treści) oraz plik w narzędziu kontra `writtenHash` z tego rekordu.
+
+| Stan | Znaczenie |
+|---|---|
+| `never` | Element nigdy nie był synchronizowany z tym narzędziem |
+| `in-sync` | Biblioteka i narzędzie zgodne z ostatnią synchronizacją |
+| `library-changed` | Zmiana w bibliotece, narzędzie bez zmian |
+| `tool-changed` | Zmiana pliku w narzędziu, biblioteka bez zmian |
+| `conflict` | Zmiana po obu stronach; bez decyzji element jest pomijany |
+| `missing-in-tool` | Plik zsynchronizowany wcześniej zniknął z narzędzia |
+| `unsupported` | Narzędzie nie ma odpowiednika elementu (ADR 0020, 0021) |
+
+Narzędzie bez katalogu głównego nie ma stanów: trafia do `missingTools` (ADR 0033). Dla `conflict`
+i `tool-changed` użytkownik wybiera `library-wins` (zapis do narzędzia, z kopią jak przy każdym
+zapisie), `tool-wins` (przyjęcie zmiany do biblioteki jako nowej rewizji, z odczytem przez adapter
+importu) albo `skip`. Plan synchronizacji to plany eksportu per narzędzie, więc zapis przechodzi
+dokładnie tę samą drogę co `export:apply`. Plan żyje tylko w main pod `syncId`, jest jednorazowy
+i wygasa po 15 minutach; nieaplikowalny plan (wpis `blocked` albo nierozstrzygnięty konflikt) jest
+odrzucany w całości.
+
+**Cofanie jest zwykłą operacją zapisu (ADR 0019, 0034).** Historia to `operation_log` pogrupowany
+po `backupId`. `history:rollback { operationId }` nie zapisuje niczego: `HistoryService` czyta
+`backups/<id>/MANIFEST` i buduje plan przywrócenia stanu sprzed operacji. Plik, który przed
+operacją nie istniał, dostaje wpis `delete`; dowiązanie, które operacja zastąpiła, dostaje
+`restore-link`; plik, który istniał, wraca przez `modify` (albo `create`, gdy go już nie ma). Plan trafia do `ExportService.adopt`, który
+go sonduje i zapamiętuje pod nowym `planId`, a dalej idzie `export:apply` z jawnym zatwierdzeniem,
+własną kopią i wpisem w logu. Dlatego cofnięcie cofnięcia działa tak samo jak każde inne cofnięcie.
+Plik zmieniony po cofanej operacji dostaje w planie ostrzeżenie, że cofnięcie nadpisze późniejsze
+zmiany; zamiana dowiązania do katalogu na katalog z plikami nie jest cofana automatycznie, tylko
+zgłaszana jako konflikt z odesłaniem do `backups/`. Po cofnięciu element wraca do stanu `never`,
+bo cel nie odpowiada już żadnej rewizji. Sieroty nigdy nie są usuwane przez synchronizację (ADR 0034).
 
 ---
 
@@ -483,37 +550,48 @@ oznaczony w planie eksportu, z powodem, i nie powstaje żaden plik.
 
 ## 5. Kontrakt adaptera
 
+Kontrakt dzieli się na dwa porty w `src/core/ports/tool-adapter.ts`. Każdy z obecnych adapterów
+(`ClaudeCodeAdapter`, `CodexAdapter`) implementuje oba w jednej klasie.
+
 ```ts
-interface ToolAdapter {
+interface ToolAdapter {                 // import (Etap 3)
   readonly id: ToolId;
   readonly displayName: string;
+  readonly rootKinds: readonly RootKind[];
 
-  detectLocations(env: PlatformEnv): Promise<DetectedRoot[]>;
-  probeVersion(root: RootId): Promise<ToolVersionInfo>;
+  scan(root: DetectedRoot, reader: SourceReader): Promise<ScanResult>;
+  finalize?(scans: readonly RootScan[], reader: SourceReader): Promise<readonly ScanResult[]>;
+}
 
-  scan(root: RootId, opts: ScanOptions): AsyncIterable<RawElement>;
-  parse(raw: RawElement): ParseResult<ToolNativeElement>;
-  toCanonical(native: ToolNativeElement): LibraryItem;
+interface ToolExporter {                // eksport (Etap 4)
+  readonly id: ToolId;
 
   capabilities(item: LibraryItem): CompatibilityVerdict;   // czysta, bez I/O
-  plan(items: LibraryItem[], root: RootId): Promise<WritePlan>;
-  apply(plan: WritePlan, gate: WriteGate): Promise<ApplyReport>;
-  verify(plan: WritePlan, root: RootId): Promise<VerifyReport>;
+  plan(items: readonly LoadedItem[], ctx: ExportContext): Promise<WritePlan>;
+}
 
-  readonly materialization: MaterializationSupport;  // symlink / junction / copy
+interface LocationCatalog {             // warstwa lokalizacji (ADR 0022)
+  detect(): Promise<readonly DetectedRoot[]>;
+  toolHomeExists(tool: ToolId): Promise<boolean>;
 }
 ```
 
-Sześć własności kontraktu, każda z uzasadnieniem:
+`ExportContext` niesie rooty narzędzia z `LocationCatalog`, `SourceReader` do odczytu stanu celu
+i najlepszy tryb materializacji dostępny na tym systemie, osobno dla katalogu i dla pliku.
 
-**`plan` jest oddzielone od `apply`.** Wymagania mówią "wyświetlić plan zmian" przed zapisem
+Pięć własności kontraktu, każda z uzasadnieniem:
+
+**`plan` jest oddzielone od zapisu.** Wymagania mówią "wyświetlić plan zmian" przed zapisem
 i "nie nadpisywać po cichu". Plan jest wartością, którą można pokazać, zserializować, porównać
 i przetestować bez dotykania dysku. To również jedyny sposób, żeby test idempotencji był tani:
-`plan` po `apply` musi być pusty.
+`plan` po zapisie musi dać same wpisy `unchanged`. Odmowy (`unsupported`), konflikty i sieroty są
+polami planu, nie wyjątkami.
 
-**`apply` dostaje `WriteGate` z zewnątrz, a nie trzyma własnego `fs`.** Adapter nie może zapisać
-niczego poza bramką. Dzięki temu kontrola ścieżek, backup i zapis atomowy są w jednym miejscu
-i nie da się ich pominąć przez pomyłkę w nowym adapterze.
+**Adapter niczego nie zapisuje i nie ma `apply`.** Zapis należy do `WriteGate` (sekcja 8.3), który
+dostaje gotowy `WritePlan`. Adapter nie może zapisać niczego poza bramką, więc kontrola ścieżek,
+backup i zapis atomowy są w jednym miejscu i nie da się ich pominąć przez pomyłkę w nowym
+adapterze. Zmiana względem pierwszej wersji tego dokumentu, w której `apply(plan, gate)` był metodą
+adaptera.
 
 **`capabilities` zwraca verdykt, nie boolean.** Wymagania wymieniają cztery poziomy zgodności.
 Boolean by je spłaszczył i wymusił zgadywanie w UI. Funkcja jest czysta i synchroniczna, bez
@@ -521,18 +599,22 @@ dostępu do dysku: dzięki temu zestaw testów kontraktowych działa bez systemu
 wylicza verdykt dla całej listy bez I/O. Ta czystość jest powodem, dla którego możliwość
 zrobienia kopii nie jest piątym stopniem tego verdyktu, tylko osobną własnością planu (niżej).
 
-**`plan` ustala `recoverability` dla każdego dotykanego pliku.** Plan sonduje odczytem, czy
-aplikacja jest w stanie zabezpieczyć kopią każdy plik, którego dotknie, i oznacza wpis jako
-`recoverable` albo `blocked` z powodem. Plan z choćby jednym wpisem `blocked` nie jest
-wykonywalny: `apply` odmawia uruchomienia, zamiast wykonać część i stanąć (ADR 0028).
+**`recoverability` ustala `WriteGate.probe`, nie adapter.** Adapter zostawia `null` w każdym wpisie.
+Bramka sonduje odczytem, czy aplikacja jest w stanie zabezpieczyć kopią każdy plik, którego dotknie,
+i oznacza wpis jako `recoverable` albo `blocked` z powodem. Plan z choćby jednym wpisem `blocked`
+nie jest wykonywalny: `apply` odmawia uruchomienia, zamiast wykonać część i stanąć (ADR 0028).
 
-**`verify` jest częścią kontraktu, nie dodatkiem.** "Zweryfikować rezultat" jest w wymaganiach
-synchronizacji. Weryfikacja czyta cel z powrotem i porównuje z planem; dopiero jej wynik zamyka
-operację albo uruchamia rollback.
+**Weryfikacja po zapisie jest w `WriteGate.apply`, nie w adapterze.** Bramka czyta cel z powrotem
+i porównuje z planem; dopiero jej wynik (`verified`) zamyka operację albo uruchamia rollback.
+Jedna weryfikacja dla obu narzędzi zastąpiła osobne `verify` per adapter, które pierwsza wersja
+kontraktu przewidywała (ADR 0013). Semantyczna weryfikacja edycji `config.toml` jest osobno w
+`SegmentTomlEditor`, przed dotknięciem dysku (ADR 0011). Metody `probeVersion` z pierwszej wersji
+kontraktu nie ma w kodzie.
 
-**`materialization` jest deklarowane.** Czy element jedzie symlinkiem, junction czy kopią, to
-nie szczegół implementacyjny, bo od tego zależy, czy edycja źródła propaguje się sama (ADR 0015).
-Interfejs pokazuje aktywny tryb, więc adapter musi go zadeklarować.
+**Tryb materializacji nie jest już deklaracją adaptera.** Czy element jedzie symlinkiem, junction
+czy kopią, to nie szczegół implementacyjny, bo od tego zależy, czy edycja źródła propaguje się sama
+(ADR 0015). Tryb wylicza `ExportService` z wykrytej zdolności systemu, adapter dostaje go w
+`ExportContext`, a każdy wpis planu niesie `materialization`, więc interfejs pokazuje go per wpis.
 
 ### 5.1 Granice adapterów
 
@@ -595,30 +677,45 @@ informacji o postępie.
 
 Wszystkie kanały to `invoke/handle` (żądanie i odpowiedź). Renderer nie wysyła zdarzeń jednostronnie
 poza anulowaniem operacji. Lista jest jawna i zamknięta; brak kanału ogólnego typu `fs:read`.
+Źródłem prawdy są `IPC_CHANNELS` i `IMPLEMENTED_CHANNELS` w `src/shared/ipc/channels.ts`, kontrakty
+ładunków leżą obok, w `src/shared/ipc/*-contract.ts`; testy sprawdzają oba kierunki zgodności
+listy z mostem w preloadzie. Odpowiedź to zawsze `Result`.
+
+Kanały z handlerem:
 
 | Kanał | Wejście | Wyjście |
 |---|---|---|
-| `library:list` | filtr, sortowanie, strona | lista elementów (bez treści) |
-| `library:get` | `ItemId` | element z treścią |
-| `library:save` | szkic elementu | element zapisany albo błędy walidacji |
-| `library:delete` | `ItemId`, potwierdzenie | raport usunięcia |
-| `import:detect` | `ToolId?` | lista `DetectedRoot` z `rootId` |
-| `import:scan` | `rootIds` | podgląd elementów ze statusami, trafieniami klasyfikatora sekretów i `scanToken` (zastępuje osobny plan) |
-| `import:apply` | `scanToken`, wybrani kandydaci, `confirmedSecrets`, `replaceChanged` | raport: zaimportowane, pominięte, błędy |
-| `export:plan` | elementy, `ToolId`, `rootId` | `WritePlan` plus verdykty zgodności |
-| `export:apply` | `planId`, potwierdzenie | raport |
-| `sync:plan` | elementy, cele | plan plus konflikty |
-| `sync:apply` | `planId`, potwierdzenie | raport |
-| `sync:verify` | `operationId` | wynik weryfikacji |
-| `diff:compute` | dwa odniesienia do treści | diff po redakcji sekretów |
-| `history:list` | filtr | operacje i wersje |
-| `history:rollback` | `operationId`, potwierdzenie | raport wycofania |
-| `profiles:list`, `profiles:save`, `profiles:export-plan` | | |
-| `settings:get`, `settings:set` | | |
-| `diagnostics:report` | | raport środowiska, nieznanych konstrukcji i stanu otwarcia indeksu |
-| `diagnostics:rebuild-index-plan` (Etap 2) | | plan ręcznej odbudowy: nazwa pliku w kwarantannie, liczba elementów do odtworzenia, czego nie odzyska, `recoverability` kroku kwarantanny (ADR 0030) |
-| `diagnostics:rebuild-index-apply` (Etap 2) | `planId`, potwierdzenie | raport odbudowy. Najmocniejsze uprawnienie na tej liście, uzasadnienie bezpieczeństwa w ADR 0030 |
-| zdarzenia main do renderera | `progress`, `operation-log` | tylko postęp i log, nigdy treść pliku |
+| `library:list` | `{ query?, kind? }` | `{ items, problems, inconsistent }`, bez treści; filtr podłańcucha liczy main |
+| `library:get` | `{ id }` | element z treścią (bez ścieżki źródła importu) |
+| `library:save` | `{ id?, draft }`; bez `id` to utworzenie | element zapisany i ostrzeżenia albo błędy walidacji |
+| `library:delete-plan` | `{ id }` | plan usunięcia: `token`, odzyskiwalność (`recoverable`, `partial`, `blocked`), pliki nieodzyskiwalne |
+| `library:delete-apply` | `{ token, acknowledgeUnrecoverable? }` | ostrzeżenia |
+| `library:repair` | `{ id, action }`, `adopt-disk` albo `restore-version` | element po naprawie |
+| `import:detect` | brak | rooty z `rootId`, etykietą, `exists`, `active` |
+| `import:scan` | `{ rootIds }` | `scanToken`, kandydaci ze statusem i trafieniami klasyfikatora sekretów, pominięte |
+| `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged? }` | zaimportowane, pominięte z powodem, błędy |
+| `export:plan` | `{ tool, itemIds }` | `planId`, `toolMissing`, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy, konflikty, sieroty, `applicable` |
+| `export:apply` | `{ planId, approved: true }` | raport per wpis, `backupId`, `verified`, `rolledBack` |
+| `sync:status` | `{ tools? }` | `missingTools`, stan per element i narzędzie, sieroty |
+| `sync:plan` | `{ tools, itemIds, resolutions? }` | `syncId`, plany eksportu per narzędzie, adopcje (`tool-wins`), pominięte |
+| `sync:apply` | `{ syncId, approved: true }` | wyniki per plan i wyniki adopcji |
+| `history:list` | `{ limit?, before? }` | wpisy historii z `revertible` i `revertedBy` |
+| `history:rollback` | `{ operationId }` | plan cofnięcia w postaci `ExportPlanDto`; zastosowanie przez `export:apply` |
+| `diagnostics:report` | brak | raport środowiska, nieznanych konstrukcji i stanu otwarcia indeksu |
+
+Kanały w `IPC_CHANNELS` bez handlera (wywołanie kończy się błędem "No handler registered", a nie
+udaje wyniku): `diff:compute`, `profiles:list`, `profiles:save`, `profiles:export-plan`,
+`settings:get`, `settings:set`. Diff do podglądu nie ma własnego kanału: `before` i `after` są
+w planie eksportu.
+
+Nie ma w liście, choć wcześniejsza wersja tego dokumentu je przewidywała: `library:delete` (zastąpiły
+go `delete-plan` i `delete-apply`), `sync:verify` (weryfikacja jest częścią zapisu) oraz
+`diagnostics:rebuild-index-plan` i `diagnostics:rebuild-index-apply` z ADR 0030, które czekają na
+kawałek B Etapu 2 (ROADMAP sekcja 3).
+
+Zdarzenia main do renderera, `progress` i `operation-log`, są zadeklarowane w `IPC_EVENTS` i
+dostępne w moście, ale main nie nadaje żadnego z nich. Mają nieść tylko postęp i log, nigdy treść
+pliku.
 
 Cztery reguły tej granicy:
 
@@ -699,9 +796,12 @@ Niezaufane dane, bez wyjątku. Konkretnie:
 
 ### 8.3 Granica 3: zapis
 
-`WriteGate` to jedyna droga zapisu do plików, których aplikacja nie jest właścicielem, czyli
-konfiguracji narzędzi poza `userData` (zakres doprecyzowany w ADR 0031). Każdy taki zapis
-przechodzi:
+`WriteGate` (`src/infra/fs/write-gate.ts`) to jedyna droga zapisu do plików, których aplikacja nie
+jest właścicielem, czyli konfiguracji narzędzi poza `userData` (zakres doprecyzowany w ADR 0031).
+Port ma dwie metody: `probe(plan)` tylko czyta i uzupełnia `recoverability` oraz `applicable`,
+a `apply(plan, { planId })` odmawia na starcie (`approval-mismatch`, `not-applicable`,
+`not-probed`, `plan-changed`, `backup-failed`), zanim zapisze pierwszy bajt. Plan w main
+(`ExportService`) jest jednorazowy i wygasa po 15 minutach. Każdy zapis przechodzi:
 
 0. **Warunek wstępny: kopia musi być możliwa.** Nie jest to krok, który może się nie udać,
    tylko warunek wykonania. `WriteGate` nie ma ścieżki kodu, która zapisuje bez udanej kopii
@@ -709,14 +809,40 @@ przechodzi:
    żeby rollback miał co przywrócić. Brak możliwości kopii jest wykrywany już na etapie `plan`
    i blokuje plan, a nie przerywa zapis w połowie (ADR 0028).
 1. Kanonizacja ścieżki (`realpath` katalogu nadrzędnego) i kontrola, czy leży pod zadeklarowanym
-   rootem celu. Na Windowsie dodatkowo odrzucenie ścieżek UNC i `\\?\`.
-2. Backup dotykanego stanu do content store, z wpisem w logu operacji.
+   rootem celu. Na Windowsie dodatkowo odrzucenie ścieżek UNC i `\\?\`, nazw zarezerwowanych, NUL
+   i znaków kontrolnych. Brakujący katalog główny narzędzia nie jest tworzony z niczego: bramka
+   tworzy brakujący root (tryb 0700) tylko wtedy, gdy jego rodzic istnieje (`assertRootAnchored`),
+   a plan eksportu w ogóle nie powstaje bez katalogu głównego narzędzia (ADR 0033).
+2. Kopia dotykanego stanu w `userData/backups/<id>/` (pliki oraz `MANIFEST` zapisywany jako
+   ostatni, więc jego obecność znaczy, że kopia jest kompletna) i w content store, z wpisem w
+   `operation_log`.
 3. Zapis przez plik tymczasowy z pidem w nazwie i `rename`, z jawnym przepisaniem trybu pliku.
    To nie jest kosmetyka: `rename` daje nowy inode, więc bez przepisania trybu plik z `0600`
    wraca na `0644`. W generatorze zdegradował się tak `config.toml`, który trzymał sekret.
+   Końce linii istniejącego celu są zachowane, nowy plik dostaje LF (ADR 0016).
 4. Sprzątanie pliku tymczasowego przy błędzie.
 5. Weryfikacja: odczyt z powrotem i porównanie z planem.
-6. Przy niepowodzeniu rollback z content store.
+6. Przy pierwszym niepowodzeniu rollback z dziennika zmian, w odwrotnej kolejności, razem z
+   usunięciem katalogów utworzonych w tym przebiegu. Raport mówi `rolledBack: true`.
+
+**Akcje wpisu planu.** `create` i `modify` zapisują plik; `link` zamienia go w dowiązanie do
+wyrenderowanej kopii w `userData/materialized/` z degradacją symlink, junction, kopia (ADR 0015);
+`unchanged` oznacza, że cel ma już oczekiwaną treść i nic nie jest zapisywane ani kopiowane.
+Dwie pozostałe akcje, `delete` i `restore-link`, powstają wyłącznie w `HistoryService.rollback`
+i służą cofaniu operacji aplikacji (ADR 0034): `delete` usuwa plik lub dowiązanie, które zapis
+aplikacji utworzył, i sprząta puste katalogi do roota, ale nie dotyka katalogu z innymi plikami;
+`restore-link` zamienia to, co jest pod ścieżką, z powrotem w dowiązanie do celu sprzed operacji.
+Obie przechodzą tę samą sondę, kopię i zatwierdzenie co zwykły zapis. Nie istnieje ścieżka od
+sieroty do usunięcia.
+
+**Reguła lintu na zapis.** Zapisujące funkcje `node:fs` (`writeFile`, `rm`, `unlink`, `rename`,
+`open` i pokrewne) są zakazane w `src/**` poza listą `FS_WRITE_ALLOWED` w `eslint.config.mjs`:
+`atomic.ts`, `write-gate.ts`, `link-mode.ts`, `bounded-read.ts` (odczyt z `O_RDONLY`),
+`infra/library`, `infra/store`, `infra/db`, `infra/logging`, plus `tests/` i `scripts/`.
+Reguły nie wyłącza się komentarzem. `npm run test:boundaries` wstawia taką próbę i wymaga, by lint
+padł, a CI uruchamia go przy każdym pushu. Lista jest też sposobem, w jaki ADR 0012 jest
+egzekwowany: nowy kod zapisujący musi iść przez bramkę albo trafić na listę z uzasadnieniem w
+przeglądzie.
 
 **Zapis własnej biblioteki (`userData/library/`) nie przechodzi przez `WriteGate`** i nie ma
 planu ani zatwierdzenia przy edycji (ADR 0031). Nie jest to zwolnienie z gwarancji, tylko inny
@@ -745,6 +871,17 @@ Trzy miejsca, w których sekret może wyciec, i trzy osobne mechanizmy:
 | Biblioteka | `SecretClassifier` oznacza element przy skanowaniu. Elementy z trafieniem są domyślnie wykluczone z importu i nie da się ich włączyć jednym kliknięciem bez jawnego potwierdzenia |
 | Podgląd diffa | Redakcja w main, przed wysłaniem do renderera. Diff liczony na treści zredagowanej, nie redagowany po narysowaniu |
 | Logi | Redakcja w loggerze, czyli na poziomie infrastruktury. Serwis nie może zalogować sekretu, nawet gdyby chciał |
+
+Redakcja w main i w loggerze używa tego samego `redactSecrets`
+(`src/core/services/security/secret-redactor.ts`). Handler `export:plan` redaguje `before` i
+`after` każdego wpisu przed serializacją, a plik binarny albo zbyt duży ma w obu polach `null`.
+Logger (`src/infra/logging/logger.ts`) przepuszcza każdą linię przez sekrety, potem przez katalog
+domowy (`redactHomeInText`), potem zamienia łamanie linii na spację, żeby wiadomość nie mogła
+wstrzyknąć fałszywego wpisu; zapisuje do `userData/logs/app.log` i rotuje plik po 1 MiB. W
+`src/main/**` lint zabrania `console.*`, więc logger jest jedyną drogą. Znane ograniczenie: zmiana
+samej wartości sekretu daje ten sam znacznik po obu stronach, więc diff jej nie pokaże (ROADMAP
+sekcja 4). Asercje negatywne są w `tests/unit/security-export-diff.test.ts` (ładunek IPC) i
+`tests/integration/security-logger.test.ts` (plik logu).
 
 Klasyfikator łączy cztery sygnały: nazwa i rozszerzenie pliku (`*credentials*`, `*.pem`, `*.key`,
 `*.p12`, `auth.json`, `.env`), wzorce znanych kluczy (`sk-`, `ghp_`, `AKIA`, `-----BEGIN`),
@@ -783,20 +920,31 @@ Windowsie, dostajemy brak efektu i pokazujemy zieloną kontrolkę.
       assets/...           pliki pomocnicze
       snapshots/<tool>/... surowe zrodlo, bajt w bajt
     items/.<itemId>.<work|ready|old>.<pid>.<hex12>/   katalog pomocniczy zapisu, nie element (patrz nizej)
-  index.sqlite             indeks, wyszukiwanie (FTS5), log operacji, stan sync
-  objects/<aa>/<sha256>    content-addressed store (wersje, backupy)
-  backups/<timestamp>/     backup przed operacja destrukcyjna + MANIFEST
+  index.db                 indeks SQLite: schema_migrations, operation_log, sync_state
+  objects/<aa>/<sha256>    content-addressed store (wersje elementow, kopie zapisow)
+  backups/<id>/            kopia przed zapisem do narzedzia: files/ plus MANIFEST (id to znacznik czasu i 3 bajty losowe)
+  materialized/<tool>/...  wyrenderowane kopie elementow, do ktorych wskazuja dowiazania (ADR 0015)
   quarantine/              uszkodzony indeks odstawiony przed odbudowa (ADR 0029)
-  logs/                    logi z redakcja
+  logs/app.log             log z redakcja, rotowany po 1 MiB
+  root-salt                sol dla rootId; dzieki niej rootId jest stabilny miedzy uruchomieniami
+  tmp/                     proby wykrywania zdolnosci dowiazan, sprzatane po probie
 ```
+
+Tabele indeksu: `schema_migrations` (rejestr, migracje 1 do 3), `operation_log` (log operacji
+biblioteki i zapisów do narzędzi, z kolumnami `tool`, `backup_id` i `reverts`, dzięki którym
+historia grupuje wiersze jednej operacji i wie, która operacja cofnęła którą) oraz `sync_state`
+(rekord ostatniej synchronizacji per element i narzędzie: rewizja, hash treści, lista plików
+z hashami, `backup_id`). Biblioteki w indeksie nie ma, nie ma też tabeli FTS ani indeksu slugów.
 
 Dwie reguły tego układu:
 
 **Pliki są prawdą, baza jest indeksem.** Elementy to w istocie pliki Markdown z metadanymi,
 więc trzymanie ich jako BLOB-ów w SQLite utrudniłoby wszystko, co użytkownik może chcieć zrobić
-poza aplikacją (podejrzeć, zacommitować, zgrepować). Baza trzyma to, co służy wyszukiwaniu
-i śledzeniu stanu, i musi być odtwarzalna ze plików. Utrata `index.sqlite` kosztuje czas
-przebudowy, nie dane. To jest warunek zaufania do aplikacji, która ma być jedynym miejscem
+poza aplikacją (podejrzeć, zacommitować, zgrepować). Baza trzyma to, co służy śledzeniu stanu, a
+wyszukiwanie ma w planie (dziś jest filtrem w main, ROADMAP sekcja 3, Etap 2). Utrata `index.db`
+nie kosztuje żadnego elementu biblioteki. Kosztuje log operacji, który z definicji nie wraca z
+plików (ADR 0014, 0029), oraz stan synchronizacji: każdy element wygląda wtedy na niezsynchronizowany,
+a następny plan pokaże różnicę. To jest warunek zaufania do aplikacji, która ma być jedynym miejscem
 trzymania konfiguracji.
 
 **Zapis elementu jest zamianą katalogu, a w `items/` mogą leżeć katalogi pomocnicze.** Zapis
@@ -818,7 +966,8 @@ startu. Odmowa jest zarezerwowana dla trzech przyczyn, których odbudowa nie roz
 z przyszłości (odbudowa wyrzuciłaby log operacji, czyli jedyną rzecz nieodtwarzalną z plików),
 `userData` bez możliwości zapisu, oraz moduł natywny, który się nie ładuje. Odbudowa sama jest
 operacją destrukcyjną na starym pliku, więc obowiązuje ją warunek kopii z ADR 0028: bez udanej
-kwarantanny odbudowa nie startuje.
+kwarantanny odbudowa nie startuje. Dziś odbudowa tworzy pusty indeks ze schematem; wczytywania
+biblioteki z plików do indeksu nie ma, bo indeks jej nie trzyma.
 
 **Historia i rollback stoją na content store, nie na Gicie.** `objects/<sha256>` daje deduplikację,
 porównywanie wersji i przywracanie bez żadnego zewnętrznego narzędzia. Wymagania mówią wprost:
@@ -833,7 +982,7 @@ store'em, nie zmienią modelu danych. Settings pokazuje rozmiar store'u, żeby j
 widoczny, a nie odkrywany przy braku miejsca na dysku.
 
 SQLite przez `better-sqlite3`, nie `node:sqlite`. Uzasadnienie i koszt w ADR 0007: synchroniczne
-API pasuje do main, FTS5 daje wyszukiwanie bez dodatkowej biblioteki, a cena to przebudowa modułu
+API pasuje do main, FTS5 daje wyszukiwanie bez dodatkowej biblioteki (jest dostępne, choć biblioteka z niego jeszcze nie korzysta), a cena to przebudowa modułu
 natywnego dla każdej pary system plus architektura, w tym osobno macOS arm64 i x64. To przekłada
 się bezpośrednio na kształt macierzy CI (sekcja 12) i jest ryzykiem R2 w roadmapie.
 
@@ -1270,8 +1419,8 @@ przed wydaniem MVP byłoby najdroższym możliwym momentem.
 
 ## 15. Decyzje właściciela: rozstrzygnięte i wciąż otwarte
 
-Osiem pytań z audytu Etapu 0. Cztery rozstrzygnięte 2026-10-20 i przeniesione do ADR-ów, cztery
-otwarte z zapisem, który etap blokują.
+Osiem pytań z audytu Etapu 0. Cztery rozstrzygnięte 2026-10-20 i trzy 2026-11-03, wszystkie
+przeniesione do ADR-ów. Otwarte zostaje jedno, z zapisem, który etap blokuje.
 
 ### 15.1 Rozstrzygnięte
 
@@ -1280,20 +1429,13 @@ otwarte z zapisem, który etap blokują.
 | 1. Drugi root skilli Codeksa | `~/.agents/skills` jest możliwą lokalizacją. Root istniał, Codex go czytał (55 zduplikowanych nazw), usunięto go sześć godzin przed audytem. Aktualizacja Codeksa może go odtworzyć | 0024 |
 | 2. Eksport instrukcji globalnych | Aplikacja zarządza blokiem między własnymi markerami i nie dotyka reszty pliku. Brak markerów oznacza dopisanie na końcu, nigdy przepisanie. Blok bez markerów wymaga decyzji użytkownika | 0025 |
 | 3. Tożsamość przy rozjechanej nazwie | Oba identyfikatory przechowywane, rozstrzygane per narzędzie przy eksporcie. Rozjechanie to ostrzeżenie, nie błąd | 0026 |
+| 4. Polityka usuwania przy synchronizacji | Aplikacja nigdy sama nie usuwa plików w narzędziu i nie dopisuje znaczników własności. Sieroty są tylko raportowane (`WritePlan.orphans`, `SyncStatusDto.orphans`), blok instrukcji bez elementu też. Usunięcie jest możliwe wyłącznie przy cofnięciu operacji aplikacji (`delete`, `restore-link`) | 0034 |
+| 5. Zakres projektowy w MVP | Tylko konfiguracje globalne: `~/.claude`, `~/.codex`, wspólny `~/.agents`. Konfiguracje projektowe po MVP; `scope: project` zostaje etykietą bez egzekwowania | 0032 |
 | 7. Retencja historii | Pełne treści w content store adresowanym hashem, z deduplikacją. Limit i czyszczenie świadomie odroczone, dołożą politykę, nie zmienią modelu danych | 0027 |
+| 8. Tworzenie drzewa narzędzia od zera | Eksport tylko do narzędzia z istniejącym katalogiem głównym (`~/.claude`, `~/.codex`, z `CLAUDE_CONFIG_DIR` i `CODEX_HOME`); brakujące podkatalogi i pliki w nim są tworzone. `~/.agents` nie przesądza o obecności Codeksa | 0033 |
 
 ### 15.2 Otwarte
 
-4. **Polityka usuwania przy synchronizacji.** *Blokuje Etap 5.* Wymagania mówią "jawna polityka
-   i potwierdzenie", ale nie mówią która. Czy nigdy nie usuwamy i tylko raportujemy sieroty, czy
-   usuwamy to, co aplikacja wcześniej sama utworzyła? Drugi wariant wymaga wstrzykiwania markera
-   własności do plików docelowych, czyli zmienia treść eksportu i musi być zaakceptowany jawnie.
-   Dotyczy też bloku instrukcji globalnej: domyślnie blok zostaje i jest raportowany jako sierota
-   (ADR 0025).
-5. **Zakres projektowy w MVP.** *Blokuje Etap 3.* Biblioteka ma trzymać "project instructions",
-   ale Etapy 1 do 5 tego nie wyróżniają. Czy MVP obsługuje konfiguracje projektowe (`CLAUDE.md`
-   i `AGENTS.md` w repozytoriach, `.mcp.json`), czy tylko globalne? To różnica w warstwie
-   wykrywania lokalizacji i w modelu zakresów.
 6. **Ikona i nazwa produktu.** *Nie blokuje żadnego etapu przed Etapem 10.* Czy generujemy ikonę
    przed wydaniem MVP? Jeśli tak, potrzebuję nazwy lub inicjałów na ikonę, koloru wiodącego
    i preferencji stylu. Rekomendacja, jeśli nie ma preferencji: płaski monogram w jednym kolorze.
@@ -1301,9 +1443,6 @@ otwarte z zapisem, który etap blokują.
    ilustracyjna wygląda lepiej w dużym rozmiarze, ale gubi detal w małym i wymaga więcej iteracji.
    Jeśli odpowiedź to nie, MVP wychodzi z placeholderem i zostaje to zapisane, żeby nie wracało
    jako pytanie.
-8. **Tworzenie drzewa narzędzia od zera.** *Blokuje Etap 4.* Czy aplikacja ma prawo utworzyć
-   `~/.codex/skills` na maszynie, gdzie Codeksa nie ma, czy odmawia eksportu, dopóki narzędzie
-   nie jest zainstalowane? Generator odmawia. Dla aplikacji to decyzja produktowa, nie techniczna.
 
 ---
 

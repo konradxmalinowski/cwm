@@ -69,11 +69,13 @@ oznacza, że sprawdzono i nic się nie różni, nie że odczyt się nie udał").
 `design-preview.html` sekcja 6 oraz na żywo w makiecie 5a (przycisk „Odznacz wszystko").
 
 **Ryzyko 3: nawigacja jako numerowany spis treści.** Łamana norma: pasek ikon. Tu spis
-treści krojem wyświetlnym z numerami: „1. Biblioteka", „2. Import", „3. Synchronizacja",
-„4. Historia". **Zero ikon w nawigacji.** Aktualna pozycja ma podkreślenie `cobalt-300`
-2 px. Uzasadnienie: sześć rodzajów elementów biblioteki w ikonach wyglądałoby jak sześć
-podobnych kółek. Numeracja jest stała: kolejne widoki dostają kolejne numery, istniejące
-się nie przesuwają.
+treści krojem wyświetlnym z numerami: „1. Biblioteka", „2. Import", „3. Eksport",
+„4. Diagnostyka", „5. Synchronizacja", „6. Historia". **Zero ikon w nawigacji.** Aktualna
+pozycja ma podkreślenie `cobalt-300` 2 px. Uzasadnienie: sześć rodzajów elementów biblioteki
+w ikonach wyglądałoby jak sześć podobnych kółek. Numeracja jest stała: kolejne widoki
+dostają kolejne numery, istniejące się nie przesuwają. Taki układ jest w
+`src/renderer/app/app.component.html`; wcześniejszy przykład (Synchronizacja jako 3,
+Historia jako 4) był planem sprzed kodu.
 
 ### Ryzyka odrzucone
 

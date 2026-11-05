@@ -11,150 +11,130 @@ nie jest ukończona, a atrapy nie wchodzą do wydania opisanego jako gotowe.
 
 ## 1. Struktura katalogów
 
+Stan na 2026-11-05, po Etapie 5. Drzewo odpowiada repozytorium; to, czego jeszcze nie ma, jest
+wymienione pod nim.
+
 ```
 universal-ai-skills-manager/
   docs/
     00-wymagania-zrodlowe.md
     ARCHITECTURE.md
+    DESIGN.md
     ROADMAP.md
-    adr/0001 do 0031
+    design-preview.html
+    adr/0001 do 0034
   .github/workflows/
     ci.yml
     release.yml
+  scripts/                          dev, build preloadu, kopiowanie schematu, test:boundaries, sumy kontrolne
   package.json
-  tsconfig.base.json
-  tsconfig.main.json
-  tsconfig.renderer.json
+  tsconfig.base.json                plus tsconfig.main, preload, renderer, tests
+  angular.json
   electron-builder.yml
-  eslint.config.js
+  eslint.config.mjs
+  playwright.config.ts
+  vitest.config.ts
   .editorconfig
   .gitattributes                    wymuszenie LF w repozytorium
 
   src/
     main/
-      bootstrap/                    okno, CSP, blokada sieci, single instance, ACL userData
-      ipc/                          rejestracja kanalow, schematy, walidacja
-      services/                     orkiestracja przypadkow uzycia (cienka warstwa)
-      worker/                       skan drzewa, hash, diff duzych plikow
+      index.ts
+      bootstrap/                    okno, protokol app://, CSP, blokada sieci, start indeksu,
+                                    skladanie serwisow (library, import, export, sync)
+      ipc/
+        registry.ts                 rejestracja kanalow z zamknietej listy
+        handlers/                   library, import, export, sync, diagnostics plus walidacja ladunkow
+      services/
+        diagnostics.ts
 
     preload/
       bridge.ts                     contextBridge, jawna zamknieta lista kanalow
 
+    shared/
+      ipc/                          channels.ts, surface.ts, kontrakty DTO (library, import, export, sync)
+
     renderer/
-      app/
-        core/                       klient IPC, stan (signals), routing, obsluga bledow
-        design-system/
-          tokens/                   kolory, odstepy, typografia, dwa motywy
-          components/               przycisk, pole, tabela, modal, toast, stany operacji
-        features/
-          dashboard/
-          library/
-          agents/
-          commands/
-          rules/
-          profiles/
-          sync-center/
-          diff-viewer/
-          import-wizard/
-          history/
-          settings/
-          diagnostics/
-      styles/
+      main.ts
       index.html
+      styles/                       tokeny, baza, uklad, style widokow (SCSS)
+      assets/fonts/
+      app/
+        app.component               powloka i spis tresci
+        startup-banner.component    stan otwarcia indeksu
+        core/                       ipc (klienci), routing, state (signals), keyboard, theme, labels
+        features/                   library, import, export, sync, history, diagnostics
 
     core/                           domena: zero zaleznosci na electron, fs, Angular, sqlite
-      model/
-        item.ts                     LibraryItem i typy pochodne
-        library-errors.ts           bledy walidacji i operacji biblioteki
-        library-limits.ts           limity rozmiaru i glebokosci (ADR 0031)
-        library-file-names.ts       nazwy tymczasowe i systemowe
-        path-containment.ts         kontrola zawierania sciezek, wspolna z main
-        compatibility.ts            poziomy zgodnosci
-        plan.ts                     WritePlan, SyncPlan, raporty
-        hook.ts
-        profile.ts
-      ports/
-        tool-adapter.ts
-        file-gateway.ts             WriteGate
-        toml-editor.ts
-        object-store.ts
-        library-store.ts            odczyt i zapis plikow elementu
-        operation-log.ts            port logu operacji (implementacja w kawalku B)
-        id-generator.ts             ULID
-        store-failure.ts            przyczyny awarii magazynow
-        index-store.ts
-        secret-classifier.ts
-        clock.ts
+      model/                        item, plan, diagnostics, index-health, library-errors,
+                                    library-limits, library-file-names, path-containment
+      ports/                        tool-adapter (ToolAdapter, ToolExporter, LocationCatalog),
+                                    write-gate, library-store, object-store, operation-log,
+                                    sync-state, backup-reader, source-reader, index-store,
+                                    store-failure, clock, id-generator
       services/
-        library/
-        normalization/
-        diff-merge/
-        sync-planner/
-        policy/                     polityki zapisu, usuwania, wykluczen
-        profiles/
-        history/
+        library/                    LibraryService, walidacja, item-codec
+        import/                     ImportService
+        export/                     ExportService
+        sync/                       SyncService, sync-recorder, sync-hash
+        history/                    HistoryService
+        security/                   secret-classifier, secret-redactor
+        normalization/              hash, line-endings
 
     adapters/
-      shared/
-        yaml-frontmatter/           port parsera z generatora
-        markdown/
-        toml/                       serializacja plus SegmentTomlEditor
-        naming/                     sanityzacja, slug, kolizje wielkosci liter
-      claude-code/
-        locations.ts
-        scan.ts
-        parse.ts
-        to-canonical.ts
-        plan.ts
-        verify.ts
-      codex/
-        locations.ts
-        scan.ts
-        parse.ts
-        to-canonical.ts
-        plan.ts                     agenci do dwoch miejsc, komendy na skille
-        verify.ts
+      index.ts
+      shared/                       frontmatter, markdown, skills, hooks, instructions, marker-block,
+                                    slug, text, toml/ (SegmentTomlEditor), export/
+      claude-code/                  index (import i eksport w jednej klasie), export, agent-attributes
+      codex/                        index (import i eksport w jednej klasie), export, agents
 
     infra/
-      fs/
-        write-gate.ts               kanonizacja, backup, tmp plus rename, weryfikacja
-        link-mode.ts                symlink, junction, kopia plus wykrywanie zdolnosci
-        atomic.ts                   zapis atomowy, wspolny z zapisem biblioteki (ADR 0031)
-        bounded-read.ts             odczyt z limitem rozmiaru, bez dowiazan
-      library/
-        library-store.ts            katalog roboczy plus zamiana katalogow
-        item-swap.ts                nazwy katalogow pobocznych, odzyskanie po przerwaniu
-      db/
-        schema/                     migracje
-        index-store.ts              better-sqlite3, FTS5
-        rebuild.ts                  odtworzenie indeksu z plikow
-      store/
-        object-store.ts             content-addressed
-        backup.ts                   katalog plus MANIFEST
-      platform/
-        env.ts                      PlatformEnv
-        locations.ts                tabela kandydatow per narzedzie i system
-        permissions.ts              chmod na POSIX, icacls na Windows, raportowanie
-        line-endings.ts
-      logging/
-        redact.ts
-        logger.ts
+      fs/                           write-gate, write-path-guard, atomic, link-mode, bounded-read,
+                                    stat, store-error
+      library/                      library-store, item-swap, ensure-dirs
+      db/                           index-store, quarantine, schema/ (001 init, 002 operation_log,
+                                    003 sync_state)
+      store/                        object-store, backup, backup-reader
+      source/                       fs-source-reader
+      platform/                     env, locations, root-salt
+      logging/                      logger, redact
 
   tests/
     harness/                        podstawianie HOME, kanarek na plikach wlasciciela
-    fixtures/                       wylacznie syntetyczne drzewa, nazwy acme-*
+    fixtures/                       wylacznie syntetyczne drzewa, nazwy acme-* (claude-code, codex, library-linux)
     unit/
     contract/                       jeden zestaw przeciw kazdemu adapterowi
     integration/
     e2e/
 
   resources/
-    icons/                          .icns, .ico, png (placeholder do decyzji wlasciciela)
+    icons/                          placeholder do decyzji wlasciciela (pytanie 6)
 ```
+
+Czego w drzewie jeszcze nie ma, choć wcześniejsza wersja tego dokumentu je wymieniała:
+
+- `src/main/worker/` (skan drzewa, hash i diff dużych plików w osobnym wątku),
+- `src/renderer/app/design-system/`: tokeny są w `styles/`, komponenty bazowe w komponentach
+  widoków,
+- widoki `dashboard`, `agents`, `commands`, `rules`, `profiles`, `settings` (rodzaje elementów
+  obsługuje wspólny widok `library`),
+- `core/services/diff-merge/`, `sync-planner/`, `policy/`, `profiles/`: synchronizacja jest w
+  `SyncService`, a diff to `before` i `after` w planie eksportu (kanał `diff:compute` nie ma
+  handlera),
+- `core/model/compatibility.ts`, `hook.ts`, `profile.ts`: poziomy zgodności są w `plan.ts`,
+- `core/ports/file-gateway.ts` i `toml-editor.ts`: portem zapisu jest `write-gate.ts`, a edytor
+  TOML mieszka w `adapters/shared/toml/`,
+- osobne pliki adaptera (`locations`, `scan`, `parse`, `to-canonical`, `plan`, `verify`):
+  lokalizacje wykrywa `infra/platform/locations.ts` (ADR 0022), reszta jest w `index.ts` i
+  `export.ts` adaptera, a weryfikacja po zapisie w `WriteGate`,
+- `infra/platform/permissions.ts` (`icacls` i `chmod`, ADR 0018): w kodzie nie ma wywołania
+  `icacls` ani `child_process`.
 
 Reguła granic, wymuszana lintem: `core/` nie importuje `electron`, `node:fs`, `better-sqlite3`
 ani Angulara. `adapters/` nie importuje `node:fs` ani `node:child_process`. `renderer/` nie
-importuje niczego z `main/`, `core/` ani `infra/` poza typami.
+importuje z `main/`, `infra/`, `adapters/` ani `preload/`; do `core/` i `shared/` ma drogę
+otwartą, bo lint nie odróżnia typów od wartości. Zapis do systemu plików jest dozwolony tylko
+w plikach z listy `FS_WRITE_ALLOWED` w `eslint.config.mjs` (ADR 0012).
 
 ---
 
@@ -171,7 +151,7 @@ zmian, diffem przed zapisem, backupem, weryfikacją i cofaniem; trzy platformy; 
 z dwoma motywami i obsługą klawiatury.
 
 **Nie ma w MVP:** scalania treści linia po linii (użytkownik widzi konflikt i wybiera wersję,
-ale jej nie scala), profili, widoku historii (warstwa danych jest, interfejsu nie), dashboardu
+ale jej nie scala), profili, przywracania wersji elementu z interfejsu, dashboardu
 z agregatami, eksportu do ZIP i Git, autoaktualizacji, podpisanych wydań, synchronizacji MCP.
 
 **MVP nie jest wydaniem gotowym.** Etapy 8 do 10 są warunkiem wydania.
@@ -205,7 +185,7 @@ Kryteria akceptacji:
 5. Zero zależności nieuzasadnionych. Każda pozycja w `package.json` ma powód zapisany w README
    albo w ADR.
 
-### Etap 2: Biblioteka
+### Etap 2: Biblioteka - OTWARTY
 
 Zakres: model kanoniczny (ADR 0023). Zapis i odczyt według układu danych (ADR 0014). Content
 store i log operacji jako warstwa danych (ADR 0019). Lista, wyszukiwanie FTS, filtrowanie,
@@ -214,34 +194,29 @@ kolizji wielkości liter (ADR 0017). Normalizacja końców linii (ADR 0016). Prz
 z plików z kwarantanną i triażem przyczyn awarii otwarcia (ADR 0029). Okno przed otwarciem
 indeksu, z widokiem dla odmowy i dla odbudowy (ADR 0029, ARCHITECTURE 13.1).
 
-**Stan (2026-10-31): kawałek A zrobiony.** Etap dzieli się na trzy kawałki: A to warstwa plików
-biblioteki i content store (ADR 0031), B to indeks, C to IPC i interfejs. Kawałek A dostarcza
-model elementu, porty, walidację (slug, kolizje, ścieżki assetów, `item.json` z dysku), normalizację
-końców linii, `LibraryService` (tworzenie, edycja, lista, plan i zastosowanie usunięcia, dwie
-akcje naprawy elementu niespójnego), zapis elementu katalogiem roboczym z zamianą, content store
-oraz zacommitowane syntetyczne drzewo `tests/fixtures/library-linux/`. Kryteria 8, 9 i 10 są
-spełnione lokalnie na macOS. **Żadne z nich nie ma jeszcze dowodu z czterech celów.** Kryterium 10
-(element zapisany na Linuksie otwiera się na macOS i Windowsie) i `rename` katalogu na Windowsie
-są do potwierdzenia przez macierz CI; ostateczny dowód to jej zielony przebieg po pushu. Test czytający fixture biegnie wtedy na
-`ubuntu-latest`, `macos-15`, `macos-15-intel` i `windows-latest`; to samo dotyczy kryteriów 8
-i 9 na trzech systemach. Zachowania Windowsa, FAT i SMB, których macOS nie sprawdza, wymienia
-ADR 0031.
+**Stan (2026-11-05): otwarty.** Kawałki A (warstwa plików i content store, ADR 0031) i C (kanały
+`library:*`, interfejs biblioteki, widok Diagnostyki) są w kodzie. Kawałek B jest zrobiony w
+połowie: log operacji w `index.db` istnieje (migracja 2, `operation_log`) i zasila historię,
+ale indeks nie trzyma biblioteki. Schemat to trzy migracje: rejestr, `operation_log` i
+`sync_state`. Nie ma indeksu slugów, tabeli FTS ani odbudowy z plików, więc wyszukiwanie jest
+filtrem podłańcucha w main (`toListDto` w `src/main/ipc/handlers/library.ts`) nad wynikiem
+`LibraryService.list()`. Ostatni przebieg CI na `main` (`41991403641`, commit `c37e40d`) jest zielony na czterech
+celach. Cztery z dziesięciu kryteriów mają test (3, 8, 9, 10), sześć jest otwartych; tabela
+pod kryteriami mówi, czego brakuje.
 
-Do kawałka B przechodzi to, czego A świadomie nie robi:
+Z kawałka B zostaje to, czego nikt nie zrobił:
 
-- **Log operacji w `index.sqlite`** (ADR 0019). Wersje w `objects/` już powstają przy każdym
-  zapisie, ale wpisów logu z kawałka A nie da się odtworzyć wstecz (log jest nieodtwarzalny
-  z plików, ADR 0014), więc edycje i usunięcia sprzed B mają treść do odzyskania, a nie mają
-  historii zdarzeń. Serwis ma już port `OperationLog`; w A istnieje tylko implementacja testowa.
-  B musi zdążyć przed C, bo od interfejsu użytkownik może edytować i ta luka przestaje być
-  teoretyczna.
 - **Indeks slugów** zamiast odczytu wszystkich `item.json` przy każdym zapisie
-  (`LibraryService.existingSlugs`). Dziś koszt jest liniowy względem liczby elementów.
-  Ma wynikać z indeksu unikalności `lower(slug)` + typ (ADR 0017), z komunikatem walidatora, nie
-  z naruszenia ograniczenia bazy (kryterium 8).
-- **FTS i odbudowa indeksu z plików.** Odbudowa czyta bibliotekę przez `LibraryService.list()`,
-  który zwraca osobno elementy poprawne, niespójne i problemy; raport odbudowy (kryterium 4) ma
-  wymienić wszystkie trzy grupy, nie tylko liczbę wczytanych.
+  (`LibraryService.existingSlugs`). Koszt jest liniowy względem liczby elementów. Ma wynikać
+  z indeksu unikalności `lower(slug)` + typ (ADR 0017), z komunikatem walidatora, nie z
+  naruszenia ograniczenia bazy (kryterium 8).
+- **FTS i odbudowa indeksu z plików.** Odbudowa ma czytać bibliotekę przez
+  `LibraryService.list()`, który zwraca osobno elementy poprawne, niespójne i problemy; raport
+  odbudowy (kryterium 4) ma wymienić wszystkie trzy grupy. Dziś `restoredItems` jest zawsze 0,
+  a lista "nieodzyskanego" nadal mówi, że zawartość biblioteki powstaje dopiero w Etapie 2
+  (`src/main/bootstrap/index-startup.ts`).
+- **Dwa kanały ręcznej odbudowy** z ADR 0030 (`diagnostics:rebuild-index-plan` i
+  `diagnostics:rebuild-index-apply`). Nie ma ich w `IPC_CHANNELS`.
 
 Dwa zadania odziedziczone po Etapie 1, oba konkretne: bezpośredni dowód FTS5 w zapakowanej
 aplikacji (domyka ryzyko R2) oraz docelowy model awarii startu indeksu.
@@ -249,7 +224,7 @@ aplikacji (domyka ryzyko R2) oraz docelowy model awarii startu indeksu.
 Kryteria akceptacji:
 1. Tworzenie, edycja, wyszukiwanie i usuwanie elementu działa z końca na koniec, przez interfejs,
    z potwierdzeniem operacji destrukcyjnej.
-2. Usunięcie `index.sqlite` i restart aplikacji odtwarza pełny indeks z plików, bez utraty
+2. Usunięcie `index.db` i restart aplikacji odtwarza pełny indeks z plików, bez utraty
    danych. Test automatyczny, nie ręczny.
 3. Cztery przyczyny awarii otwarcia indeksu dają trzy różne reakcje (ADR 0029): uszkodzenie
    i nieznany schemat prowadzą do odbudowy po kwarantannie, schemat z przyszłości do odmowy
@@ -290,7 +265,27 @@ Kryteria akceptacji:
    ze spacjami i znakami spoza ASCII.
 10. Element zapisany na Linuksie i skopiowany na macOS oraz Windows otwiera się bez błędu.
 
-### Etap 3: Import z Claude Code i Codeksa
+Dowody (stan na 2026-11-05):
+
+| Kryterium | Test albo brak | Status |
+|---|---|---|
+| 1 | Serwis: `tests/unit/library-service.test.ts`, `tests/integration/library-acceptance-fs.test.ts`. Przez interfejs testowana jest tylko edycja (`tests/e2e/full-flow.spec.ts`). Brakuje E2E dla tworzenia, wyszukiwania i usunięcia z potwierdzeniem | otwarte |
+| 2 | Brak. Indeks nie trzyma biblioteki, więc nie ma czego odtwarzać z plików; usunięcie `index.db` kasuje `operation_log` i `sync_state` | otwarte |
+| 3 | `tests/unit/index-startup.test.ts`, `tests/integration/index-store.test.ts`, `tests/integration/quarantine.test.ts`, `tests/e2e/index-startup.spec.ts` (odbudowa i odmowa ze schematem z przyszłości) | spełnione |
+| 4 | `tests/e2e/index-startup.spec.ts` sprawdza okno i raport, nie tekst widoku (`src/renderer/app/startup-banner.component.ts` bez testu). Raport ma stare zastrzeżenie o bibliotece z Etapu 1 | otwarte |
+| 5 | Osiągalność `corrupted`, `unknown-schema`, `schema-from-future` i `not-writable`: `tests/integration/index-store.test.ts`. Brak testu osiągalności gałęzi `native-module` | otwarte |
+| 6 | Brak kanałów `diagnostics:rebuild-index-plan` i `-apply` | otwarte |
+| 7 | Brak tabeli FTS w schemacie, więc nie ma zapytania do wykonania w paczce. Test `packaged-db.spec.ts:132` dowodzi tylko FTS5 w procesie testu (R2) | otwarte |
+| 8 | `tests/unit/library-service.test.ts` (kryterium 8), `tests/integration/library-acceptance-fs.test.ts`; macierz `npm test` na czterech celach | spełnione |
+| 9 | `tests/unit/library-service.test.ts` (spacje, polskie litery, CJK), `tests/integration/library-service-fs.test.ts` | spełnione |
+| 10 | `tests/integration/library-fixture.test.ts` na fixture `tests/fixtures/library-linux/` | spełnione |
+
+### Etap 3: Import z Claude Code i Codeksa - ZAMKNIĘTY
+
+Status: każde z ośmiu kryteriów ma test (tabela pod kryteriami), a ostatni przebieg CI na `main`
+(`41991403641`, commit `c37e40d`) jest zielony na czterech celach. Zastrzeżenie do kryterium 1: jego część ręczna (sprawdzenie
+na realnym drzewie) nie ma zapisu w repozytorium i mieć go nie powinna (ADR 0004); automatyczna
+część jest sprawdzona. Zakres importu obejmuje wyłącznie konfiguracje globalne (ADR 0032).
 
 Zakres: warstwa wykrywania lokalizacji (ADR 0022), z `~/.agents/skills` jako możliwym rootem
 i wykrywaniem duplikatów międzyrootowych (ADR 0024). Adaptery obu narzędzi w zakresie
@@ -321,7 +316,31 @@ Kryteria akceptacji:
 8. Pliki uszkodzone, niedostępne (EACCES) i przekraczające limit rozmiaru dają błąd z nazwą
    pliku i nie przerywają całego importu, tylko oznaczają ten element.
 
-### Etap 4: Eksport i adaptery
+Dowody (stan na 2026-11-05):
+
+| Kryterium | Test |
+|---|---|
+| 1 | `tests/integration/import-source-untouched.test.ts` (hash każdego pliku przed i po skanie oraz imporcie) |
+| 2 | `tests/unit/adapters-claude-code.test.ts` (przypadki 1 do 5; piąty, alias przez symlink, jest pomijany tam, gdzie system nie pozwala na symlinki), `tests/unit/adapters-codex.test.ts` (przypadki 6 i 7: agent z wpisem i wpis bez pliku) |
+| 3 | `tests/unit/import-service.test.ts` (odznaczenie i `confirmedSecrets`), `tests/unit/secret-classifier.test.ts` |
+| 4 | `tests/unit/adapters-claude-code.test.ts` (symlinki wyprowadzające poza root), `tests/integration/fs-source-reader.test.ts` |
+| 5 | `tests/integration/import-source-untouched.test.ts`, `tests/unit/import-service.test.ts` |
+| 6 | `tests/integration/locations.test.ts`, `tests/unit/import-service.test.ts` |
+| 7 | `tests/unit/adapters-claude-code.test.ts` |
+| 8 | `tests/unit/adapters-claude-code.test.ts` (limit rozmiaru, plik bez uprawnień) |
+
+### Etap 4: Eksport i adaptery - OTWARTY
+
+Status: sześć z siedmiu kryteriów ma test, a ostatni przebieg CI na `main` (`41991403641`, commit `c37e40d`) jest
+zielony na czterech celach. Otwarte jest kryterium 5: tryb materializacji jest wyliczany i
+pokazywany w planie eksportu (`src/renderer/app/features/export/plan-view.component.html`),
+ale żaden test nie sprawdza, że użytkownik go widzi. Testy poprawności per system są
+(tabela pod kryteriami).
+
+W kodzie kontrakt adaptera dzieli się na `ToolAdapter` (import) i `ToolExporter` (`capabilities`
+i `plan`); `apply` i weryfikacja po zapisie są w `WriteGate`, nie w adapterze (ARCHITECTURE 5).
+Eksport do narzędzia wymaga istniejącego katalogu głównego, a brakujące podkatalogi i pliki
+w nim są tworzone (ADR 0033).
 
 Zakres: `capabilities`, `plan`, `apply`, `verify` w obu adapterach. Mapowanie formatów, w tym
 agent do dwóch miejsc w Codeksie i komenda na skill (ADR 0021). `SegmentTomlEditor` z preflightem
@@ -349,11 +368,36 @@ Kryteria akceptacji:
    nigdy przepisanie. Plik z treścią zarządzaną bez markerów wymaga decyzji użytkownika.
    Trzy osobne testy, każdy na obu narzędziach.
 
-### Etap 5: Synchronizacja i bezpieczeństwo (granica MVP)
+Dowody (stan na 2026-11-05):
+
+| Kryterium | Test albo brak | Status |
+|---|---|---|
+| 1 | `tests/contract/export-contract.ts` (ponowne parsowanie YAML, niezależny parser TOML), uruchamiany dla obu adapterów przez `tests/contract/export.test.ts` | spełnione |
+| 2 | `tests/contract/export-contract.ts` (element nieobsługiwany w `refusals`, fixture MCP, zero wpisów) | spełnione |
+| 3 | `tests/contract/export-contract.ts`, `tests/unit/adapters-export-codex.test.ts` | spełnione |
+| 4 | `tests/unit/adapters-segment-toml.test.ts`, `tests/contract/export-contract.ts` (odmowa edycji) | spełnione |
+| 5 | Poprawność per system: `tests/integration/link-mode.test.ts`, `tests/integration/write-gate-link.test.ts`. Widoczność w interfejsie: brak testu | otwarte |
+| 6 | `tests/contract/export.test.ts` | spełnione |
+| 7 | `tests/contract/export-contract.ts` (blok istnieje, brak markerów, treść bez markerów), `tests/unit/adapters-marker-block.test.ts` | spełnione |
+
+### Etap 5: Synchronizacja i bezpieczeństwo (granica MVP) - OTWARTY
+
+Status: siedem z ośmiu kryteriów ma test, a ostatni przebieg CI na `main` (`41991403641`, commit `c37e40d`) jest
+zielony na czterech celach. Kryterium 7 to `tests/e2e/full-flow.spec.ts`, zielony na czterech
+celach w przebiegu `41895703009` dla commita `a6deea4` i w kolejnym. Otwarte jest kryterium 8:
+przyczyny systemowe Windowsa (naruszenie współdzielenia, ACL z zapisem bez odczytu) nie mają
+testu, a testy `chmod` są tylko dla POSIX. Do kryterium 2: błąd w połowie zapisu jest
+wstrzykiwany przez port `rename`, a nie realnym odebraniem uprawnień.
+
+Zakres zrealizowany: `SyncService` z siedmioma stanami elementu (`never`, `in-sync`,
+`library-changed`, `tool-changed`, `conflict`, `missing-in-tool`, `unsupported`) i rozstrzygnięciem
+`library-wins`, `tool-wins`, `skip`; `WriteGate`; widoki Synchronizacja i Historia; cofanie
+przez `history:rollback` i `export:apply`. Diff jest częścią planu eksportu (kanał `diff:compute`
+nie ma handlera). Polityka usuwania: ADR 0034.
 
 Zakres: `SyncPlanner`, wybór celów, plan operacji, diff przed zapisem, identyfikacja konfliktów,
 zatwierdzenie, `WriteGate` (ADR 0012), backup, obsługa błędów, weryfikacja po synchronizacji,
-cofanie. Polityka usuwania (po odpowiedzi właściciela, ARCHITECTURE sekcja 15.2, punkt 4).
+cofanie. Polityka usuwania (ADR 0034).
 
 Prymityw zapisu atomowego `src/infra/fs/atomic.ts` (plik tymczasowy z pidem, `rename` z ponowieniami
 na Windowsie, przepisanie trybu, sprzątanie, odczyt kontrolny, `fsync` katalogu) powstał już
@@ -385,6 +429,19 @@ Kryteria akceptacji:
    (naruszenie współdzielenia i ACL z zapisem bez czytania na Windowsie) w macierzy CI.
    Asercja negatywna: `apply` planu z wpisem `blocked` nie zapisuje ani jednego bajtu.
 
+Dowody (stan na 2026-11-05):
+
+| Kryterium | Test albo brak | Status |
+|---|---|---|
+| 1 | `tests/integration/write-gate.test.ts` (odmowy na starcie), `tests/unit/export-service.test.ts`, reguła lintu `FS_WRITE_ALLOWED` sprawdzana przez `npm run test:boundaries` w CI | spełnione |
+| 2 | `tests/integration/write-gate.test.ts` (atomowość i rollback; błąd wstrzyknięty przez port `rename`, nie realne uprawnienia), na czterech celach | spełnione |
+| 3 | `tests/integration/sync-flow.test.ts` (ponowny plan jest pusty i bez kopii) | spełnione |
+| 4 | `tests/integration/write-gate-delete.test.ts`, `tests/integration/sync-flow.test.ts`, `tests/contract/export-contract.ts` (sierota nie jest wpisem planu) | spełnione |
+| 5 | `tests/unit/security-export-diff.test.ts` (ładunek `export:plan`), `tests/integration/security-logger.test.ts`, `tests/unit/security-redactor.test.ts` | spełnione |
+| 6 | `tests/integration/write-gate.test.ts` (bezpiecznik ścieżek, obie kolumny; UNC i `\\?\` przez podstawiony `path.win32`), `tests/integration/security-write-gate.test.ts` | spełnione |
+| 7 | `tests/e2e/full-flow.spec.ts`: import, eksport, edycja, plan synchronizacji, zatwierdzenie, weryfikacja, cofnięcie, stan pliku co do bajta | spełnione |
+| 8 | POSIX: `tests/integration/security-write-gate.test.ts`, `tests/integration/write-gate.test.ts` (nieczytelny plik, katalog tylko do odczytu, cel niebędący plikiem, brak miejsca, `blocked` bez zapisu). Brak testów przyczyn systemowych Windowsa | otwarte |
+
 ### Etap 6: Porównywanie i scalanie (po MVP)
 
 Zakres: porównywanie wersji, strategie per format (Markdown, JSON, TOML), selektywne przyjmowanie
@@ -400,6 +457,9 @@ Kryteria akceptacji:
    zgłaszana jako zmiana treści.
 
 ### Etap 7: Historia i profile (po MVP)
+
+Widok historii i cofanie zapisów do narzędzi weszły do Etapu 5 (ADR 0019, 0034). Tu zostaje
+to, czego w nich nie ma: przywracanie wersji elementu biblioteki z interfejsu i profile.
 
 Zakres: widok historii, porównywanie wersji, przywracanie wybranej wersji, cofanie operacji
 z interfejsu, profile (General Development, Backend, Frontend, DevOps, Security, School Projects),
@@ -484,9 +544,29 @@ W kolejności według stosunku wartości do ryzyka, nie według atrakcyjności.
 | Reguły bezpieczeństwa i zakresów dla MCP | Warunek odblokowania synchronizacji MCP. Osobny ADR, osobny etap (ADR 0020) |
 | DPAPI na Windowsie | Warunek dla jakiejkolwiek funkcji przechowującej sekrety (ADR 0018) |
 | Limit rozmiaru i czyszczenie content store | Świadomie odroczone (ADR 0027). Dołożą politykę nad istniejącym store'em, nie zmienią modelu danych. Usuwanie wymaga liczenia referencji, nie wieku obiektu |
-| Konfiguracje projektowe, jeśli nie weszły do MVP | Zależy od odpowiedzi na pytanie 5 (ARCHITECTURE sekcja 15.2) |
+| Konfiguracje projektowe | Zaplanowane po MVP (ADR 0032). Wymagają wpisu w `CANDIDATES` i kanału wyboru katalogu, czyli nowego ADR |
 | Import z repozytorium Git jako źródła skilli | Wymagania o tym wspominają w kontekście bezpieczeństwa; funkcja wymaga pełnej ścieżki traktowania treści jako niezaufanej, która w MVP już istnieje |
 | Ikona aplikacji w finalnej formie | Zależy od odpowiedzi na pytanie 6 |
+
+### Znane ograniczenia
+
+Rzeczy, o których wiemy, że działają gorzej, niż by mogły, i które nie blokują MVP. Każda ma
+miejsce w kodzie albo ADR, w którym jest opisana.
+
+| Ograniczenie | Gdzie |
+|---|---|
+| Kandydat z kolizją `lower(slug)` jest przy imporcie pomijany jako `conflict`, a kreator nie pozwala zmienić sluga, żeby go mimo to przyjąć | `ImportService.apply`, ADR 0017 |
+| Pierwszeństwo dwóch rootów skilli Codeksa (`~/.codex/skills` jako główny) przyjęte bez dokumentacji Codeksa, na podstawie sondy | ADR 0024, `tests/integration/locations.test.ts` |
+| Dla plików współdzielonych (blok między markerami, segment TOML, klucz JSON) zmiana w narzędziu jest wykrywana tylko po istnieniu pliku, nie po jego treści | `SyncService.inspectFile` |
+| Dla dowiązania status nie widzi zmiany treści materializacji w `userData`, tylko samo dowiązanie | `SyncService.inspectLink`, ADR 0015 |
+| Po cofnięciu pierwszego eksportu materializacja zostaje w `userData/materialized/` | `src/infra/fs/link-mode.ts`, ADR 0034 |
+| Zmiana samej wartości sekretu jest niewidoczna w zredagowanym diffie, bo obie strony dają ten sam znacznik | `redactSecrets`, ARCHITECTURE 8.4 |
+| Reguła lintu zakazuje `child_process` w `core/`, `adapters/` i `renderer/`, ale nie w `main/`, `infra/` i `preload/` | `eslint.config.mjs`, ADR 0008 |
+| Slug jest tylko ASCII, więc nazwa z polskimi literami dostaje slug przybliżony, a oryginał trafia do aliasów | `validate.ts`, R7 |
+| Brak indeksu slugów: każdy zapis czyta wszystkie `item.json` | `LibraryService.existingSlugs`, Etap 2 |
+| Kopia reguły zawierania w `tests/harness/isolation.ts` blokuje za dużo | `tests/harness/isolation.ts`, ARCHITECTURE 12.5 |
+| Kanarek harnessu na `~/.claude.json` daje fałszywe alarmy, gdy Claude Code zapisuje ten plik w trakcie sesji | `tests/harness/isolation.ts` |
+| Wyszukiwanie w bibliotece nie używa FTS: to filtr podłańcucha po slugu, tytule, opisie i treści, liczony w main nad całą listą. Przy dużej bibliotece koszt rośnie liniowo | `toListDto` w `src/main/ipc/handlers/library.ts`, Etap 2 |
 
 ---
 
@@ -580,6 +660,9 @@ jedynym użytkownikiem jest asercja (ARCHITECTURE sekcja 12.6).
 pełnotekstowa biblioteki musi mieć test wykonujący zapytanie FTS **wewnątrz zapakowanej
 aplikacji**, nie w procesie testu. Jest to kryterium akceptacji Etapu 2, a nie zadanie "przy
 okazji". W tym momencie R2 domyka się w całości i wypada z listy ryzyk.
+
+Stan na 2026-11-05: nadal otwarte. Biblioteka nie ma tabeli pełnotekstowej (wyszukiwanie to
+filtr w main, sekcja 4), więc nie ma jeszcze zapytania FTS do udowodnienia w paczce.
 
 #### Awaria Windowsa z pierwszego przebiegu i jej ogólniejszy wniosek
 
@@ -795,20 +878,12 @@ nie ma kanału wyjścia.
 
 ## 7. Stan blokad
 
-Plan zaakceptowany 2026-10-20, Etap 1 wystartował. Cztery z ośmiu pytań z `ARCHITECTURE.md`
-sekcja 15 zostały rozstrzygnięte i mają własne ADR-y (0024 do 0027). W tym wszystkie trzy, które
-blokowały Etap 2, bo zmieniały model danych: polityka scalania instrukcji globalnych, tożsamość
-przy rozjechanej nazwie i retencja historii.
+Plan zaakceptowany 2026-10-20. Z ośmiu pytań z `ARCHITECTURE.md` sekcja 15 siedem jest
+rozstrzygniętych i ma własne ADR-y: 1 do 3 i 7 w ADR 0024 do 0027 (2026-10-20), 4, 5 i 8
+2026-11-03 w ADR 0034, 0032 i 0033.
 
-Cztery pozostają otwarte i żadne nie blokuje Etapu 1:
+Otwarte zostaje jedno pytanie:
 
 | Pytanie | Blokuje |
 |---|---|
-| 4. Polityka usuwania przy synchronizacji | Etap 5 |
-| 5. Zakres projektowy w MVP | Etap 3 |
-| 8. Tworzenie drzewa narzędzia od zera | Etap 4 |
 | 6. Ikona i nazwa produktu | Etap 10 (wydanie), nie prace wcześniejsze |
-
-Etapy 2 i 3 mogą ruszyć bez dalszych odpowiedzi, z zastrzeżeniem punktu 5: jeśli zakres projektowy
-ma wejść do MVP, trzeba to wiedzieć przed projektowaniem tabeli lokalizacji w Etapie 3,
-a nie po nim.

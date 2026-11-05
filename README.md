@@ -4,11 +4,39 @@ Aplikacja desktopowa do zarzadzania skillami, agentami, komendami, instrukcjami
 i regulami roznych narzedzi AI z jednego miejsca. Dane zostaja na komputerze
 uzytkownika, bez backendu i bez kont.
 
-**Stan: Etap 1 (szkielet).** Dziala okno, most IPC, indeks SQLite i pelny
-lancuch budowania na cztery cele. Nie ma jeszcze zadnej funkcji produktu:
-biblioteki, importu, eksportu ani synchronizacji. Plan etapow jest
-w `docs/ROADMAP.md`, architektura w `docs/ARCHITECTURE.md`, decyzje
-w `docs/adr/`.
+**Stan: Etapy 1 do 5 sa w kodzie, to nie jest jeszcze wydanie.** Plan etapow
+z otwartymi kryteriami jest w `docs/ROADMAP.md`, architektura w
+`docs/ARCHITECTURE.md`, decyzje w `docs/adr/`.
+
+## Co aplikacja robi dzis
+
+Uruchomienie z zrodel: `npm install`, potem `npm run dev` (szczegoly nizej).
+
+- **Biblioteka.** Tworzenie, edycja, wyszukiwanie i usuwanie elementow. Szukanie
+  to filtr po slugu, tytule, opisie i tresci, nie pelnotekstowy indeks. Usuniecie
+  ma plan i wymaga potwierdzenia.
+- **Import.** Z `~/.claude` i `~/.codex` (oraz wspolnego `~/.agents`): skille,
+  agenci, komendy, instrukcje globalne i hooki. Podglad z wykrywaniem duplikatow
+  i roznic, elementy z potencjalnym sekretem sa domyslnie odznaczone. Zrodlo nie
+  jest modyfikowane.
+- **Eksport.** Do Claude Code i Codeksa, z planem zapisu, podgladem diffu bez
+  sekretow, ostrzezeniami o utracie zgodnosci i potwierdzeniem. Przed zapisem
+  powstaje kopia w `backups/`, po zapisie plik jest czytany z powrotem.
+- **Synchronizacja i historia.** Stan kazdego elementu wzgledem kazdego narzedzia,
+  plan zmian, zapis i cofniecie zapisu z widoku Historia.
+- **Diagnostyka.** Raport srodowiska i stan indeksu.
+
+Zastrzezenia, ktore warto znac przed pierwszym uzyciem:
+
+- **Tylko konfiguracje globalne** (ADR 0032). `CLAUDE.md`, `AGENTS.md` i
+  `.mcp.json` lezace w repozytoriach projektow nie trafiaja do biblioteki.
+- Eksport dziala tylko do narzedzia, ktorego katalog glowny (`~/.claude`,
+  `~/.codex`) istnieje (ADR 0033).
+- Aplikacja nie usuwa plikow w narzedziach. Pliki, ktorych biblioteka juz nie
+  realizuje, sa tylko raportowane; usuniecie zdarza sie wylacznie przy cofaniu
+  zapisu aplikacji (ADR 0034).
+- Serwery MCP nie sa synchronizowane (ADR 0020).
+- Wydania sa niepodpisane (sekcja nizej).
 
 ## Wymagania
 
@@ -167,6 +195,12 @@ commit po `git add` jednego pliku, gdy w indeksie czekala praca kogos innego.
 Oba razy nic nie zginelo, ale historia zaczela klamac o tym, co sie stalo.
 `--only` commituje wylacznie wskazane sciezki, niezaleznie od stanu indeksu.
 
+**Praca idzie bezposrednio na `main`, bez galezi i pull requestow** (zgoda
+wlasciciela). Skoro nie ma przegladu przed scaleniem, dowodem jest przebieg CI
+po pushu. Etap uznajemy za zamkniety dopiero wtedy, gdy kazde kryterium
+akceptacji ma test, a ostatni przebieg na `main` jest zielony na czterech celach
+naraz (`docs/ROADMAP.md` sekcja 3).
+
 ### Jak dowodzimy, ze baza dziala w zapakowanej aplikacji
 
 Teza do udowodnienia brzmi: `better-sqlite3` laduje sie z `app.asar.unpacked`
@@ -188,8 +222,8 @@ to, zeby test mial co sprawdzic - to ten sam wzorzec co furtka istniejaca
 tylko dla testu, tylko schowany w schemacie bazy. FTS5, na ktorym opiera sie
 ADR 0007, jest na razie dowodzony dwuczesciowo: binding dostarczony w paczce
 jest bajt w bajt tym samym plikiem, ktory laduje proces testu, a w tym procesie
-FTS5 dziala. Bezposredni dowod domknie sie w Etapie 2 razem z pierwsza
-prawdziwa tabela pelnotekstowa.
+FTS5 dziala. Bezposredni dowod nadal czeka na pierwsza prawdziwa tabele
+pelnotekstowa: biblioteka jej jeszcze nie ma (`docs/ROADMAP.md`, Etap 2).
 
 Dwa testy, ktore wczesniej szly ta droga (`tests/e2e/packaged-app.spec.ts`),
 **zostaly usuniete**. Nie oznaczone jako pomijane, bo pomijany test udaje, ze
