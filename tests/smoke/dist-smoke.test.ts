@@ -45,7 +45,7 @@ function ledger(dbPath: string): number[] | null {
 
 async function startOnce(userData: string): Promise<{ versions: number[]; exitedEarly: boolean }> {
   // Jak w tests/e2e/launch.ts: NODE_OPTIONS i ELECTRON_RUN_AS_NODE z procesu testu nie wchodza.
-  const env = { ...process.env, ELECTRON_ENABLE_LOGGING: '1' };
+  const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_ENABLE_LOGGING: '1' };
   delete env['NODE_OPTIONS'];
   delete env['ELECTRON_RUN_AS_NODE'];
   const child = spawn(executable as string, [`--user-data-dir=${userData}`], {
