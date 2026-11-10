@@ -35,11 +35,13 @@ buildDependenciesFromSource: false
 
 mac:
   category: public.app-category.developer-tools
+  # Architektura przychodzi z wiersza polecen (`--arm64`, `--x64`), nie z tej listy. Lista
+  # architektur w pliku wygrywala z flaga, wiec kazdy z dwoch runnerow macOS w release.yml
+  # budowal oba DMG o tych samych nazwach, a scalone SHA256SUMS mialo po dwie rozne sumy dla
+  # jednego pliku. Bez flagi buduje sie architektura maszyny.
   target:
-    - target: dmg
-      arch: [arm64, x64]
-    - target: zip
-      arch: [arm64, x64]
+    - dmg
+    - zip
   # Brak podpisu i brak notaryzacji: ADR 0003. Gatekeeper bedzie ostrzegal,
   # instrukcja obejscia jest w README.
   identity: null
