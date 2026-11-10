@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import Database from 'better-sqlite3';
@@ -72,7 +72,9 @@ async function startOnce(userData: string): Promise<{ versions: number[]; exited
       `paczka nie zalozyla schematu w ${READY_TIMEOUT_MS} ms (rejestr: ${JSON.stringify(versions)}, proces zakonczony: ${exitedEarly})\n${output}`,
     );
   } finally {
+    const gone = new Promise((r) => child.once('exit', r));
     child.kill('SIGKILL');
+    if (!exitedEarly) await gone;
   }
 }
 
@@ -89,5 +91,9 @@ describe('paczka dystrybucyjna po instalacji (Etap 9 kryterium 6)', () => {
 
     const second = await startOnce(userData);
     expect(second.versions).toEqual(EXPECTED);
+
+    // Procesy pomocnicze Chromium koncza sie chwile po glownym i jeszcze pisza do userData
+    // (ENOTEMPTY przy sprzataniu na Linuksie), wiec katalog znika z ponowieniami.
+    rmSync(userData, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   });
 });
