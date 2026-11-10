@@ -1,10 +1,15 @@
-import { chmodSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { isAtomicTempName } from '../../src/core/model/library-file-names';
-import { AtomicWriteError, writeFileAtomic } from '../../src/infra/fs/atomic';
+import {
+  AtomicWriteError,
+  STALE_TEMP_AGE_MS,
+  removeStaleTemps,
+  writeFileAtomic,
+} from '../../src/infra/fs/atomic';
 import { createTempTree, removeTempTrees } from '../harness/isolation';
 
 afterAll(() => {
@@ -237,5 +242,60 @@ describe('ponowienia rename na Windowsie', () => {
 
     await expect(failure).rejects.toMatchObject({ reason: 'no-space' });
     expect(calls).toBe(1);
+  });
+});
+
+/**
+ * Osierocone pliki tymczasowe po zabitym procesie (test przerwanej synchronizacji, Etap 9).
+ * Kolumna negatywna: usuwa tylko wlasny format dla tego samego celu, gdy wlasciciel nie zyje
+ * albo plik jest stary. Kolumna pozytywna: wszystko inne zostaje, takze swiezy zapis obok.
+ */
+describe('sprzatanie osieroconych plikow tymczasowych', () => {
+  const DEAD_PID = 999_999_999;
+
+  function tree(): { dir: string; target: string } {
+    const dir = createTempTree('acme-stale-');
+    return { dir, target: join(dir, 'SKILL.md') };
+  }
+
+  it('usuwa plik tymczasowy procesu, ktory nie zyje, i przepuszcza zapis', async () => {
+    const { dir, target } = tree();
+    const orphan = `.SKILL.md.${DEAD_PID}.0a1b2c3d4e5f.tmp`;
+    writeFileSync(join(dir, orphan), 'tresc z przerwanego zapisu');
+    expect(isAtomicTempName(orphan)).toBe(true);
+
+    expect(await removeStaleTemps(target, Date.now())).toEqual([orphan]);
+    await writeFileAtomic(target, text('nowa'));
+    expect(readdirSync(dir)).toEqual(['SKILL.md']);
+  });
+
+  it('usuwa stary plik tymczasowy nawet przy zywym pidzie', async () => {
+    const { dir, target } = tree();
+    const own = `.SKILL.md.${process.pid}.0a1b2c3d4e5f.tmp`;
+    writeFileSync(join(dir, own), 'x');
+    expect(await removeStaleTemps(target, Date.now() + STALE_TEMP_AGE_MS + 1000)).toEqual([own]);
+  });
+
+  it('zostawia swiezy plik zywego procesu, inny cel, cudze nazwy i katalog', async () => {
+    const { dir, target } = tree();
+    const keep = [
+      `.SKILL.md.${process.pid}.0a1b2c3d4e5f.tmp`,
+      `.notes.md.${DEAD_PID}.0a1b2c3d4e5f.tmp`,
+      'SKILL.md.tmp',
+      'notes.tmp',
+      `.SKILL.md.${DEAD_PID}.zzzz.tmp`,
+      `.SKILL.md.abc.0a1b2c3d4e5f.tmp`,
+    ];
+    for (const name of keep) writeFileSync(join(dir, name), 'x');
+    mkdirSync(join(dir, `.SKILL.md.${DEAD_PID}.ffffffffffff.tmp`));
+
+    expect(await removeStaleTemps(target, Date.now(), () => true)).toEqual([]);
+    expect(await removeStaleTemps(target, Date.now())).toEqual([]);
+    expect(readdirSync(dir).length).toBe(keep.length + 1);
+  });
+
+  it('brak katalogu celu to brak pracy, nie blad', async () => {
+    const { dir } = tree();
+    expect(await removeStaleTemps(join(dir, 'nie-ma', 'SKILL.md'), Date.now())).toEqual([]);
   });
 });

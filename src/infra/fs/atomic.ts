@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import type { CodedStoreError, StoreFailureCode } from '../../core/ports/store-failure';
@@ -158,6 +158,59 @@ export async function syncDirectory(dir: string, platform: NodeJS.Platform): Pro
 export function atomicTempPath(target: string): string {
   const stem = [...basename(target)].slice(0, 40).join('');
   return join(dirname(target), `.${stem}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`);
+}
+
+/** Plik tymczasowy starszy niz to na pewno nie nalezy do trwajacego zapisu (jak w object-store.ts). */
+export const STALE_TEMP_AGE_MS = 10 * 60 * 1000;
+
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    // EPERM: proces istnieje, tylko nalezy do innego uzytkownika.
+    return errnoCode(error) === 'EPERM';
+  }
+}
+
+/**
+ * Usuwa pliki tymczasowe `writeFileAtomic` dla tego samego `target`, osierocone przez proces,
+ * ktory zginal miedzy zapisem a `rename` (test przerwanej synchronizacji, Etap 9). Rusza tylko
+ * nazwy w dokladnie tym formacie i tylko gdy proces-wlasciciel nie zyje albo plik jest stary,
+ * wiec zapis trwajacy obok zostaje nietkniety. Zwraca nazwy usunietych plikow.
+ */
+export async function removeStaleTemps(
+  target: string,
+  now: number,
+  alive: (pid: number) => boolean = pidAlive,
+): Promise<string[]> {
+  const dir = dirname(target);
+  const prefix = `.${[...basename(target)].slice(0, 40).join('')}.`;
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return [];
+  }
+  const removed: string[] = [];
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue;
+    const match = /^(\d+)\.[0-9a-f]{12}\.tmp$/.exec(name.slice(prefix.length));
+    if (match === null) continue;
+    const pid = Number(match[1]);
+    const info = await lstat(join(dir, name)).catch(() => null);
+    if (info === null || !info.isFile()) continue;
+    const old = now - info.mtimeMs > STALE_TEMP_AGE_MS;
+    const orphan = pid !== process.pid && !alive(pid);
+    if (!old && !orphan) continue;
+    try {
+      await rm(join(dir, name), { force: true });
+      removed.push(name);
+    } catch {
+      // Nieusuniety smiec nie blokuje zapisu, ktory ma sie odbyc obok niego.
+    }
+  }
+  return removed;
 }
 
 /**

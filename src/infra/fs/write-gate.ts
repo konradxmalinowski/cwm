@@ -27,7 +27,13 @@ import {
   type BackupItem,
 } from '../store/backup';
 
-import { AtomicWriteError, errnoCode, writeFileAtomic, type AtomicOps } from './atomic';
+import {
+  AtomicWriteError,
+  errnoCode,
+  removeStaleTemps,
+  writeFileAtomic,
+  type AtomicOps,
+} from './atomic';
 import { readBounded, readChecked } from './bounded-read';
 import {
   chooseMaterialization,
@@ -1061,6 +1067,7 @@ export class FsWriteGate implements WriteGate {
   private async writeOp(op: FileOp, journal: JournalItem[]): Promise<void> {
     await this.mkdirTracked(path.dirname(op.abs), journal);
     journal.push(this.restoreOf(op.abs, op.before));
+    await removeStaleTemps(op.abs, this.clock.now().getTime());
     await writeFileAtomic(op.abs, op.final, {
       ...(op.before.kind === 'file' ? { mode: op.before.mode } : {}),
       ...(this.deps.atomicOps === undefined ? {} : { ops: this.deps.atomicOps }),
@@ -1158,6 +1165,7 @@ export class FsWriteGate implements WriteGate {
       const target = path.join(link.abs, ...file.relPath.split('/'));
       await this.mkdirTracked(path.dirname(target), journal);
       journal.push({ t: 'remove', abs: target });
+      await removeStaleTemps(target, this.clock.now().getTime());
       await writeFileAtomic(target, file.bytes, atomic);
       await this.verifyFile(target, file.bytes);
     }

@@ -3,12 +3,13 @@ import { join } from 'node:path';
 
 import { createClaudeCodeAdapter } from '../../src/adapters/claude-code';
 import { createCodexAdapter } from '../../src/adapters/codex';
-import { systemClock } from '../../src/core/ports/clock';
+import { systemClock, type Clock } from '../../src/core/ports/clock';
 import { ExportService } from '../../src/core/services/export/export-service';
 import { HistoryService } from '../../src/core/services/history/history-service';
 import { SyncRecorder } from '../../src/core/services/sync/sync-recorder';
 import { SyncService } from '../../src/core/services/sync/sync-service';
 import { SqliteIndexStore } from '../../src/infra/db/index-store';
+import type { AtomicOps } from '../../src/infra/fs/atomic';
 import { FsWriteGate } from '../../src/infra/fs/write-gate';
 import { FsLocationCatalog } from '../../src/infra/platform/locations';
 import { FsSourceReader } from '../../src/infra/source/fs-source-reader';
@@ -22,8 +23,18 @@ import { createHarness } from '../unit/library-fakes';
 import { ALL_LINKS, NO_LINKS } from './write-gate-fixture';
 
 /** Pelny stos synchronizacji na katalogu tymczasowym: prawdziwe pliki, SQLite i brama zapisu. */
-export function makeSyncStack(options: { links?: boolean } = {}) {
-  const tree = createTempTree('acme-sync-');
+export interface SyncStackOptions {
+  readonly links?: boolean;
+  /** Szew na prymityw zapisu: wymuszenie awarii albo zawieszenia w polowie `apply`. */
+  readonly atomicOps?: Partial<AtomicOps>;
+  /** Zegar bramki zapisu, np. przesuniety, zeby plik tymczasowy przerwanego zapisu byl stary. */
+  readonly gateClock?: Clock;
+  /** Ponowny start na tym samym drzewie i tej samej bibliotece (po przerwanym przebiegu). */
+  readonly reuse?: { readonly tree: string; readonly lib: ReturnType<typeof createHarness> };
+}
+
+export function makeSyncStack(options: SyncStackOptions = {}) {
+  const tree = options.reuse?.tree ?? createTempTree('acme-sync-');
   const home = join(tree, 'home');
   const userData = join(tree, 'userData');
   mkdirSync(join(home, '.claude', 'skills'), { recursive: true });
@@ -37,7 +48,7 @@ export function makeSyncStack(options: { links?: boolean } = {}) {
   const reader = new FsSourceReader(resolve);
   const capability = options.links === true ? ALL_LINKS : NO_LINKS;
   const linkMode = { capability: () => Promise.resolve(capability) };
-  const lib = createHarness();
+  const lib = options.reuse?.lib ?? createHarness();
   const index = SqliteIndexStore.open(join(userData, 'index.db'), { home: tree });
   const state = index.syncState();
   const oplog = index.operationLog();
@@ -47,6 +58,8 @@ export function makeSyncStack(options: { links?: boolean } = {}) {
     objects: new FsObjectStore(join(userData, 'objects')),
     linkMode,
     operationLog: oplog,
+    ...(options.atomicOps === undefined ? {} : { atomicOps: options.atomicOps }),
+    ...(options.gateClock === undefined ? {} : { clock: options.gateClock }),
   });
   const adapters = [createClaudeCodeAdapter(), createCodexAdapter()];
   const exporters = createExporters(adapters);
