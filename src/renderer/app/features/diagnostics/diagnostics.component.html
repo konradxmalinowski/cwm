@@ -64,6 +64,11 @@
               </ul>
             </div>
           }
+          @if (v.kind === 'normal') {
+            <p class="notice__text" data-testid="diagnostics-nothing">
+              Przy tym starcie indeks nie wymagał naprawy ani odbudowy. Nie ma nic do zgłoszenia.
+            </p>
+          }
           <dl class="report__grid">
             <dt>Wynik</dt>
             <dd>

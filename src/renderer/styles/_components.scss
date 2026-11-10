@@ -268,7 +268,9 @@ kbd {
 // ---- Okno dialogowe (natywne <dialog>: pulapka fokusu i Escape za darmo) ----
 .dialog {
   width: min(560px, calc(100vw - 2 * var(--s4)));
-  max-height: calc(100vh - 2 * var(--s5));
+  // Okno zaczyna sie 12vh od gory, wiec limit wysokosci odejmuje ten margines i dolny odstep;
+  // inaczej przy oknie 700 px dolna krawedz dialogu wypada poza ekran.
+  max-height: calc(100vh - 12vh - var(--s5));
   margin: 12vh auto auto calc(var(--toc-width) + var(--s5));
   padding: 0;
   overflow: auto;
