@@ -83,18 +83,12 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-x64
-            dist_args: --linux --x64
           - os: macos-15
             target: macos-arm64
-            dist_args: --mac --arm64
-            mac_arch: arm64
           - os: macos-15-intel
             target: macos-x64
-            dist_args: --mac --x64
-            mac_arch: x86_64
           - os: windows-latest
             target: windows-x64
-            dist_args: --win --x64
     steps:
       - uses: actions/checkout@v7
 
@@ -176,10 +170,56 @@ jobs:
         timeout-minutes: 15
         run: npm run test:e2e
 
-      # Etap 9 kryterium 6: build produkcyjny, ten sam co w release.yml (bez tagu i bez
-      # publikacji), zainstalowany tak, jak zrobi to uzytkownik, i uruchomiony testem dymnym
-      # (tests/smoke/dist-smoke.test.ts). Paczka probna `--dir` wyzej tego nie dowodzi: nie
-      # przechodzi przez DMG, instalator NSIS ani pakiet deb.
+      - name: Raport E2E przy porazce
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-${{ matrix.target }}
+          path: playwright-report
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Etap 9 kryterium 6: build produkcyjny, ten sam co w release.yml (bez tagu i bez publikacji),
+  # zainstalowany tak, jak zrobi to uzytkownik, i uruchomiony testem dymnym
+  # (tests/smoke/dist-smoke.test.ts). Osobny job, a nie kroki po E2E: czerwony test E2E nie moze
+  # zaslonic dowodu, ze paczka startuje. Paczka probna `--dir` tego nie dowodzi, bo nie
+  # przechodzi przez DMG, instalator NSIS ani pakiet deb.
+  dist:
+    name: paczka ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            dist_args: --linux --x64
+          - os: macos-15
+            target: macos-arm64
+            dist_args: --mac --arm64
+            mac_arch: arm64
+          - os: macos-15-intel
+            target: macos-x64
+            dist_args: --mac --x64
+            mac_arch: x86_64
+          - os: windows-latest
+            target: windows-x64
+            dist_args: --win --x64
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Instalacja zaleznosci
+        run: npm ci
+
+      - name: Build aplikacji
+        run: npm run build
+
       - name: Paczka dystrybucyjna
         timeout-minutes: 10
         run: npx electron-builder ${{ matrix.dist_args }} --publish never
@@ -263,12 +303,3 @@ jobs:
           (cd "$RUNNER_TEMP" && "$app" --appimage-extract >/dev/null)
           UASM_DIST_EXECUTABLE="$RUNNER_TEMP/squashfs-root/universal-ai-skills-manager" \
             xvfb-run --auto-servernum npx vitest run -c vitest.dist.config.ts
-
-      - name: Raport E2E przy porazce
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-report-${{ matrix.target }}
-          path: playwright-report
-          retention-days: 7
-          if-no-files-found: ignore
