@@ -18,6 +18,20 @@ import tseslint from 'typescript-eslint';
 
 const FS_MODULES = ['fs', 'node:fs', 'fs/promises', 'node:fs/promises'];
 const PROCESS_MODULES = ['child_process', 'node:child_process'];
+/**
+ * Wykonanie kodu poza procesami (ARCHITECTURE 12.4 "zakaz wykonania", ADR 0008): core/ i adapters/
+ * dotykaja niezaufanej tresci z importu, wiec nie maja ani procesow, ani watkow, ani `vm`.
+ */
+const EXEC_MODULES = [
+  ...PROCESS_MODULES,
+  'worker_threads',
+  'node:worker_threads',
+  'vm',
+  'node:vm',
+  'cluster',
+  'node:cluster',
+];
+const EXEC_PATTERN = '^(node:)?(child_process|worker_threads|vm|cluster)$';
 
 /**
  * Funkcje zapisujace i zmieniajace system plikow (ADR 0012, ROADMAP Etap 5 kryterium 1).
@@ -108,6 +122,28 @@ const FS_MODULE_NAMES = ['fs', 'node:fs', 'fs/promises', 'node:fs/promises'];
 const FS_WRITE_MESSAGE =
   'Zapis do systemu plikow tylko przez WriteGate albo z dozwolonej listy (ADR 0012, eslint.config.mjs).';
 
+/** `require` i `import()` omijaja `no-restricted-imports`, wiec maja osobne selektory. */
+const FS_DYNAMIC_LOADS = [
+  {
+    selector: `CallExpression[callee.name='require'][arguments.0.value=/^(node:)?fs(\\/promises)?$/]`,
+    message: FS_WRITE_MESSAGE,
+  },
+  {
+    selector: `ImportExpression[source.value=/^(node:)?fs(\\/promises)?$/]`,
+    message: FS_WRITE_MESSAGE,
+  },
+];
+
+const EXEC_MESSAGE =
+  'core/ i adapters/ niczego nie wykonuja: importowana tresc jest niezaufana (ARCHITECTURE 12.4, ADR 0008).';
+const EXEC_DYNAMIC_LOADS = [
+  {
+    selector: `CallExpression[callee.name='require'][arguments.0.value=/${EXEC_PATTERN}/]`,
+    message: EXEC_MESSAGE,
+  },
+  { selector: `ImportExpression[source.value=/${EXEC_PATTERN}/]`, message: EXEC_MESSAGE },
+];
+
 export default tseslint.config(
   {
     ignores: [
@@ -187,17 +223,7 @@ export default tseslint.config(
           })),
         },
       ],
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: `CallExpression[callee.name='require'][arguments.0.value=/^(node:)?fs(\\/promises)?$/]`,
-          message: FS_WRITE_MESSAGE,
-        },
-        {
-          selector: `ImportExpression[source.value=/^(node:)?fs(\\/promises)?$/]`,
-          message: FS_WRITE_MESSAGE,
-        },
-      ],
+      'no-restricted-syntax': ['error', ...FS_DYNAMIC_LOADS],
     },
   },
 
@@ -217,9 +243,9 @@ export default tseslint.config(
               name,
               message: 'core/ nie dotyka systemu plikow - uzyj portu FileGateway.',
             })),
-            ...PROCESS_MODULES.map((name) => ({
+            ...EXEC_MODULES.map((name) => ({
               name,
-              message: 'core/ nie uruchamia procesow (ADR 0008).',
+              message: 'core/ nie uruchamia procesow ani kodu (ADR 0008, ARCHITECTURE 12.4).',
             })),
           ],
           patterns: [
@@ -243,13 +269,34 @@ export default tseslint.config(
               name,
               message: 'adapters/ nie dotyka systemu plikow bezposrednio - uzyj WriteGate.',
             })),
-            ...PROCESS_MODULES.map((name) => ({
+            ...EXEC_MODULES.map((name) => ({
               name,
               message:
-                'adapters/ nie uruchamia procesow: importowana tresc jest niezaufana (ADR 0008).',
+                'adapters/ nie uruchamia procesow ani kodu: importowana tresc jest niezaufana (ADR 0008).',
             })),
           ],
           patterns: [{ group: ['electron/*'], message: 'adapters/ nie zna Electrona.' }],
+        },
+      ],
+    },
+  },
+
+  // Zakaz wykonania takze przez `require` i `import()`. Blok powtarza selektory fs, bo
+  // `no-restricted-syntax` z pozniejszego bloku zastepuje wczesniejszy, a nie dokleja sie do niego.
+  {
+    files: ['src/core/**/*.ts', 'src/adapters/**/*.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...FS_DYNAMIC_LOADS,
+        ...EXEC_DYNAMIC_LOADS,
+        {
+          selector: "NewExpression[callee.name='Function']",
+          message: EXEC_MESSAGE,
+        },
+        {
+          selector: "CallExpression[callee.name='Function']",
+          message: EXEC_MESSAGE,
         },
       ],
     },

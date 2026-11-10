@@ -41,6 +41,25 @@ describe('harness odmawia startu na konfiguracji wlasciciela', () => {
     expect(() => assertTestBaseIsSafe(FAKE_HOME, FAKE_HOME)).toThrow(/katalogiem domowym/);
   });
 
+  // Kolumna pozytywna z ARCHITECTURE 12.5: nazwy mylaco podobne do zywej konfiguracji
+  // i katalog tymczasowy systemu nie sa konfiguracja wlasciciela.
+  for (const lookalike of [
+    '.claude-backup',
+    '.claude.old/skills',
+    '.codex2',
+    '.agents-acme',
+    'acme/.claude-like',
+    'projects/acme/.codex-fixtures',
+  ]) {
+    it(`przepuszcza katalog o mylaco podobnej nazwie: ~/${lookalike}`, () => {
+      expect(() => assertTestBaseIsSafe(join(FAKE_HOME, lookalike), FAKE_HOME)).not.toThrow();
+    });
+  }
+
+  it('przepuszcza katalog tymczasowy systemu', () => {
+    expect(() => assertTestBaseIsSafe(join(tmpdir(), 'acme-harness'), FAKE_HOME)).not.toThrow();
+  });
+
   it('przepuszcza katalog poza konfiguracja wlasciciela', () => {
     expect(() =>
       assertTestBaseIsSafe(join(FAKE_HOME, 'projects', 'tests'), FAKE_HOME),

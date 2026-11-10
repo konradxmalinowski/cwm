@@ -147,6 +147,23 @@ describe('WriteGate.probe', () => {
     expect(probed.entries[0]?.recoverability?.reason).toContain('miejsca');
   });
 
+  // Kolumna pozytywna tego samego bezpiecznika (ARCHITECTURE 12.5): miejsce jest i jest go
+  // dosc, albo systemu nie da sie zapytac o wolne miejsce. W obu przypadkach zapis przechodzi.
+  for (const [label, free] of [
+    ['1 MiB wolnego miejsca', 1024 * 1024],
+    ['wolne miejsce nieznane (null)', null],
+  ] as const) {
+    it(`${label} nie blokuje wpisu`, async () => {
+      const f = makeFixture({ freeBytes: () => Promise.resolve(free) });
+      writeFileSync(join(f.skillsRoot, 'a.md'), 'dluzsza tresc');
+      const probed = await f.gate.probe(
+        makePlan([entry({ relPath: 'a.md', action: 'modify', previous: text('dluzsza tresc') })]),
+      );
+      expect(probed.entries[0]?.recoverability?.status).toBe('recoverable');
+      expect(probed.applicable).toBe(true);
+    });
+  }
+
   it('dwa wpisy na ten sam plik: drugi jest blokowany', async () => {
     const f = makeFixture();
     const probed = await f.gate.probe(makePlan([entry(), entry({ relPath: 'ACME/skill.md' })]));

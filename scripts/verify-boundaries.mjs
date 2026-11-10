@@ -55,6 +55,49 @@ const cases = [
     code: "import { spawnSync } from 'node:child_process';\n\nexport const probe = spawnSync;\n",
     expect: 'no-restricted-imports',
   },
+  // Zakaz wykonania (ARCHITECTURE 12.4): kazda droga zaladowania modulu procesow albo `vm`.
+  {
+    label: 'core/ importuje node:child_process',
+    file: `src/core/services/${PROBE}`,
+    code: "import { execFile } from 'node:child_process';\n\nexport const probe = execFile;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'adapters/ laduje child_process przez require',
+    file: `src/adapters/shared/${PROBE}`,
+    code: "export const probe: unknown = require('child_process');\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'core/ laduje node:child_process dynamicznym importem',
+    file: `src/core/${PROBE}`,
+    code: "export const probe = import('node:child_process');\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'adapters/ importuje node:vm',
+    file: `src/adapters/codex/${PROBE}`,
+    code: "import { runInNewContext } from 'node:vm';\n\nexport const probe = runInNewContext;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'adapters/ importuje worker_threads',
+    file: `src/adapters/${PROBE}`,
+    code: "import { Worker } from 'worker_threads';\n\nexport const probe = Worker;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'adapters/ buduje funkcje z tekstu (new Function)',
+    file: `src/adapters/${PROBE}`,
+    code: "export const probe = new Function('return 1');\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'adapters/ laduje fs przez require (selektor fs nie zginal po bloku wykonania)',
+    file: `src/adapters/${PROBE}`,
+    code: "export const probe: unknown = require('node:fs');\n",
+    expect: 'no-restricted-syntax',
+  },
   {
     label: 'renderer importuje z main/',
     file: `src/renderer/${PROBE}`,
@@ -140,6 +183,16 @@ const passCases = [
     label: 'dozwolone: infra/db/ zapisuje',
     file: `src/infra/db/${PROBE}`,
     code: "import { renameSync } from 'node:fs';\n\nexport const probe = renameSync;\n",
+  },
+  {
+    label: 'dozwolone: infra/ moze uruchamiac procesy (granica dotyczy core/ i adapters/)',
+    file: `src/infra/platform/${PROBE}`,
+    code: "import { execFile } from 'node:child_process';\n\nexport const probe = execFile;\n",
+  },
+  {
+    label: 'dozwolone: adapters/ uzywa slowa Function w nazwie typu i tekscie',
+    file: `src/adapters/${PROBE}`,
+    code: "export type FunctionLike = () => void;\nexport const probe = 'new Function';\n",
   },
   {
     label: 'odczyt z main/ nie jest zapisem (readFile, stat)',
