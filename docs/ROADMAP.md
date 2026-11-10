@@ -475,10 +475,24 @@ Kryteria akceptacji:
 5. Przywrócenie dowolnej wersji z całej historii działa bez rekonstrukcji z łańcucha różnic
    (ADR 0027), a rozmiar content store jest widoczny w Settings.
 
-### Etap 8: Dopracowanie UI i UX
+### Etap 8: Dopracowanie UI i UX - ZAMKNIĘTY
 
-Zakres: przegląd wszystkich przepływów, usunięcie niedziałających kontrolek i placeholderów,
-stany puste i błędy, responsywność na mniejszych ekranach, dostępność, spójność wizualna.
+Status: wszystkie pięć kryteriów ma test E2E, a przebieg CI na `main` (`42889995454`) jest zielony
+na czterech celach. Rzeczy, których te testy nie dowodzą: audyt jest automatyczny (axe-core plus
+własny odczyt kontrastu), bez przejścia czytnikiem ekranu (VoiceOver, Narrator, Orca), a jasny
+motyw jest przełączany atrybutem `data-theme`, nie klikaniem w przełącznik. Dla Diagnostyki
+„stan pusty” oznacza start bez zdarzeń do zgłoszenia (widok nie ma kolekcji, którą dałoby się
+opróżnić); to interpretacja do potwierdzenia przez właściciela produktu.
+
+Zakres zrealizowany: rejestr scen `tests/e2e/scenes.ts` (jedno miejsce, które wie, jak dojść do
+każdego stanu widoku i dialogu), z którego korzystają testy stanów, audytu i inwentaryzacji.
+Ładowanie i błąd powstają przez podmianę handlera IPC w procesie głównym w pomocniku
+`tests/e2e/ui-helpers.ts`, bez żadnej gałęzi w kodzie aplikacji. Poprawki w aplikacji: tekst
+drugorzędny na powierzchni nadpisania (`text-muted` na `cobalt-600`, 3,95:1) dostaje `cobalt-100`;
+opis w tabeli biblioteki łamie się do dwóch wierszy z pełną wartością w `title`; fokus wraca na
+element otwierający po zamknięciu okna dialogowego (bez wyścigu z odświeżeniem widoku); import nie
+zaznacza domyślnie elementów zmienionych (napis w grupie mówił, że są pominięte); okno dialogowe
+mieści się przy wysokości 700 px; Diagnostyka ma jawne zdanie dla startu bez zdarzeń.
 
 Kryteria akceptacji:
 1. Każda widoczna kontrolka coś robi. Lista kontrolek bez działania jest pusta, a nie krótka.
@@ -489,6 +503,14 @@ Kryteria akceptacji:
 4. Audyt dostępności przechodzi bez błędów krytycznych, kontrast spełnia WCAG AA w obu motywach.
 5. Interfejs działa na szerokości okna od 1024 px bez poziomego przewijania i bez przycinania
    treści.
+
+| Kryterium | Test | Status |
+|---|---|---|
+| 1. Każda kontrolka coś robi | `tests/e2e/controls-inventory.spec.ts`: mechaniczna inwentaryzacja na każdej scenie przez CDP (`DOMDebugger.getEventListeners`), lista martwych kontrolek pusta, żadna kontrolka nie jest zawsze zablokowana | spełnione |
+| 2. Pięć stanów na widok | `tests/e2e/view-states.spec.ts`: rejestr pokrywa 6 widoków x 5 stanów (test statyczny), każda scena ma asercje o treści | spełnione, Diagnostyka „pusty” wg interpretacji wyżej |
+| 3. Klawiatura w krytycznych przepływach | `tests/e2e/keyboard-flows.spec.ts`: import, synchronizacja, diff, cofanie i okno usuwania wyłącznie przez `keyboard.press`, asercje na `document.activeElement`, pierścień fokusu, kolejność w dokumencie, pułapka w oknie, Escape i powrót fokusu | spełnione |
+| 4. Audyt dostępności i kontrast | `tests/e2e/a11y-fit.spec.ts`: axe-core na każdej scenie w obu motywach, pada na critical i serious, `AXE_EXCEPTIONS` puste; elementy nierozstrzygnięte przez axe liczy własny odczyt kontrastu | spełnione, bez przejścia czytnikiem ekranu |
+| 5. Okno od 1024 px | `tests/e2e/a11y-fit.spec.ts`: okno 1024 x 700 na każdej scenie, brak przewijania poziomego strony i elementów, brak przyciętego tekstu bez pełnej wartości w `title`, dialog mieści się w oknie | spełnione; gdy system nie da oknu tego rozmiaru (mały ekran CI), widok dostaje go przez CDP |
 
 ### Etap 9: Testy i bezpieczeństwo
 
