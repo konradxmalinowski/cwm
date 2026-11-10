@@ -512,7 +512,10 @@ Kryteria akceptacji:
 | 4. Audyt dostępności i kontrast | `tests/e2e/a11y-fit.spec.ts`: axe-core na każdej scenie w obu motywach, pada na critical i serious, `AXE_EXCEPTIONS` puste; elementy nierozstrzygnięte przez axe liczy własny odczyt kontrastu | spełnione, bez przejścia czytnikiem ekranu |
 | 5. Okno od 1024 px | `tests/e2e/a11y-fit.spec.ts`: okno 1024 x 700 na każdej scenie, brak przewijania poziomego strony i elementów, brak przyciętego tekstu bez pełnej wartości w `title`, dialog mieści się w oknie | spełnione; gdy system nie da oknu tego rozmiaru (mały ekran CI), widok dostaje go przez CDP |
 
-### Etap 9: Testy i bezpieczeństwo
+### Etap 9: Testy i bezpieczeństwo - ZAMKNIĘTY
+
+Status: siedem z siedmiu kryteriów ma test, a przebieg CI `42889995454` (commit `7f62d5d`) jest
+zielony na czterech celach, razem z jobami paczki dystrybucyjnej.
 
 Zakres: domknięcie pokrycia, pełny korpus fixture'ów, scenariusze błędów, build produkcyjny.
 
@@ -530,6 +533,24 @@ Kryteria akceptacji:
 6. Build produkcyjny powstaje dla wszystkich trzech platform i uruchamia się na każdej z nich.
 7. Testy round-trip property-based przechodzą, a wszystkie udokumentowane wyjątki (`partial`,
    `lossy`) są jawne i uzasadnione w kodzie testu.
+
+Dowody (stan na 2026-11-10):
+
+| Kryterium | Test albo brak | Status |
+|---|---|---|
+| 1 | Library: `tests/unit/library-*.test.ts`, `tests/integration/library-*.test.ts`; Normalization: `line-endings.test.ts`, kontrakt eksportu, `tests/property/round-trip.test.ts`; Tool adapters: `tests/contract/adapters.test.ts`, `export.test.ts`, `adapters-*.test.ts`; Import: `import-service.test.ts`, `import-source-untouched.test.ts`, `import-corpus.test.ts`; Export: `export-service.test.ts`, `export-fresh-home.test.ts`; Synchronization: `sync-service.test.ts`, `sync-flow.test.ts`, `sync-interrupted.test.ts`; History and rollback: `sync-flow.test.ts` (rollback i cofnięcie rollbacku), `index-sync-state.test.ts`; Security: `secret-classifier.test.ts`, `security-*.test.ts`, `write-gate*.test.ts`, `network-block.test.ts`, `no-exec-static.test.ts`; Diagnostics: `diagnostics.test.ts`, `index-rebuild.test.ts`. W MVP nie istnieją: Diff and merge (Etap 6; diff jest częścią planu eksportu), Profiles (Etap 7), Settings (brak modułu, ustawienia nie są trwałe) | spełnione dla istniejących modułów |
+| 2 | Korpus z wymagań i ustalenia empiryczne: `tests/fixtures/claude-code`, `tests/fixtures/codex` plus przypadki budowane w teście (symlinki, uprawnienia, wielkość liter, sekret); testy: `adapters-claude-code.test.ts`, `adapters-codex.test.ts`, kontrakty, `import-corpus.test.ts` (cały korpus przez import, kolizja wielkości liter, sekret), `fs-source-reader.test.ts`, `locations.test.ts` (spacje i znaki spoza ASCII). Przerwana synchronizacja: `sync-interrupted.test.ts`, błąd w połowie `apply` i proces znikający po pierwszym elemencie; oba domykają się ponownym przebiegiem | spełnione |
+| 3 | Traversal, UNC, `\\?\`, NUL, nazwy zarezerwowane: `write-gate.test.ts`, `security-write-gate.test.ts`; sekret poza diffem: `security-export-diff.test.ts` (ładunek IPC); sekret poza logiem: `security-logger.test.ts`; zakaz sieci: `network-block.test.ts`, `tests/e2e/renderer-hardening.spec.ts`; zakaz wykonania: reguła lintu dla `core/` i `adapters/` (`child_process`, `worker_threads`, `vm`, `cluster`, `require`, `import()`, `new Function`), 7 prób w `scripts/verify-boundaries.mjs`, test statyczny `no-exec-static.test.ts`; brak cichego nadpisania: `write-gate.test.ts` (odmowy na starcie) | spełnione |
+| 4 | Tabela bezpieczników w raporcie Etapu 9; brakujące kolumny pozytywne dopisane: blokada sieci (`network-block.test.ts`), harness z nazwami myląco podobnymi i katalogiem tymczasowym (`isolation-harness.test.ts`), wolne miejsce wystarczające i nieznane (`write-gate.test.ts`), limity IPC i planu eksportu (`ipc-limits.test.ts`), wykrywacz wykonania i wykrywacz przecieków w fixture'ach (oba z próbą w obie strony) | spełnione |
+| 5 | `tests/unit/fixture-hygiene.test.ts` (nazwy `acme-*`, brak ścieżek domowych, adresów i kluczy); job „Skan sekretow (cala historia)” z `fetch-depth: 0` i `--log-opts="--all --full-history"`: 64 commity, bez wycieków (przebieg `42840056457`) | spełnione |
+| 6 | Job `dist` w `ci.yml`, niezależny od E2E: `electron-builder` z tymi samymi flagami co `release.yml`, `SHA256SUMS` liczone i sprawdzane, instalacja jak u użytkownika (DMG przez `ditto` z kontrolą `lipo`, NSIS `/S`, deb przez `apt`) i `tests/smoke/dist-smoke.test.ts` na zainstalowanej binarce, na czterech celach. Przebieg `42889995454` (commit `7f62d5d`): `paczka linux-x64`, `paczka macos-arm64` (lipo: arm64), `paczka macos-x64` (lipo: x86_64), `paczka windows-x64` zielone. AppImage: krok informacyjny, rozpakowany AppImage bez `--no-sandbox` pada na Ubuntu 24.04 (pomocnik SUID nie jest skonfigurowany), co trafia do README w Etapie 10; dowodem dla Linuksa jest deb | spełnione |
+| 7 | `tests/property/round-trip.test.ts`: skill, komenda, agent, hook i instrukcja globalna dla obu narzędzi, przez prawdziwy `WriteGate` i skan adaptera; wyjątki `partial` i `lossy` w `expectationFor` z odwołaniem do ADR, sprawdzane razem z werdyktem; 25 przebiegów na przypadek w CI, lokalnie 400 | spełnione |
+
+Błędy znalezione w tym etapie i poprawione: werdykt agenta nie zapowiadał dopisanych pól `name`
+i `description` (test property-based); po przerwanym `apply` plik tymczasowy zostawał w drzewie
+narzędzia na zawsze (`sync-interrupted.test.ts`); lista architektur macOS w `electron-builder.yml`
+wygrywała z flagą, więc oba runnery macOS budowały oba DMG, a scalone `SHA256SUMS` miało dwie
+sumy dla jednego pliku; build Linuksa padał na pustym katalogu `resources/icons`.
 
 ### Etap 10: Dokumentacja i wydanie MVP
 
