@@ -329,10 +329,6 @@ export class ExportWizardComponent {
 
   protected cancelConfirm(): void {
     this.confirming.set(false);
-    setTimeout(
-      () => document.querySelector<HTMLElement>('[data-testid="export-apply"]')?.focus(),
-      0,
-    );
   }
 
   protected async apply(): Promise<void> {

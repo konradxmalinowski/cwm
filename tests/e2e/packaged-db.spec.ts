@@ -68,7 +68,11 @@ async function waitForLedger(dbPath: string): Promise<MigrationRow[]> {
  * Czeka, az zapakowana aplikacja wypelni indeks biblioteki z plikow. Rejestr migracji powstaje
  * wczesniej, wiec jego obecnosc nie dowodzi jeszcze, ze wpisy FTS zostaly zapisane.
  */
-function readIndexedSlugs(dbPath: string, ftsQuery: string): string[] | null {
+function readIndexedSlugs(
+  dbPath: string,
+  ftsQuery: string,
+  options: { readonly strict?: boolean } = {},
+): string[] | null {
   if (!existsSync(dbPath)) return null;
   let db: Database.Database | null = null;
   try {
@@ -80,7 +84,10 @@ function readIndexedSlugs(dbPath: string, ftsQuery: string): string[] | null {
       )
       .all(ftsQuery) as { slug: string }[];
     return rows.map((row) => row.slug);
-  } catch {
+  } catch (error: unknown) {
+    // Podczas oczekiwania na aplikacje blad oznacza "jeszcze nie gotowe". Po jej zakonczeniu
+    // jest prawdziwym bledem i ma dojsc do raportu z przyczyna, a nie jako `null`.
+    if (options.strict === true) throw error;
     return null;
   } finally {
     db?.close();
@@ -119,7 +126,14 @@ async function runPackagedOnce(userDataDir: string, untilIndexed = 0): Promise<{
       { cause: error },
     );
   } finally {
+    // Odczyt bazy w tescie idzie dopiero po zakonczeniu procesu: zywa aplikacja trzyma plik i
+    // WAL, wiec na Windowsie odczyt tuz po `kill` trafial w zamykany uchwyt i zwracal blad.
+    const exited = new Promise<void>((resolve) => {
+      if (child.exitCode !== null || child.signalCode !== null) resolve();
+      else child.once('exit', () => resolve());
+    });
     child.kill('SIGKILL');
+    await exited;
   }
 }
 
@@ -170,11 +184,13 @@ test.describe('zapakowana aplikacja, dowod przez stan na dysku', () => {
     await runPackagedOnce(userDataDir, seeded.length);
 
     // Dopasowanie prefiksowe, bez rozrozniania wielkosci liter i znakow diakrytycznych.
-    expect(readIndexedSlugs(dbPath, 'acme*')).toEqual(seeded.map((item) => item.slug).sort());
-    expect(readIndexedSlugs(dbPath, 'przeglad*')).toEqual(['acme-przeglad']);
-    expect(readIndexedSlugs(dbPath, 'lodzki*')).toEqual(['acme-lodz']);
-    expect(readIndexedSlugs(dbPath, 'znacznikfts')).toEqual(['acme-lodz']);
-    expect(readIndexedSlugs(dbPath, 'nieistniejace*')).toEqual([]);
+    expect(readIndexedSlugs(dbPath, 'acme*', { strict: true })).toEqual(
+      seeded.map((item) => item.slug).sort(),
+    );
+    expect(readIndexedSlugs(dbPath, 'przeglad*', { strict: true })).toEqual(['acme-przeglad']);
+    expect(readIndexedSlugs(dbPath, 'lodzki*', { strict: true })).toEqual(['acme-lodz']);
+    expect(readIndexedSlugs(dbPath, 'znacznikfts', { strict: true })).toEqual(['acme-lodz']);
+    expect(readIndexedSlugs(dbPath, 'nieistniejace*', { strict: true })).toEqual([]);
   });
 
   test('binding w paczce jest tym samym plikiem, ktory laduje test, a FTS5 w nim dziala', () => {

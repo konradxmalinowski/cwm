@@ -530,7 +530,6 @@ export class SyncCenterComponent {
 
   protected cancelConfirm(): void {
     this.confirming.set(false);
-    setTimeout(() => document.querySelector<HTMLElement>('[data-testid="sync-apply"]')?.focus(), 0);
   }
 
   protected async apply(): Promise<void> {

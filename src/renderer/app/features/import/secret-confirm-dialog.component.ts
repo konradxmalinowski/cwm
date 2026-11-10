@@ -11,6 +11,7 @@ import {
 } from '@angular/core';
 
 import type { CandidateDto } from '../../../../shared/ipc/import-contract';
+import { rememberOpener } from '../../core/focus/opener-focus';
 import { plural } from '../../core/labels';
 import { hitLocation, pathLabel } from './import-model';
 
@@ -73,9 +74,11 @@ export class SecretConfirmDialogComponent {
     afterNextRender(() => {
       this.dialog().nativeElement.showModal();
     });
+    const restoreFocus = rememberOpener();
     inject(DestroyRef).onDestroy(() => {
       const element = this.dialog().nativeElement;
       if (element.open) element.close();
+      restoreFocus();
     });
   }
 

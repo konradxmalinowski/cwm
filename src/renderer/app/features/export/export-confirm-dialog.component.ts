@@ -10,6 +10,7 @@ import {
   viewChild,
 } from '@angular/core';
 
+import { rememberOpener } from '../../core/focus/opener-focus';
 import { plural } from '../../core/labels';
 import type { PlanCounts } from './export-model';
 
@@ -174,9 +175,11 @@ export class ExportConfirmDialogComponent {
     afterNextRender(() => {
       this.dialog().nativeElement.showModal();
     });
+    const restoreFocus = rememberOpener();
     inject(DestroyRef).onDestroy(() => {
       const element = this.dialog().nativeElement;
       if (element.open) element.close();
+      restoreFocus();
     });
   }
 

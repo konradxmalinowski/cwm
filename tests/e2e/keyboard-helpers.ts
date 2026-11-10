@@ -145,8 +145,15 @@ export async function pressTimes(page: Page, key: string, times: number): Promis
 }
 
 export async function expectFocus(page: Page, selector: string, message?: string): Promise<void> {
-  const ok = await page.evaluate((sel) => document.activeElement?.matches(sel) ?? false, selector);
-  if (!ok) {
+  // Fokus moze wrocic o jeden obieg petli zdarzen po zamknieciu okna (oddaje go komponent okna
+  // po zdjeciu z drzewa), wiec czekamy na stan, a nie sprawdzamy w tej samej klatce.
+  const reached = await page
+    .waitForFunction((sel) => document.activeElement?.matches(sel) ?? false, selector, {
+      timeout: 3_000,
+    })
+    .then(() => true)
+    .catch(() => false);
+  if (!reached) {
     const info = await focusInfo(page);
     throw new Error(
       `${message ?? 'fokus'}: oczekiwano ${selector}, jest ${info.tag}#${info.id} [${info.testid}] "${info.name}"`,

@@ -281,10 +281,6 @@ export class HistoryComponent {
 
   protected cancelConfirm(): void {
     this.confirming.set(false);
-    setTimeout(
-      () => document.querySelector<HTMLElement>('[data-testid="history-apply"]')?.focus(),
-      0,
-    );
   }
 
   protected async apply(): Promise<void> {

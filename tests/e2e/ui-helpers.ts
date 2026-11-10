@@ -146,10 +146,31 @@ export async function setWindowSize(
     },
     { width, height },
   );
-  await page.waitForFunction(
-    (size) => window.innerWidth === size.width && window.innerHeight === size.height,
-    { width, height },
-  );
+  try {
+    await page.waitForFunction(
+      (size) => window.innerWidth === size.width && window.innerHeight === size.height,
+      { width, height },
+      { timeout: 4_000 },
+    );
+  } catch {
+    // System nie oddal oknu zadanego rozmiaru: runner CI ma maly ekran, a okno nie moze byc wieksze
+    // od obszaru roboczego ekranu. Wtedy to widok (viewport) dostaje 1024 x 700 przez CDP. Uklad
+    // reaguje na szerokosc ramki w oknie, wiec pomiar jest ten sam; test zapisuje, ktora droga zadzialala.
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Emulation.setDeviceMetricsOverride', {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await page.waitForFunction(
+      (size) => window.innerWidth === size.width && window.innerHeight === size.height,
+      { width, height },
+    );
+    console.warn(
+      `rozmiar okna wymuszony przez CDP (${width} x ${height}): ekran zbyt maly na okno`,
+    );
+  }
 }
 
 export async function setTheme(page: Page, theme: 'dark' | 'light'): Promise<void> {
