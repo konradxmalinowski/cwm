@@ -703,10 +703,11 @@ Kanały z handlerem:
 | `history:rollback` | `{ operationId }` | plan cofnięcia w postaci `ExportPlanDto`; zastosowanie przez `export:apply` |
 | `diagnostics:report` | brak | raport środowiska, nieznanych konstrukcji i stanu otwarcia indeksu |
 
-Kanały w `IPC_CHANNELS` bez handlera (wywołanie kończy się błędem "No handler registered", a nie
-udaje wyniku): `diff:compute`, `profiles:list`, `profiles:save`, `profiles:export-plan`,
-`settings:get`, `settings:set`. Diff do podglądu nie ma własnego kanału: `before` i `after` są
-w planie eksportu.
+Każdy kanał z `IPC_CHANNELS` ma handler; rejestr przy starcie odmawia startu, gdy któregoś brakuje
+(`IMPLEMENTED_CHANNELS` to ta sama lista). Kanały `diff:compute`, `profiles:list`, `profiles:save`,
+`profiles:export-plan`, `settings:get` i `settings:set` zostały usunięte w Etapie 10 (kryterium 5):
+nie miały implementacji i udawały funkcję. Wracają razem z implementacją (Etapy 6 i 7, ustawienia).
+Diff do podglądu nie ma własnego kanału: `before` i `after` są w planie eksportu.
 
 Nie ma w liście, choć wcześniejsza wersja tego dokumentu je przewidywała: `library:delete` (zastąpiły
 go `delete-plan` i `delete-apply`) oraz `sync:verify` (weryfikacja jest częścią zapisu).
@@ -719,9 +720,9 @@ liczba katalogów w `library/items`, wynik otwarcia indeksu, obecność pliku). 
 `sync:apply`, `history:rollback`) wchodzą pod wspólną blokadę `OperationLock`; w trakcie
 odbudowy odpowiadają kodem `busy`, a odbudowa nie startuje, gdy któryś z nich trwa.
 
-Zdarzenia main do renderera, `progress` i `operation-log`, są zadeklarowane w `IPC_EVENTS` i
-dostępne w moście, ale main nie nadaje żadnego z nich. Mają nieść tylko postęp i log, nigdy treść
-pliku.
+Zdarzeń main do renderera nie ma: `progress` i `operation-log` były zadeklarowane, ale nic ich nie
+nadawało i nic ich nie słuchało, więc zostały usunięte razem z gałęzią `events` mostu. Gdyby wróciły,
+mają nieść tylko postęp i log, nigdy treść pliku.
 
 Cztery reguły tej granicy:
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { IPC_CHANNELS, IPC_EVENTS, isIpcChannel } from '../../src/shared/ipc/channels';
+import { IPC_CHANNELS, isIpcChannel } from '../../src/shared/ipc/channels';
 import { bridgeSurfaceKeys, buildBridgeSurface } from '../../src/shared/ipc/surface';
 
 function expectedKeys(): string[] {
@@ -8,24 +8,17 @@ function expectedKeys(): string[] {
     const [namespace, rest] = channel.split(':');
     const member = (rest ?? '').replace(/-([a-z])/g, (_m, letter: string) => letter.toUpperCase());
     return `${namespace ?? ''}.${member}`;
-  })
-    .concat(
-      IPC_EVENTS.map((event) => `events.on${event === 'progress' ? 'Progress' : 'OperationLog'}`),
-    )
-    .sort();
+  }).sort();
 }
 
 describe('most IPC wystawia dokladnie zamknieta liste kanalow', () => {
   const calls: string[] = [];
-  const surface = buildBridgeSurface(
-    (channel) => {
-      calls.push(channel);
-      return Promise.resolve(null);
-    },
-    () => () => undefined,
-  );
+  const surface = buildBridgeSurface((channel) => {
+    calls.push(channel);
+    return Promise.resolve(null);
+  });
 
-  it('nie ma ani jednego klucza wiecej niz lista kanalow i zdarzen', () => {
+  it('nie ma ani jednego klucza wiecej niz lista kanalow', () => {
     expect(bridgeSurfaceKeys(surface)).toEqual(expectedKeys());
   });
 
@@ -54,8 +47,15 @@ describe('most IPC wystawia dokladnie zamknieta liste kanalow', () => {
   it('kazda metoda wola swoj wlasny kanal', async () => {
     calls.length = 0;
     await surface.diagnostics.report();
-    await surface.profiles.exportPlan();
-    expect(calls).toEqual(['diagnostics:report', 'profiles:export-plan']);
+    await surface.sync.plan();
+    expect(calls).toEqual(['diagnostics:report', 'sync:plan']);
+  });
+
+  it('nie wystawia nic dla funkcji, ktorych nie ma (diff, profile, ustawienia, zdarzenia)', () => {
+    const keys = Object.keys(surface);
+    for (const absent of ['diff', 'profiles', 'settings', 'events']) {
+      expect(keys).not.toContain(absent);
+    }
   });
 
   it('kanal poza lista nie przechodzi przez straznik', () => {

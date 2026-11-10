@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { IPC_CHANNELS, IPC_EVENTS } from '../../src/shared/ipc/channels';
+import { IPC_CHANNELS } from '../../src/shared/ipc/channels';
 import { removeTempTrees } from '../harness/isolation';
 import { launchApp } from './launch';
 
@@ -96,9 +96,6 @@ test('most IPC wystawia dokladnie zamknieta liste, bez kanalu ogolnego', async (
         .replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
       expected[namespace] = [...(expected[namespace] ?? []), member].sort();
     }
-    expected['events'] = IPC_EVENTS.map(
-      (event) => `on${event === 'progress' ? 'Progress' : 'OperationLog'}`,
-    ).sort();
 
     expect(surface).toEqual(expected);
   } finally {
@@ -106,24 +103,25 @@ test('most IPC wystawia dokladnie zamknieta liste, bez kanalu ogolnego', async (
   }
 });
 
-test('kanal z listy bez handlera odrzuca blad, zamiast udawac wynik', async () => {
+test('most nie ma metody spoza listy: brak diff, profili, ustawien i zdarzen', async () => {
   const { app, page } = await launchApp();
 
   try {
-    const result = await page.evaluate(async () => {
-      const bridge = (globalThis as Record<string, unknown>)['uasm'] as {
-        profiles: { list: () => Promise<unknown> };
+    const result = await page.evaluate(() => {
+      const bridge = (globalThis as Record<string, unknown>)['uasm'] as Record<string, unknown>;
+      return {
+        namespaces: Object.keys(bridge).sort(),
+        absent: ['diff', 'profiles', 'settings', 'events'].map((key) => typeof bridge[key]),
+        frozen: Object.isFrozen(bridge),
       };
-      try {
-        await bridge.profiles.list();
-        return 'resolved';
-      } catch (error: unknown) {
-        return error instanceof Error ? error.message : 'unknown';
-      }
     });
 
-    expect(result).not.toBe('resolved');
-    expect(result).toMatch(/No handler registered/i);
+    expect(result.absent).toEqual(['undefined', 'undefined', 'undefined', 'undefined']);
+    expect(result.frozen).toBe(true);
+    const expectedNamespaces = [
+      ...new Set(IPC_CHANNELS.map((channel) => channel.slice(0, channel.indexOf(':')))),
+    ].sort();
+    expect(result.namespaces).toEqual(expectedNamespaces);
   } finally {
     await app.close();
   }

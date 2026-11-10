@@ -21,14 +21,8 @@ export const IPC_CHANNELS = [
   'sync:plan',
   'sync:apply',
   'sync:status',
-  'diff:compute',
   'history:list',
   'history:rollback',
-  'profiles:list',
-  'profiles:save',
-  'profiles:export-plan',
-  'settings:get',
-  'settings:set',
   'diagnostics:report',
   'diagnostics:rebuild-index-plan',
   'diagnostics:rebuild-index-apply',
@@ -36,45 +30,17 @@ export const IPC_CHANNELS = [
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];
 
-/** Zdarzenia main do renderera. Tylko postep i log operacji, nigdy tresc pliku. */
-export const IPC_EVENTS = ['progress', 'operation-log'] as const;
-
-export type IpcEvent = (typeof IPC_EVENTS)[number];
-
 /**
- * Kanaly z handlerem w tym etapie. Pozostale sa w liscie, ale nie maja
- * implementacji - wywolanie takiego kanalu odrzuca sie bledem Electrona
- * "No handler registered", zamiast udawac dzialajaca funkcje.
+ * Kazdy kanal z `IPC_CHANNELS` ma handler; rejestr przy starcie sprawdza to
+ * (`assertImplementedRegistered`). Kanaly bez implementacji (diff, profile,
+ * ustawienia) i zdarzenia main do renderera (postep, log operacji) zostaly
+ * usuniete z listy, zamiast udawac funkcje (Etap 10, kryterium 5). Wracaja
+ * razem z implementacja i testem, w tym samym commicie.
  */
-export const IMPLEMENTED_CHANNELS = [
-  'library:list',
-  'library:get',
-  'library:save',
-  'library:delete-plan',
-  'library:delete-apply',
-  'library:repair',
-  'import:detect',
-  'import:scan',
-  'import:apply',
-  'export:plan',
-  'export:apply',
-  'sync:status',
-  'sync:plan',
-  'sync:apply',
-  'history:list',
-  'history:rollback',
-  'diagnostics:report',
-  'diagnostics:rebuild-index-plan',
-  'diagnostics:rebuild-index-apply',
-] as const;
+export const IMPLEMENTED_CHANNELS: readonly IpcChannel[] = IPC_CHANNELS;
 
 const CHANNEL_SET: ReadonlySet<string> = new Set(IPC_CHANNELS);
-const EVENT_SET: ReadonlySet<string> = new Set(IPC_EVENTS);
 
 export function isIpcChannel(value: string): value is IpcChannel {
   return CHANNEL_SET.has(value);
-}
-
-export function isIpcEvent(value: string): value is IpcEvent {
-  return EVENT_SET.has(value);
 }

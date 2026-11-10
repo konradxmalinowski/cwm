@@ -1,7 +1,6 @@
-import { IPC_CHANNELS, IPC_EVENTS, type IpcChannel, type IpcEvent } from './channels';
+import { IPC_CHANNELS, type IpcChannel } from './channels';
 
 export type InvokeFn = (channel: IpcChannel, payload?: unknown) => Promise<unknown>;
-export type SubscribeFn = (event: IpcEvent, listener: (data: unknown) => void) => () => void;
 
 type CamelCase<S extends string> = S extends `${infer Head}-${infer Tail}`
   ? `${Head}${Capitalize<CamelCase<Tail>>}`
@@ -12,26 +11,14 @@ type MemberOf<C extends string, N extends string> = C extends `${N}:${infer M}`
   ? CamelCase<M>
   : never;
 
-type EventHandlerName<E extends string> = `on${Capitalize<CamelCase<E>>}`;
-
 export type BridgeSurface = {
   readonly [N in NamespaceOf<IpcChannel>]: {
     readonly [M in MemberOf<IpcChannel, N>]: (payload?: unknown) => Promise<unknown>;
-  };
-} & {
-  readonly events: {
-    readonly [E in IpcEvent as EventHandlerName<E>]: (
-      listener: (data: unknown) => void,
-    ) => () => void;
   };
 };
 
 function toCamelCase(value: string): string {
   return value.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
-}
-
-function capitalize(value: string): string {
-  return value.length === 0 ? value : `${value[0]?.toUpperCase() ?? ''}${value.slice(1)}`;
 }
 
 /**
@@ -40,7 +27,7 @@ function capitalize(value: string): string {
  * niczego, czego nie ma w `IPC_CHANNELS`. Wynik jest zamrozony na obu
  * poziomach, zeby skompromitowany renderer nie dopisal sobie metody.
  */
-export function buildBridgeSurface(invoke: InvokeFn, subscribe: SubscribeFn): BridgeSurface {
+export function buildBridgeSurface(invoke: InvokeFn): BridgeSurface {
   const namespaces = new Map<string, Record<string, unknown>>();
 
   for (const channel of IPC_CHANNELS) {
@@ -56,13 +43,7 @@ export function buildBridgeSurface(invoke: InvokeFn, subscribe: SubscribeFn): Br
     target[member] = (payload?: unknown): Promise<unknown> => invoke(channel, payload);
   }
 
-  const events: Record<string, unknown> = {};
-  for (const event of IPC_EVENTS) {
-    events[`on${capitalize(toCamelCase(event))}`] = (listener: (data: unknown) => void) =>
-      subscribe(event, listener);
-  }
-
-  const surface: Record<string, unknown> = { events: Object.freeze(events) };
+  const surface: Record<string, unknown> = {};
   for (const [namespace, members] of namespaces) {
     surface[namespace] = Object.freeze(members);
   }
