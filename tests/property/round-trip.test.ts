@@ -30,9 +30,13 @@ import {
  * (lostAttributes, addedAttributes). Transformacja, ktorej werdykt nie zapowiada, jest bledem.
  */
 
-/** Rozsadnie dla CI: kazdy przebieg to swieze drzewo, zapis z kopia i skan. Lacznie ok. 10 s. */
+/**
+ * Rozsadnie dla CI: kazdy przebieg to swieze drzewo, zapis z kopia i skan. 25 przebiegow to ok.
+ * 6 s lokalnie i 20 s na runnerze macos-x64; przy 40 przebiegach ciezsze testy limitow
+ * (library-round3) dobijaly obok do 5 s na obciazonym runnerze. Lokalnie przeszlo 400 przebiegow.
+ */
 // Lokalne polowanie na bledy: UASM_PROPERTY_RUNS=500 npx vitest run tests/property.
-const RUNS = Number(process.env['UASM_PROPERTY_RUNS'] ?? 40);
+const RUNS = Number(process.env['UASM_PROPERTY_RUNS'] ?? 25);
 const TIMEOUT_MS = 120_000;
 
 afterAll(() => {

@@ -69,6 +69,11 @@ linux:
   # (tests/e2e/launch.ts). Domyslna wartosc pochodzi z productName, ktory ma
   # spacje - a wtedy szukanie binarki po nazwie staje sie zgadywaniem.
   executableName: universal-ai-skills-manager
+  # Jawnie domyslna ikona Electrona, dopoki nie ma wlasnej (ARCHITECTURE 13.3). Bez tego
+  # electron-builder 26 widzi katalog resources/icons (sam README), nie znajduje w nim obrazka
+  # i build AppImage i deb pada na `reading 'file'`. Wykryte pierwszym buildem Linuksa w CI.
+  # Do usuniecia razem z dolozeniem resources/icons/icon.png.
+  icon: node_modules/app-builder-lib/templates/icons/electron-linux
   target:
     - target: AppImage
       arch: [x64]
