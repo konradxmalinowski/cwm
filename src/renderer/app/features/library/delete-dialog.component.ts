@@ -92,9 +92,16 @@ export class DeleteDialogComponent {
         this.dialog().nativeElement.querySelector<HTMLElement>('#delete-title')?.focus();
       }, 0);
     });
+    // Natywny dialog oddaje fokus przy `close()`, ale rodzic zdejmuje go z drzewa, zanim to
+    // nastapi, i fokus ladowal na `body`. Zapamietujemy przycisk, ktory dialog otworzyl, i
+    // wracamy na niego, o ile nadal istnieje (po usunieciu elementu widok i tak sie zmienia).
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     inject(DestroyRef).onDestroy(() => {
       const element = this.dialog().nativeElement;
       if (element.open) element.close();
+      setTimeout(() => {
+        if (opener?.isConnected === true && !document.querySelector('dialog[open]')) opener.focus();
+      }, 0);
     });
   }
 
