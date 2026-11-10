@@ -185,7 +185,7 @@ Kryteria akceptacji:
 5. Zero zależności nieuzasadnionych. Każda pozycja w `package.json` ma powód zapisany w README
    albo w ADR.
 
-### Etap 2: Biblioteka - OTWARTY
+### Etap 2: Biblioteka - ZAMKNIĘTY
 
 Zakres: model kanoniczny (ADR 0023). Zapis i odczyt według układu danych (ADR 0014). Content
 store i log operacji jako warstwa danych (ADR 0019). Lista, wyszukiwanie FTS, filtrowanie,
@@ -194,7 +194,7 @@ kolizji wielkości liter (ADR 0017). Normalizacja końców linii (ADR 0016). Prz
 z plików z kwarantanną i triażem przyczyn awarii otwarcia (ADR 0029). Okno przed otwarciem
 indeksu, z widokiem dla odmowy i dla odbudowy (ADR 0029, ARCHITECTURE 13.1).
 
-**Stan (2026-11-05): wszystkie kryteria mają testy; etap zamyka zielona macierz CI na commicie z indeksem i specami E2E.** Kawałki A
+**Stan (2026-11-10): zamknięty. Wszystkie kryteria mają testy, zielone na czterech celach w przebiegu CI `42072361844`.** Kawałki A
 (warstwa plików i content store, ADR 0031) i C (kanały `library:*`, interfejs biblioteki, widok
 Diagnostyki) są w kodzie. Kawałek B: migracja 4 (`004-library-index.sql`) dodaje tabelę `items`
 z unikalnym indeksem `(kind, slug_key)` (ADR 0017 w bazie obok walidatora) i tabelę FTS5
@@ -268,13 +268,13 @@ Dowody (stan na 2026-11-05):
 
 | Kryterium | Test albo brak | Status |
 |---|---|---|
-| 1 | `tests/e2e/library-crud.spec.ts` (tworzenie, edycja, wyszukiwanie po słowie tylko z treści, usunięcie z potwierdzeniem; asercje na `library/items` i `objects/`), serwis: `tests/unit/library-service.test.ts`, `tests/integration/library-acceptance-fs.test.ts` | spełnione lokalnie, CI do potwierdzenia |
+| 1 | `tests/e2e/library-crud.spec.ts` (tworzenie, edycja, wyszukiwanie po słowie tylko z treści, usunięcie z potwierdzeniem; asercje na `library/items` i `objects/`), serwis: `tests/unit/library-service.test.ts`, `tests/integration/library-acceptance-fs.test.ts` | spełnione, CI `42072361844` na czterech celach |
 | 2 | `tests/integration/library-index-restore.test.ts` (usunięcie `index.db`, ponowny start, wyszukiwanie znajduje wszystko; odbudowa uszkodzonego; element nieczytelny w `notRestored`), `tests/e2e/index-startup.spec.ts` (to samo przez zbudowaną aplikację) | spełnione |
 | 3 | `tests/unit/index-startup.test.ts`, `tests/integration/index-store.test.ts`, `tests/integration/quarantine.test.ts`, `tests/integration/index-triage-reachability.test.ts` (prawdziwy plik; asercja negatywna: schemat z przyszłości zostaje nietknięty, bez kwarantanny i bez utraty logu), `tests/e2e/index-startup.spec.ts` | spełnione |
-| 4 | `tests/e2e/index-recovery-ui.spec.ts` (tekst paska po uszkodzonym indeksie: liczba elementów, lista nieodzyskanych rzeczy, brak ścieżki; indeks z przyszłości: powód i ręczna odbudowa jako jedyne wyjście; wynik z zerem jako niepełny), `tests/e2e/index-startup.spec.ts` | spełnione lokalnie, CI do potwierdzenia |
+| 4 | `tests/e2e/index-recovery-ui.spec.ts` (tekst paska po uszkodzonym indeksie: liczba elementów, lista nieodzyskanych rzeczy, brak ścieżki; indeks z przyszłości: powód i ręczna odbudowa jako jedyne wyjście; wynik z zerem jako niepełny), `tests/e2e/index-startup.spec.ts` | spełnione, CI `42072361844` na czterech celach |
 | 5 | `tests/integration/index-triage-reachability.test.ts`: każda z pięciu przyczyn (cztery gałęzie triażu) z prawdziwego `SqliteIndexStore`, `native-module` przez podstawione ładowanie sterownika (`loadDriver`); `tests/integration/index-store.test.ts` | spełnione |
 | 6 | `tests/unit/index-rebuild.test.ts` (plan pokazuje utratę logu; `apply` odmawia przy `blocked` i przy planie przeterminowanym; brak ścieżki w ładunku; dwa równoległe wywołania; schemat z przyszłości z potwierdzeniem), `tests/unit/ipc-registry.test.ts`, `tests/e2e/index-startup.spec.ts` (oba kanały w zbudowanej aplikacji) | spełnione |
-| 7 | `tests/e2e/packaged-db.spec.ts` (biblioteka na dysku bez indeksu, start zapakowanej aplikacji, zapytanie FTS na `items_fts` wypełnionej przez paczkę). Wynik na czterech celach daje CI | spełnione lokalnie na macOS, CI do potwierdzenia |
+| 7 | `tests/e2e/packaged-db.spec.ts` (biblioteka na dysku bez indeksu, start zapakowanej aplikacji, zapytanie FTS na `items_fts` wypełnionej przez paczkę). Wynik na czterech celach daje CI | spełnione, CI `42072361844` na czterech celach |
 | 8 | `tests/unit/library-service.test.ts` (kryterium 8), `tests/integration/library-acceptance-fs.test.ts`; macierz `npm test` na czterech celach | spełnione |
 | 9 | `tests/unit/library-service.test.ts` (spacje, polskie litery, CJK), `tests/integration/library-service-fs.test.ts` | spełnione |
 | 10 | `tests/integration/library-fixture.test.ts` na fixture `tests/fixtures/library-linux/` | spełnione |
@@ -328,7 +328,7 @@ Dowody (stan na 2026-11-05):
 | 7 | `tests/unit/adapters-claude-code.test.ts` |
 | 8 | `tests/unit/adapters-claude-code.test.ts` (limit rozmiaru, plik bez uprawnień) |
 
-### Etap 4: Eksport i adaptery - OTWARTY
+### Etap 4: Eksport i adaptery - ZAMKNIĘTY
 
 Status: sześć z siedmiu kryteriów ma test, a ostatni przebieg CI na `main` (`41991403641`, commit `c37e40d`) jest
 zielony na czterech celach. Otwarte jest kryterium 5: tryb materializacji jest wyliczany i
@@ -375,11 +375,11 @@ Dowody (stan na 2026-11-05):
 | 2 | `tests/contract/export-contract.ts` (element nieobsługiwany w `refusals`, fixture MCP, zero wpisów) | spełnione |
 | 3 | `tests/contract/export-contract.ts`, `tests/unit/adapters-export-codex.test.ts` | spełnione |
 | 4 | `tests/unit/adapters-segment-toml.test.ts`, `tests/contract/export-contract.ts` (odmowa edycji) | spełnione |
-| 5 | Poprawność per system: `tests/integration/link-mode.test.ts`, `tests/integration/write-gate-link.test.ts`. Widoczność w interfejsie: brak testu | otwarte |
+| 5 | Poprawność per system: `tests/integration/link-mode.test.ts`, `tests/integration/write-gate-link.test.ts`. Widoczność w interfejsie: `tests/e2e/export-materialization.spec.ts` (tekst trybu i jego wyjaśnienie per wpis planu), CI `42072361844` na czterech celach | spełnione |
 | 6 | `tests/contract/export.test.ts` | spełnione |
 | 7 | `tests/contract/export-contract.ts` (blok istnieje, brak markerów, treść bez markerów), `tests/unit/adapters-marker-block.test.ts` | spełnione |
 
-### Etap 5: Synchronizacja i bezpieczeństwo (granica MVP) - OTWARTY
+### Etap 5: Synchronizacja i bezpieczeństwo (granica MVP) - ZAMKNIĘTY
 
 Status: siedem z ośmiu kryteriów ma test, a ostatni przebieg CI na `main` (`41991403641`, commit `c37e40d`) jest
 zielony na czterech celach. Kryterium 7 to `tests/e2e/full-flow.spec.ts`, zielony na czterech
@@ -439,7 +439,7 @@ Dowody (stan na 2026-11-05):
 | 5 | `tests/unit/security-export-diff.test.ts` (ładunek `export:plan`), `tests/integration/security-logger.test.ts`, `tests/unit/security-redactor.test.ts` | spełnione |
 | 6 | `tests/integration/write-gate.test.ts` (bezpiecznik ścieżek, obie kolumny; UNC i `\\?\` przez podstawiony `path.win32`), `tests/integration/security-write-gate.test.ts` | spełnione |
 | 7 | `tests/e2e/full-flow.spec.ts`: import, eksport, edycja, plan synchronizacji, zatwierdzenie, weryfikacja, cofnięcie, stan pliku co do bajta | spełnione |
-| 8 | POSIX: `tests/integration/security-write-gate.test.ts`, `tests/integration/write-gate.test.ts` (nieczytelny plik, katalog tylko do odczytu, cel niebędący plikiem, brak miejsca, `blocked` bez zapisu). Brak testów przyczyn systemowych Windowsa | otwarte |
+| 8 | POSIX: `tests/integration/security-write-gate.test.ts`, `tests/integration/write-gate.test.ts` (nieczytelny plik, katalog tylko do odczytu, cel niebędący plikiem, brak miejsca, `blocked` bez zapisu). Windows: `tests/integration/write-gate-windows.test.ts` (naruszenie współdzielenia przez proces trzymający plik z `FileShare.None`, ACL z zapisem bez odczytu; oba z kolumną pozytywną), 4 testy wykonane w jobie `windows-x64` przebiegu `42072361844` | spełnione |
 
 ### Etap 6: Porównywanie i scalanie (po MVP)
 
