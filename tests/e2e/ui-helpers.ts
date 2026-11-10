@@ -295,6 +295,18 @@ export async function measureFit(page: Page): Promise<FitReport> {
       const style = getComputedStyle(el);
       if (style.position === 'absolute' && el.classList.contains('sr-only')) continue;
       const overflowing = el.scrollWidth > el.clientWidth + 1;
+      const overflowingY = el.scrollHeight > el.clientHeight + 1;
+      if (
+        overflowingY &&
+        (style.overflowY === 'hidden' || style.overflowY === 'clip') &&
+        (el.textContent ?? '').trim() !== ''
+      ) {
+        const text = (el.textContent ?? '').trim();
+        const title = el.getAttribute('title') ?? el.closest('[title]')?.getAttribute('title');
+        if (title === null || title === undefined || !title.includes(text)) {
+          clipped.push(`${describe(el)} (wysokosc ${el.scrollHeight} > ${el.clientHeight})`);
+        }
+      }
       if (!overflowing) continue;
       if (style.overflowX === 'auto' || style.overflowX === 'scroll') {
         scrollers.push(`${describe(el)} (${el.scrollWidth} > ${el.clientWidth})`);
@@ -329,4 +341,88 @@ export async function measureDialogFit(page: Page): Promise<string[]> {
     }
     return out;
   });
+}
+
+// ---- kontrast liczony w stronie ----
+
+export interface ContrastReading {
+  readonly target: string;
+  readonly ratio: number;
+  readonly required: number;
+  readonly foreground: string;
+  readonly background: string;
+}
+
+/**
+ * Drugi poziom audytu kontrastu dla elementow, ktorych axe nie umie rozstrzygnac (`incomplete`):
+ * tekst w oknach dialogowych w warstwie nad zaslona, tekst na zlozonych tlach. Skladamy kolor
+ * tekstu (z przezroczystoscia elementu i jego przodkow) na kolorze tla zlozonym z kolejnych
+ * warstw `background-color` przodkow, potem liczymy wspolczynnik wzorem WCAG 2.x. Prog to 4,5:1,
+ * a 3:1 dla duzego tekstu (od 24 px albo od 18,66 px pogrubionego).
+ */
+export async function readContrast(
+  page: Page,
+  selectors: readonly string[],
+): Promise<ContrastReading[]> {
+  return page.evaluate((targets) => {
+    type Rgba = [number, number, number, number];
+    const parse = (value: string): Rgba => {
+      const m = /rgba?\(([^)]+)\)/.exec(value);
+      if (m === null || m[1] === undefined) return [0, 0, 0, 0];
+      const parts = m[1].split(/[,\s/]+/).filter((p) => p !== '');
+      const n = parts.map((p) => parseFloat(p));
+      return [n[0] ?? 0, n[1] ?? 0, n[2] ?? 0, n[3] ?? 1];
+    };
+    const over = (top: Rgba, bottom: Rgba): Rgba => {
+      const a = top[3] + bottom[3] * (1 - top[3]);
+      if (a === 0) return [0, 0, 0, 0];
+      const mix = (i: 0 | 1 | 2): number =>
+        (top[i] * top[3] + bottom[i] * bottom[3] * (1 - top[3])) / a;
+      return [mix(0), mix(1), mix(2), a];
+    };
+    const lin = (c: number): number => {
+      const v = c / 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    };
+    const lum = (c: Rgba): number => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+    const out: {
+      target: string;
+      ratio: number;
+      required: number;
+      foreground: string;
+      background: string;
+    }[] = [];
+    for (const target of targets) {
+      const el = document.querySelector(target);
+      if (el === null) continue;
+      let opacity = 1;
+      const layers: Rgba[] = [];
+      for (let node: Element | null = el; node !== null; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        opacity *= parseFloat(style.opacity);
+        const bg = parse(style.backgroundColor);
+        if (bg[3] > 0) layers.push(bg);
+      }
+      let background: Rgba = [255, 255, 255, 1];
+      for (const layer of layers.reverse()) background = over(layer, background);
+      const style = getComputedStyle(el);
+      const fgRaw = parse(style.color);
+      const fg: Rgba = [fgRaw[0], fgRaw[1], fgRaw[2], fgRaw[3] * opacity];
+      const text = over(fg, background);
+      const l1 = lum(text);
+      const l2 = lum(background);
+      const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+      const px = parseFloat(style.fontSize);
+      const bold = parseInt(style.fontWeight, 10) >= 700;
+      const large = px >= 24 || (bold && px >= 18.66);
+      out.push({
+        target,
+        ratio: Math.round(ratio * 100) / 100,
+        required: large ? 3 : 4.5,
+        foreground: `rgb(${Math.round(text[0])} ${Math.round(text[1])} ${Math.round(text[2])})`,
+        background: `rgb(${Math.round(background[0])} ${Math.round(background[1])} ${Math.round(background[2])})`,
+      });
+    }
+    return out;
+  }, selectors);
 }

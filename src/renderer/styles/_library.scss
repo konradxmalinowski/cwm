@@ -60,12 +60,20 @@
   color: var(--cobalt-300);
 }
 
+.register__title {
+  overflow-wrap: anywhere;
+}
+
+// Opis w tabeli: do dwoch wierszy, reszta w `title` (pelna wartosc). Jeden wiersz z wielokropkiem
+// i bez pelnej wartosci chowalby tresc, a przy 1024 px poszerzal tabele ponad okno.
 .register__clip {
+  display: -webkit-box;
   max-width: 44ch;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   color: var(--text-muted);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .register__slug {

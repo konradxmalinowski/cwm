@@ -425,3 +425,13 @@ app-startup-banner .notice {
   display: grid;
   gap: var(--s4);
 }
+
+// Powierzchnia nadpisania (cobalt-600) i tekst drugorzedny. `text-muted` ma na niej 3,95:1 w ciemnym
+// motywie (DESIGN.md, Kontrast: tej pary nie ma w tabeli), czyli mniej niz 4,5:1. Wewnatrz tej
+// powierzchni tekst drugorzedny dostaje `cobalt-100`, token przeznaczony na tekst na powierzchni
+// akcentowej: 10,37:1 w ciemnym i 13,52:1 w jasnym motywie. Hierarchie niosa rozmiar i waga.
+.entry--overwrite,
+.matrix__row--overwrite,
+.cand--overwrite {
+  --text-muted: var(--cobalt-100);
+}

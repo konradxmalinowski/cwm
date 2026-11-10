@@ -311,6 +311,23 @@ export const SCENES: readonly Scene[] = [
     },
   },
   {
+    id: 'biblioteka/zaznaczenie-do-eksportu',
+    view: 'Biblioteka',
+    world: 'seeded',
+    reach: async (c) => {
+      await c.go('#/biblioteka');
+      await t(c.page, 'library-table').waitFor();
+      await c.page.locator('[data-testid="library-pick"][aria-label*="Acme"]').first().check();
+      await expect(t(c.page, 'library-export-selected')).toBeEnabled();
+    },
+    assert: async ({ page }) => {
+      // Przycisk dziala: prowadzi do eksportu z zaznaczonym elementem.
+      await t(page, 'library-export-selected').click();
+      await t(page, 'export-items').waitFor();
+      await expect(t(page, 'export-select-total')).toContainText('1');
+    },
+  },
+  {
     id: 'biblioteka/szczegol',
     view: 'Biblioteka',
     world: 'seeded',
@@ -668,6 +685,24 @@ export const SCENES: readonly Scene[] = [
       await expect(
         page.locator('[data-testid="candidate"][data-status="conflict"] input'),
       ).toHaveCount(0);
+    },
+  },
+  {
+    id: 'import/podglad-nadpisanie',
+    view: 'Import',
+    world: 'seeded',
+    reach: async (c) => {
+      await startScan(c);
+      await t(c.page, 'group-changed').waitFor();
+      await c.page
+        .locator('[data-testid="candidate"][data-status="changed"] input[type="checkbox"]')
+        .first()
+        .check();
+      await t(c.page, 'import-overwrite-total').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(t(page, 'import-overwrite-total')).toContainText('Nadpisze');
+      await expect(page.locator('.cand--overwrite').first()).toBeVisible();
     },
   },
   {
@@ -1043,6 +1078,21 @@ export const SCENES: readonly Scene[] = [
     assert: async ({ page }) => {
       await expect(t(page, 'rebuild-apply')).toBeDisabled();
       await t(page, 'rebuild-confirm').check();
+      await expect(t(page, 'rebuild-apply')).toBeEnabled();
+    },
+  },
+  {
+    id: 'diagnostyka/odbudowa-potwierdzona',
+    view: 'Diagnostyka',
+    world: 'seeded',
+    reach: async (c) => {
+      await c.go('#/diagnostyka');
+      await t(c.page, 'rebuild-open').click();
+      await t(c.page, 'rebuild-plan').waitFor();
+      await t(c.page, 'rebuild-confirm').check();
+      await expect(t(c.page, 'rebuild-apply')).toBeEnabled();
+    },
+    assert: async ({ page }) => {
       await expect(t(page, 'rebuild-apply')).toBeEnabled();
     },
   },
