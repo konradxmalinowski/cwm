@@ -1,8 +1,17 @@
 name: Release
 
+# Tag `v*` buduje cztery cele i zostawia SZKIC wydania; publikacja jest decyzja wlasciciela.
+# Bez tagu: `workflow_dispatch` z `dry_run` (domyslnie wlaczonym) wykonuje te same kroki
+# z budowaniem, scalaniem i weryfikacja sum, ale nie tworzy wydania.
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Proba: zbuduj i zbierz artefakty, nie tworz wydania'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -15,12 +24,42 @@ env:
   NODE_VERSION: '24'
 
 jobs:
+  # Bledy, ktore wyszlyby dopiero w ostatnim jobie (po ~10 minutach budowania),
+  # padaja tu w kilka sekund.
+  preflight:
+    name: Kontrola przed budowaniem
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Wydanie wymaga tagu, a tag zgadza sie z wersja w package.json
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${DRY_RUN}" != "true" ]; then
+              echo "wydanie bez tagu jest niemozliwe: uruchom z dry_run=true albo z tagu v*"
+              exit 1
+            fi
+            echo "przebieg probny na ${GITHUB_REF_NAME}, bez sprawdzania tagu"
+            exit 0
+          fi
+          version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "tag ${GITHUB_REF_NAME} nie zgadza sie z wersja w package.json (v${version}); nazwy plikow niosa wersje z package.json"
+            exit 1
+          fi
+
   build:
     name: ${{ matrix.target }}
+    needs: preflight
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: true
       matrix:
+        # Te same flagi co job `dist` w ci.yml.
         include:
           - os: macos-15
             target: macos-arm64
@@ -56,6 +95,23 @@ jobs:
       - name: Sumy kontrolne
         run: node scripts/checksums.mjs release release/SHA256SUMS-${{ matrix.target }}
 
+      # Cztery cele sa ze soba scalane w jednym katalogu. Nazwa pliku musi wiec byc unikalna
+      # miedzy celami i bez spacji (GitHub zamienia je w zasobach wydania na kropki, a wtedy
+      # SHA256SUMS przestaje pasowac do pobranych plikow).
+      - name: Nazwy plikow wydania
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -l release
+          if ls release | grep -E '[[:space:]]'; then
+            echo "nazwa pliku ze spacja w release/"
+            exit 1
+          fi
+          if ls release | grep -E '^latest.*\.yml$'; then
+            echo "latest*.yml nie powinien powstawac (publish: null w electron-builder.yml)"
+            exit 1
+          fi
+
       - uses: actions/upload-artifact@v7
         with:
           name: artifacts-${{ matrix.target }}
@@ -65,37 +121,69 @@ jobs:
             release/*.exe
             release/*.AppImage
             release/*.deb
-            release/latest*.yml
             release/SHA256SUMS-${{ matrix.target }}
           retention-days: 7
           if-no-files-found: error
 
-  publish:
-    name: Wydanie na GitHubie
-    runs-on: ubuntu-latest
+  # Zbiera cztery paczki w jeden katalog, scala sumy i sprawdza je na plikach po przejsciu
+  # przez artefakty. Tylko odczyt: ten job biegnie tez w przebiegu probnym.
+  collect:
+    name: Zebranie wydania
     needs: build
-    permissions:
-      contents: write
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
       - uses: actions/download-artifact@v8
         with:
           path: downloaded
           merge-multiple: true
 
       - name: Scalenie sum kontrolnych
+        working-directory: downloaded
         run: |
-          cd downloaded
+          set -euo pipefail
           cat SHA256SUMS-* | sort -k2 > SHA256SUMS
           rm -f SHA256SUMS-*
-          cat SHA256SUMS
+          if [ -n "$(cut -c67- SHA256SUMS | sort | uniq -d)" ]; then
+            echo "powtorzona nazwa pliku w SHA256SUMS:"
+            cut -c67- SHA256SUMS | sort | uniq -d
+            exit 1
+          fi
+          sha256sum -c SHA256SUMS
+          # Kazdy plik wydania musi byc w sumach i na odwrot.
+          diff <(ls | grep -v '^SHA256SUMS$' | sort) <(cut -c67- SHA256SUMS | sort)
+          ls -l
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-draft
+          path: downloaded/*
+          retention-days: 7
+          if-no-files-found: error
+
+  # Jedyne miejsce z uprawnieniem do zapisu. Pomijany w przebiegu probnym.
+  publish:
+    name: Szkic wydania na GitHubie
+    needs: collect
+    if: github.ref_type == 'tag' && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-draft
+          path: downloaded
 
       - name: Szkic wydania
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
             --draft \
             --title "${GITHUB_REF_NAME}" \
             --notes "Wydanie niepodpisane (ADR 0003). Przed instalacja sprawdz plik SHA256SUMS. Instrukcja obejscia ostrzezen Gatekeepera i SmartScreena jest w README." \
