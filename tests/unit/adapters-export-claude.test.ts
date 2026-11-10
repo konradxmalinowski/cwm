@@ -335,3 +335,45 @@ describe('eksport Claude Code: instrukcja globalna', () => {
     expect(plan.entries.map((e) => e.action)).toEqual(['unchanged']);
   });
 });
+
+/**
+ * Regresja z testu property-based (tests/property/round-trip.test.ts): agent bez `name` albo
+ * z opisem wyliczonym dostawal w pliku oba pola, a werdykt mowil full i nie wymienial dopisanych.
+ */
+describe('eksport Claude Code: werdykt agenta zapowiada dopisane pola', () => {
+  it('agent bez name i z opisem wyliczonym jest lossy z addedAttributes, a plik ma oba pola', async () => {
+    const item = toLoaded(
+      draft('agent', 'acme-bez-nazwy', {
+        content: {
+          title: 'acme-bez-nazwy',
+          description: 'Pierwszy akapit',
+          descriptionOrigin: 'derived',
+          body: 'Pierwszy akapit\n',
+        },
+      }),
+    );
+    const plan = await adapter.plan([item], ctx(target()));
+    const verdict = plan.verdicts[0]!.verdict;
+    expect(verdict.level).toBe('lossy');
+    expect(verdict.addedAttributes).toEqual(['name', 'description']);
+    expect(verdict.reasons.join(' ')).toMatch(/dopisze: name, description/);
+    const fm = parseFrontmatter(text(entryFor(plan, id('agents'), 'acme-bez-nazwy.md')!.content));
+    expect(fm.data.get('name')).toBe('acme-bez-nazwy');
+    expect(fm.data.get('description')).toBe('Pierwszy akapit');
+  });
+
+  it('agent z name i opisem ze zrodla zostaje full, bez addedAttributes', () => {
+    const item = toLoaded(
+      draft('agent', 'acme-pelny', {
+        identity: { slug: 'acme-pelny', declaredName: 'acme-pelny', aliases: [] },
+      }),
+    );
+    const verdict = adapter.capabilities(item.item);
+    expect(verdict).toEqual({
+      level: 'full',
+      reasons: [],
+      lostAttributes: [],
+      addedAttributes: [],
+    });
+  });
+});

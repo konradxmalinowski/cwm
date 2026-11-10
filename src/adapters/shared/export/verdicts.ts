@@ -27,6 +27,17 @@ export function unsupported(reason: string): CompatibilityVerdict {
   return verdict('unsupported', [reason]);
 }
 
+/**
+ * Pola, ktore cel wymaga, a element ich nie ma: brak `name` dopisuje sie jako slug, opis
+ * wyliczony trafia do pliku i przy ponownym imporcie jest juz opisem ze zrodla.
+ */
+export function requiredFieldAdditions(item: LibraryItem): string[] {
+  const added: string[] = [];
+  if (item.identity.declaredName === null) added.push('name');
+  if (item.content.descriptionOrigin === 'derived') added.push('description');
+  return added;
+}
+
 /** Klucze ze snapshotow innych narzedzi: nie maja obrazu w pliku, ktory tu piszemy. */
 export function foreignUnmapped(item: LibraryItem, tool: ToolId, prefix?: string): string[] {
   const out: string[] = [];

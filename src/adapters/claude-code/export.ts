@@ -18,7 +18,13 @@ import {
   type MarkdownSource,
 } from '../shared/export/markdown-export';
 import { PlanBuilder, encode, pickRoot } from '../shared/export/plan-support';
-import { foreignUnmapped, unsupportedKind, verdict } from '../shared/export/verdicts';
+import {
+  foreignUnmapped,
+  requiredFieldAdditions,
+  unsupportedKind,
+  verdict,
+  worst,
+} from '../shared/export/verdicts';
 import { MODEL_DEPTH, mapAgentAttributes } from './agent-attributes';
 
 const TOOL = 'claude-code' as const;
@@ -41,7 +47,20 @@ export function claudeCapabilities(item: LibraryItem): CompatibilityVerdict {
     }
     case 'agent': {
       const lost = foreignUnmapped(item, TOOL);
-      return lost.length === 0 ? verdict('full') : verdict('partial', [FOREIGN_KEYS], lost);
+      const added = requiredFieldAdditions(item);
+      const reasons = lost.length === 0 ? [] : [FOREIGN_KEYS];
+      // Wykryte testem round-trip: plik agenta zawsze dostaje name i description, wiec ich brak
+      // w elemencie to dopisanie, a nie zgodnosc pelna (ARCHITECTURE 4.3, addedAttributes).
+      if (added.length > 0) {
+        reasons.push(
+          `Claude Code wymaga we frontmatterze agenta pól name i description. Aplikacja dopisze: ${added.join(', ')}.`,
+        );
+      }
+      const level = worst(
+        lost.length === 0 ? 'full' : 'partial',
+        added.length > 0 ? 'lossy' : 'full',
+      );
+      return verdict(level, reasons, lost, added);
     }
     case 'global-instruction':
       return verdict('partial', [

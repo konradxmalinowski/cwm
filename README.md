@@ -306,6 +306,7 @@ Kryterium akceptacji Etapu 1 punkt 5: kazda pozycja w `package.json` ma powod.
 | `prettier`                                                      | formatowanie, jedno zrodlo prawdy o stylu                                                                                                                                |
 | `vitest`                                                        | testy jednostkowe, kontraktowe i integracyjne (ARCHITECTURE 12.1)                                                                                                        |
 | `@playwright/test`                                              | E2E przeciw Electronowi (ADR 0009)                                                                                                                                       |
+| `fast-check`                                                    | testy property-based round-trip eksportu i importu dla obu narzedzi (ARCHITECTURE 12.1, ROADMAP Etap 9 kryterium 7); generatory zamiast recznie dobranych przykladow     |
 
 Pole `overrides` przypina `vitest` w drzewie `@angular/build`. Angular
 deklaruje `vitest` jako opcjonalny peer w zakresie `^3.1.1`, a jego builder

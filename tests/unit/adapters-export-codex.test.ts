@@ -282,3 +282,37 @@ describe('eksport Codeksa: hooki i serwery MCP', () => {
     expect(plan.refusals[0]?.reason).toMatch(/MCP/);
   });
 });
+
+/** Regresja z testu property-based: dopisane pola agenta Codeksa sa w werdykcie. */
+describe('eksport Codeksa: werdykt agenta zapowiada dopisane pola', () => {
+  it('agent bez name jest lossy z addedAttributes, a plik TOML ma name rowne slugowi', async () => {
+    const item = toLoaded(
+      draft('agent', 'acme-bez-nazwy', {
+        identity: { slug: 'acme-bez-nazwy', declaredName: null, aliases: [] },
+      }),
+    );
+    const verdict = adapter.capabilities(item.item);
+    expect(verdict.level).toBe('lossy');
+    expect(verdict.addedAttributes).toEqual(['name']);
+    const reader = new MemoryReader();
+    for (const k of KINDS) {
+      if (k === 'agent-registry') reader.file(id(k), 'config.toml', '');
+      else if (k === 'global-instructions') reader.file(id(k), 'AGENTS.md', '');
+      else if (k === 'hooks') reader.file(id(k), 'hooks.json', '{}\n');
+      else reader.dir(id(k));
+    }
+    const plan = await adapter.plan([item], {
+      roots,
+      reader,
+      materialization: { directory: 'copy', file: 'copy' },
+    });
+    const file = entryFor(plan, id('agents'), 'acme-bez-nazwy.toml');
+    expect((parse(text(file!.content)) as Record<string, unknown>)['name']).toBe('acme-bez-nazwy');
+  });
+
+  it('agent z name i opisem ze zrodla zostaje partial, bez addedAttributes', () => {
+    const verdict = adapter.capabilities(toLoaded(draft('agent', 'acme-pelny')).item);
+    expect(verdict.level).toBe('partial');
+    expect(verdict.addedAttributes).toEqual([]);
+  });
+});

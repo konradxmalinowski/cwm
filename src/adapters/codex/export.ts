@@ -24,7 +24,13 @@ import {
   readTarget,
   snapshotBytes,
 } from '../shared/export/plan-support';
-import { foreignUnmapped, unsupportedKind, verdict, worst } from '../shared/export/verdicts';
+import {
+  foreignUnmapped,
+  requiredFieldAdditions,
+  unsupportedKind,
+  verdict,
+  worst,
+} from '../shared/export/verdicts';
 import type { YamlValue } from '../shared/frontmatter';
 import { SegmentTomlEditor, type AgentRegistration } from '../shared/toml/segment-editor';
 import { TextDecodeError } from '../shared/text';
@@ -49,15 +55,11 @@ const DEPTH_EFFORT: Readonly<Record<ReasoningDepth, string>> = {
 
 const KNOWN_TOML_KEYS = new Set(['name', 'description', 'developer_instructions']);
 
+const AGENT_ADDED = (added: readonly string[]): string =>
+  `Plik agenta Codeksa wymaga pól name i description. Aplikacja dopisze: ${added.join(', ')}.`;
+
 const FOREIGN =
   'Pola specyficzne dla innego narzędzia nie mają odpowiednika w Codeksie. Zostają w snapshocie źródła.';
-
-function skillAdditions(item: LibraryItem): string[] {
-  const added: string[] = [];
-  if (item.identity.declaredName === null) added.push('name');
-  if (item.content.descriptionOrigin === 'derived') added.push('description');
-  return added;
-}
 
 /** Werdykt dla konkretnego elementu (ARCHITECTURE 4.3, ADR 0021, 0026). Czysta funkcja, bez I/O. */
 export function codexCapabilities(item: LibraryItem): CompatibilityVerdict {
@@ -65,7 +67,7 @@ export function codexCapabilities(item: LibraryItem): CompatibilityVerdict {
     case 'skill': {
       const reasons: string[] = [];
       const lost = foreignUnmapped(item, TOOL, 'frontmatter.');
-      const added = skillAdditions(item);
+      const added = requiredFieldAdditions(item);
       let level = verdict('full').level;
       if (lost.length > 0) {
         level = worst(level, 'partial');
@@ -94,7 +96,7 @@ export function codexCapabilities(item: LibraryItem): CompatibilityVerdict {
           'Codex nie ma pojęcia komendy. Element będzie dostępny jako skill, bez wywołania przez ukośnik (ADR 0021).',
         ],
         lost,
-        skillAdditions(item),
+        requiredFieldAdditions(item),
       );
     }
     case 'agent': {
@@ -110,7 +112,10 @@ export function codexCapabilities(item: LibraryItem): CompatibilityVerdict {
       lost.push(...foreignUnmapped(item, TOOL));
       if (lost.length > 0)
         reasons.push('Część pól nie ma odpowiednika w Codeksie i zostaje w snapshocie.');
-      return verdict('partial', reasons, lost);
+      const added = requiredFieldAdditions(item);
+      if (added.length === 0) return verdict('partial', reasons, lost);
+      reasons.push(AGENT_ADDED(added));
+      return verdict('lossy', reasons, lost, added);
     }
     case 'global-instruction':
       return verdict('partial', [
