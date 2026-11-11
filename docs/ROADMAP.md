@@ -579,8 +579,13 @@ Dowody (stan na 2026-11-11):
 
 #### Kryteria 4 i 5: dowody (pipeline wydania i atrapy)
 
-Status etapu: **otwarty**. Kryteria 4 i 5 mają dowód z CI poniżej, ale zostaje krok ręczny
-właściciela (checklista na końcu) i musi wylądować zawartość kryteriów 1–3 z `docs-agent`.
+Status etapu: **wydany, z jednym krokiem otwartym**. Wydanie
+[v0.1.0](https://github.com/konradxmalinowski/universal-ai-skills-manager/releases/tag/v0.1.0)
+opublikowane 2026-11-11 z commita `6d83a46` (przebieg `release.yml` `43018775505`, CI `main`
+zielone na czterech celach i czterech paczkach). Wydanie ma osiem plików i `SHA256SUMS`;
+suma DMG arm64 sprawdzona po pobraniu. Kryteria 1–5 mają dowód poniżej. Otwarty zostaje krok
+ręczny z checklisty na końcu: pierwsze uruchomienie pobranych plików przez Gatekeepera
+i SmartScreen nie zostało wykonane i jest wymienione w notatce wydania jako znane ograniczenie.
 
 **Pipeline wydania** (`.github/workflows/release.yml`). Tag `v*` uruchamia: `preflight` (tag
 musi równać się `v` + wersja z `package.json`), `build` na czterech celach z flagami jak w jobie
