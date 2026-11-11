@@ -303,7 +303,7 @@ export function blockers(plan: ExportPlanDto, counts: PlanCounts): string[] {
   }
   if (!plan.toolMissing && plan.conflicts.length === 0 && counts.blocked === 0) {
     if (plan.entries.length > 0 && counts.changes === 0) {
-      reasons.push('Nic nie wymaga zapisu: wszystkie pliki są już zgodne z biblioteką.');
+      reasons.push('Nic do zapisania. Wszystko jest aktualne.');
     } else if (plan.entries.length === 0) {
       reasons.push('Żaden z wybranych elementów nie da plików do zapisania.');
     } else {

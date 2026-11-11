@@ -136,6 +136,19 @@ describe('kanaly export:*', () => {
     expect(dto.applicable).toBe(true);
   });
 
+  it('plan z samymi wpisami unchanged nie jest do zapisu', async () => {
+    const h = await exportHarness({
+      roots: [root('r-claude', 'claude-code')],
+      build: () => emptyPlan({ entries: [entry({ action: 'unchanged' })] }),
+    });
+    const { call } = wire(h.service);
+    const r = await call<ExportPlanDto>('export:plan', {
+      tool: 'claude-code',
+      itemIds: [h.itemId],
+    });
+    expect(r.ok && r.value.applicable).toBe(false);
+  });
+
   it('resolutions: walidacja, przekazanie do eksportera i opcje konfliktu w DTO', async () => {
     const h = await exportHarness({
       roots: [root('r-claude', 'claude-code')],

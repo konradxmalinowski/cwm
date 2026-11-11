@@ -200,7 +200,7 @@ export class ExportWizardComponent {
         if (counts.blocked > 0)
           return 'Część plików jest zablokowana, więc nie da się zapisać planu.';
         if (plan.entries.length > 0 && counts.changes === 0) {
-          return 'Cel jest zgodny z biblioteką, więc zapis nie zmieni żadnego pliku.';
+          return 'Nic do zapisania. Wszystko jest aktualne.';
         }
         return 'Z tego wyboru nie powstanie żaden plik.';
       }

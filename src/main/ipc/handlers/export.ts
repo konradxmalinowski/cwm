@@ -136,7 +136,9 @@ export function toPlanDto(report: ExportPlanReport): ExportPlanDto {
       relPath: o.relPath,
       reason: o.reason,
     })),
-    applicable: plan.applicable && !report.toolMissing,
+    // Plan bez zmian (same `unchanged`) nic nie zapisze, wiec nie jest do zapisu.
+    applicable:
+      plan.applicable && !report.toolMissing && plan.entries.some((e) => e.action !== 'unchanged'),
   };
 }
 
