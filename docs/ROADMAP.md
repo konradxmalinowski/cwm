@@ -569,6 +569,14 @@ Kryteria akceptacji:
 5. Wydanie zawiera `SHA256SUMS` i nie zawiera żadnej funkcji opisanej jako gotowa, która jest
    atrapą.
 
+Dowody (stan na 2026-11-11):
+
+| Kryterium | Test albo dokument | Status |
+|---|---|---|
+| 1 | `docs/INSTALACJA.md` (wybór pliku DMG arm64 i x64, obejście Gatekeepera w dwóch wariantach z `xattr`, obejście SmartScreena, deb zalecany, AppImage na Ubuntu 24.04 z `--no-sandbox` i jego konsekwencją dla bezpieczeństwa, weryfikacja `SHA256SUMS` na trzech systemach, `npm ci` i `npm run dev`, katalogi `userData` na trzech systemach i ich zawartość, zakres z ADR 0032) oraz odnośniki w `README.md`. Ścieżki `userData` sprawdzone na macOS przez `app.getPath('userData')`, wzorzec polecenia sum na macOS; kroki obejść opisane według dokumentacji systemów, wynik na czystych systemach należy do kryterium 4 | spełnione dla treści; wykonanie na czystych systemach w kryterium 4 |
+| 2 | `docs/OGRANICZENIA.md`: tabela typ elementu i narzędzie wyprowadzona z `claudeCapabilities` i `codexCapabilities` (`src/adapters/*/export.ts`), segmenter TOML z listą konstrukcji powodujących odmowę zgodną z `SegmentTomlEditor.checkScanned`, markery `ai-skills-manager` i reguły `applyMarkerBlock`, MCP (ADR 0020), sieroty (ADR 0034). Zachowania z dokumentu sprawdzone w kodzie: zablokowany eksport skilla nad zwykłym katalogiem (probe), dopisanie drugiego bloku po edycji zaimportowanej instrukcji (`applyMarkerBlock`) | spełnione |
+| 3 | `docs/ODZYSKIWANIE.md` i `tests/integration/recovery-procedure.test.ts`: kopia z prawdziwego `WriteGate` (zmiana pliku z trybem, nowy plik w nowym katalogu, dowiązanie do katalogu, plik zastąpiony dowiązaniem), kroki A1 do A4 wykonane samym `node:fs`, drzewo porównane przez `treeHash` bajt w bajt razem z trybami i celami dowiązań; A5 z `objects/`; D1 dla dowiązania wskazującego w próżnię; B1 do B3 dla elementu biblioteki i poprzedniej wersji z `objects/`; C dla indeksu w kwarantannie. Test widziany jako czerwony po usunięciu kroku `chmod` | spełnione |
+
 #### Kryteria 4 i 5: dowody (pipeline wydania i atrapy)
 
 Status etapu: **otwarty**. Kryteria 4 i 5 mają dowód z CI poniżej, ale zostaje krok ręczny

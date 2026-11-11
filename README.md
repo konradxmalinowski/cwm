@@ -1,44 +1,54 @@
 # Universal AI Skills Manager
 
-Aplikacja desktopowa do zarzadzania skillami, agentami, komendami, instrukcjami
-i regulami roznych narzedzi AI z jednego miejsca. Dane zostaja na komputerze
-uzytkownika, bez backendu i bez kont.
+Aplikacja desktopowa do zarządzania konfiguracją narzędzi AI do programowania z jednego
+miejsca: skillami, agentami, komendami, instrukcjami globalnymi i hookami. Obsługuje Claude Code
+i OpenAI Codex. Działa lokalnie na macOS, Windowsie i Linuksie, bez backendu i bez kont.
+Twoja biblioteka to zwykłe pliki w katalogu danych aplikacji.
 
-**Stan: Etapy 1 do 5 sa w kodzie, to nie jest jeszcze wydanie.** Plan etapow
-z otwartymi kryteriami jest w `docs/ROADMAP.md`, architektura w
-`docs/ARCHITECTURE.md`, decyzje w `docs/adr/`.
+Wydania są niepodpisane (ADR 0003), więc system ostrzeże cię przy pierwszym uruchomieniu.
+Postęp prac i kryteria wydania: `docs/ROADMAP.md`.
 
-## Co aplikacja robi dzis
+## Dokumentacja dla użytkownika
 
-Uruchomienie z zrodel: `npm install`, potem `npm run dev` (szczegoly nizej).
+- [`docs/INSTALACJA.md`](docs/INSTALACJA.md): pobranie, sprawdzenie sum kontrolnych, instalacja
+  i obejście ostrzeżeń Gatekeepera i SmartScreena, uruchomienie na każdym systemie, gdzie leżą
+  dane.
+- [`docs/OGRANICZENIA.md`](docs/OGRANICZENIA.md): co ginie i co jest dopisywane przy konwersji
+  między narzędziami, kiedy aplikacja odmawia edycji `config.toml`, blok między markerami.
+- [`docs/ODZYSKIWANIE.md`](docs/ODZYSKIWANIE.md): jak ręcznie odtworzyć pliki z kopii zapasowych
+  i bibliotekę, gdy aplikacja nie startuje.
 
-- **Biblioteka.** Tworzenie, edycja, wyszukiwanie i usuwanie elementow. Szukanie
-  to filtr po slugu, tytule, opisie i tresci, nie pelnotekstowy indeks. Usuniecie
-  ma plan i wymaga potwierdzenia.
-- **Import.** Z `~/.claude` i `~/.codex` (oraz wspolnego `~/.agents`): skille,
-  agenci, komendy, instrukcje globalne i hooki. Podglad z wykrywaniem duplikatow
-  i roznic, elementy z potencjalnym sekretem sa domyslnie odznaczone. Zrodlo nie
-  jest modyfikowane.
-- **Eksport.** Do Claude Code i Codeksa, z planem zapisu, podgladem diffu bez
-  sekretow, ostrzezeniami o utracie zgodnosci i potwierdzeniem. Przed zapisem
-  powstaje kopia w `backups/`, po zapisie plik jest czytany z powrotem.
-- **Synchronizacja i historia.** Stan kazdego elementu wzgledem kazdego narzedzia,
-  plan zmian, zapis i cofniecie zapisu z widoku Historia.
-- **Diagnostyka.** Raport srodowiska i stan indeksu.
+Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsza część tego pliku.
 
-Zastrzezenia, ktore warto znac przed pierwszym uzyciem:
+## Co aplikacja robi
 
-- **Tylko konfiguracje globalne** (ADR 0032). `CLAUDE.md`, `AGENTS.md` i
-  `.mcp.json` lezace w repozytoriach projektow nie trafiaja do biblioteki.
-- Eksport dziala tylko do narzedzia, ktorego katalog glowny (`~/.claude`,
-  `~/.codex`) istnieje (ADR 0033).
-- Aplikacja nie usuwa plikow w narzedziach. Pliki, ktorych biblioteka juz nie
-  realizuje, sa tylko raportowane; usuniecie zdarza sie wylacznie przy cofaniu
-  zapisu aplikacji (ADR 0034).
-- Serwery MCP nie sa synchronizowane (ADR 0020).
-- Wydania sa niepodpisane (sekcja nizej).
+- **Biblioteka.** Tworzenie, edycja, wyszukiwanie i usuwanie elementów. Wyszukiwanie korzysta
+  z indeksu pełnotekstowego SQLite; gdy indeks jest niedostępny, lista filtruje po nazwie,
+  tytule, opisie i treści. Usunięcie ma plan i wymaga potwierdzenia.
+- **Import.** Z `~/.claude`, `~/.codex` i wspólnego `~/.agents`: skille, agenci, komendy,
+  instrukcje globalne i hooki. Podgląd wykrywa duplikaty i różnice, a elementy z potencjalnym
+  sekretem są domyślnie odznaczone. Źródło nie jest modyfikowane.
+- **Eksport.** Do Claude Code i Codeksa, z planem zapisu, podglądem różnic bez sekretów,
+  ostrzeżeniami o utracie zgodności i potwierdzeniem. Przed zapisem powstaje kopia w `backups/`,
+  po zapisie plik jest czytany z powrotem.
+- **Synchronizacja i historia.** Stan każdego elementu względem każdego narzędzia, plan zmian,
+  zapis i cofnięcie zapisu z widoku Historia.
+- **Diagnostyka.** Raport środowiska, stan indeksu i ręczna odbudowa indeksu.
 
-## Wymagania
+Zastrzeżenia, które warto znać przed pierwszym użyciem (szczegóły w `docs/OGRANICZENIA.md`):
+
+- Tylko konfiguracje globalne (ADR 0032). `CLAUDE.md`, `AGENTS.md` i `.mcp.json` leżące
+  w repozytoriach projektów nie trafiają do biblioteki.
+- Eksport działa tylko do narzędzia, którego katalog główny (`~/.claude`, `~/.codex`) istnieje
+  (ADR 0033).
+- Aplikacja nie usuwa plików w narzędziach (ADR 0034). Usunięcie elementu z biblioteki zostawia
+  jego plik w narzędziu. Jedyne usunięcie to cofnięcie własnego zapisu z widoku Historia.
+- Serwery MCP i ustawienia narzędzi nie są ani importowane, ani eksportowane (ADR 0020).
+- Reguły (rules) nie są obsługiwane.
+- Nie ma jeszcze: porównywania i scalania wersji poza podglądem w planie eksportu, profili,
+  ustawień aplikacji, eksportu do ZIP, autoaktualizacji ani integracji z Gitem.
+
+## Dla deweloperów: wymagania
 
 - Node.js 24 (linia LTS; wersja w `.nvmrc`)
 - Nic poza tym. `better-sqlite3` 13 dostarcza w paczce npm prebuildy N-API dla
@@ -48,10 +58,10 @@ Zastrzezenia, ktore warto znac przed pierwszym uzyciem:
   jest potrzebny tylko wtedy, gdy dla jakiejs pary prebuildu zabraknie i trzeba
   siegnac po `npm run rebuild:native`.
 
-## Uruchomienie
+## Dla deweloperów: uruchomienie ze źródeł
 
 ```
-npm install
+npm ci
 npm run dev        # build i uruchomienie aplikacji
 ```
 
@@ -320,21 +330,9 @@ nich poprawki poza cofnieciem `electron-builder` do starszej wersji, nie
 dotycza kodu wchodzacego do aplikacji i nie sa w sciezce wykonania u uzytkownika.
 Bramka w CI blokuje na poziomie `high` dla zaleznosci produkcyjnych.
 
-## Wydania sa niepodpisane
+## Wydania są niepodpisane
 
-Swiadoma decyzja na czas MVP (ADR 0003). Z tego wynikaja ostrzezenia systemu
-przy pierwszym uruchomieniu:
-
-**macOS.** Gatekeeper zablokuje aplikacje z niezidentyfikowanego dewelopera.
-Obejscie: Finder, prawy przycisk na aplikacji, Otworz, potem Otworz
-w okienku potwierdzenia. Alternatywnie Ustawienia systemowe, Prywatnosc
-i bezpieczenstwo, Otworz mimo to.
-
-**Windows.** SmartScreen pokaze ostrzezenie "Windows chronil Twoj komputer".
-Obejscie: Wiecej informacji, Uruchom mimo to.
-
-**Linux.** AppImage wymaga nadania prawa wykonywania
-(`chmod +x`), paczka `deb` instaluje sie normalnie.
-
-Bez podpisu jedyna weryfikacja pobranego pliku to suma kontrolna: kazde wydanie
-ma plik `SHA256SUMS`. Autoaktualizacja jest wylaczona.
+Świadoma decyzja na czas MVP (ADR 0003): bez certyfikatu Apple i Authenticode system ostrzega
+przy pierwszym uruchomieniu, a autoaktualizacja jest wyłączona. Każde wydanie ma plik
+`SHA256SUMS`, który jest jedyną weryfikacją pobranego pliku. Kroki obejścia ostrzeżeń
+dla macOS, Windowsa i Linuksa oraz weryfikacja sum: [`docs/INSTALACJA.md`](docs/INSTALACJA.md).
