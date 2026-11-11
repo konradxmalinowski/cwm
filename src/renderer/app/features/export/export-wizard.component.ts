@@ -9,7 +9,11 @@ import {
   signal,
 } from '@angular/core';
 
-import type { ExportApplyDto, ExportPlanDto } from '../../../../shared/ipc/export-contract';
+import type {
+  ConflictResolutionDto,
+  ExportApplyDto,
+  ExportPlanDto,
+} from '../../../../shared/ipc/export-contract';
 import type { ToolIdDto } from '../../../../shared/ipc/import-contract';
 import type { ItemSummaryDto } from '../../../../shared/ipc/library-contract';
 import { ExportApiService } from '../../core/ipc/export-api.service';
@@ -20,7 +24,16 @@ import { ExportSelectionService } from '../../core/state/export-selection.servic
 import { toolLabel } from '../import/import-model';
 import { ApplyResultComponent } from './apply-result.component';
 import { ExportConfirmDialogComponent } from './export-confirm-dialog.component';
-import { TOOLS, blockers, countPlan, toolLocative } from './export-model';
+import {
+  TOOLS,
+  blockers,
+  conflictKey,
+  countPlan,
+  decisionKey,
+  hasOptions,
+  toolLocative,
+  type DecisionView,
+} from './export-model';
 import { PlanViewComponent } from './plan-view.component';
 
 type ItemsState =
@@ -67,6 +80,17 @@ export class ExportWizardComponent {
   protected readonly applyError = signal<string | null>(null);
   protected readonly result = signal<ExportApplyDto | null>(null);
   protected readonly confirming = signal(false);
+  /** Trwa przeliczanie planu po wyborze decyzji: do tego czasu stary plan nie jest wykonywalny. */
+  protected readonly replanning = signal(false);
+  protected readonly replanError = signal<string | null>(null);
+
+  /** Wybory uzytkownika dla konfliktow z opcjami, po `decisionKey`. */
+  private readonly choices = signal<ReadonlyMap<string, ConflictResolutionDto>>(new Map());
+  /** Konflikty z opcjami widziane w kolejnych planach; rozstrzygniety konflikt znika z planu, grupa zostaje. */
+  private readonly points = signal<ReadonlyMap<string, Omit<DecisionView, 'chosen' | 'settled'>>>(
+    new Map(),
+  );
+  private lastRequest: { tool: ToolIdDto; itemIds: string[] } | null = null;
 
   private seq = 0;
   private itemsSeq = 0;
@@ -117,6 +141,22 @@ export class ExportWizardComponent {
     return plan === null ? null : countPlan(plan);
   });
 
+  protected readonly decisions = computed<DecisionView[]>(() => {
+    const plan = this.plan();
+    if (plan === null) return [];
+    const open = new Set(plan.conflicts.filter(hasOptions).map(conflictKey));
+    const choices = this.choices();
+    return [...this.points().values()].map((point) => ({
+      ...point,
+      chosen: choices.get(point.key) ?? null,
+      settled: !open.has(point.key),
+    }));
+  });
+
+  protected readonly openDecisions = computed(
+    () => this.plan()?.conflicts.filter(hasOptions).length ?? 0,
+  );
+
   protected readonly titleMap = computed(
     () => new Map(this.visibleItems().map((item) => [item.id, item.title])),
   );
@@ -146,8 +186,12 @@ export class ExportWizardComponent {
         if (plan.toolMissing) {
           return `Nie ma narzędzia ${this.planTool()} na tym komputerze, więc eksport jest niemożliwy.`;
         }
+        if (this.replanning())
+          return 'Przeliczam plan po Twojej decyzji. Niczego jeszcze nie zapisuję.';
         if (plan.conflicts.length > 0) {
-          return 'Plan ma konflikty, więc nie da się go zapisać.';
+          return plan.conflicts.every(hasOptions)
+            ? 'Plik w narzędziu wymaga Twojej decyzji, zanim zapis będzie możliwy.'
+            : 'Plan ma konflikty, więc nie da się go zapisać.';
         }
         if (plan.applicable) {
           const n = counts.changes;
@@ -288,13 +332,18 @@ export class ExportWizardComponent {
     const seq = ++this.seq;
     this.planError.set(null);
     this.phase.set('planning');
-    const result = await this.exportApi.plan({ tool, itemIds: [...this.selected()] });
+    const itemIds = [...this.selected()];
+    this.lastRequest = { tool, itemIds };
+    this.choices.set(new Map());
+    this.points.set(new Map());
+    const result = await this.exportApi.plan({ tool, itemIds });
     if (seq !== this.seq) return;
     if (!result.ok) {
       this.planError.set(result.error.message);
       this.phase.set('select');
       return;
     }
+    this.rememberDecisions(result.value);
     this.plan.set(result.value);
     this.applyError.set(null);
     this.phase.set('plan');
@@ -307,8 +356,79 @@ export class ExportWizardComponent {
 
   // ---- Krok 2 ----
 
+  /**
+   * Wybor opcji konfliktu: ten sam plan zapytania (narzedzie i elementy) z decyzjami dla wszystkich
+   * konfliktow, w ktorych cos wybrano. Nowy plan ma nowy `planId`; stary nie jest juz zapisywany.
+   */
+  protected async decide(
+    itemId: string,
+    relPath: string,
+    resolution: ConflictResolutionDto,
+  ): Promise<void> {
+    const request = this.lastRequest;
+    if (request === null || this.phase() !== 'plan' || this.replanning()) return;
+    const key = decisionKey(itemId, relPath);
+    const previous = this.choices();
+    const next = new Map(previous);
+    next.set(key, resolution);
+    const seq = ++this.seq;
+    this.choices.set(next);
+    this.replanError.set(null);
+    this.replanning.set(true);
+    const resolutions = [...next.entries()].map(([k, value]) => {
+      const point = this.points().get(k);
+      return { itemId: point?.itemId ?? '', relPath: point?.relPath ?? '', resolution: value };
+    });
+    const result = await this.exportApi.plan({ ...request, resolutions });
+    if (seq !== this.seq) return;
+    this.replanning.set(false);
+    if (!result.ok) {
+      this.choices.set(previous);
+      this.replanError.set(result.error.message);
+    } else {
+      this.rememberDecisions(result.value);
+      this.plan.set(result.value);
+    }
+    setTimeout(() => {
+      const group = Array.from(document.querySelectorAll<HTMLElement>('[data-decision-key]')).find(
+        (el) => el.dataset['decisionKey'] === key,
+      );
+      const radio =
+        group?.querySelector<HTMLInputElement>('input:checked') ??
+        group?.querySelector<HTMLInputElement>('input');
+      radio?.focus();
+    }, 0);
+  }
+
+  /** Zapamietuje konflikty z opcjami i usuwa wybory, ktorych plan juz nie oferuje. */
+  private rememberDecisions(plan: ExportPlanDto): void {
+    const points = new Map(this.points());
+    const choices = new Map(this.choices());
+    for (const conflict of plan.conflicts) {
+      if (!hasOptions(conflict)) continue;
+      const key = conflictKey(conflict);
+      const options = conflict.options ?? [];
+      points.set(key, {
+        key,
+        itemId: conflict.itemIds[0] ?? '',
+        relPath: conflict.relPath,
+        itemIds: conflict.itemIds,
+        reason: conflict.reason,
+        options,
+      });
+      const chosen = choices.get(key);
+      if (chosen !== undefined && !options.some((o) => o.id === chosen)) choices.delete(key);
+    }
+    this.points.set(points);
+    this.choices.set(choices);
+  }
+
   protected backToSelection(): void {
     this.seq++;
+    this.replanning.set(false);
+    this.replanError.set(null);
+    this.choices.set(new Map());
+    this.points.set(new Map());
     this.plan.set(null);
     this.applyError.set(null);
     this.confirming.set(false);
@@ -323,7 +443,7 @@ export class ExportWizardComponent {
 
   protected openConfirm(): void {
     const plan = this.plan();
-    if (plan === null || !plan.applicable || this.phase() !== 'plan') return;
+    if (plan === null || !plan.applicable || this.phase() !== 'plan' || this.replanning()) return;
     this.confirming.set(true);
   }
 
@@ -353,6 +473,10 @@ export class ExportWizardComponent {
 
   protected restart(): void {
     this.seq++;
+    this.replanning.set(false);
+    this.replanError.set(null);
+    this.choices.set(new Map());
+    this.points.set(new Map());
     this.plan.set(null);
     this.result.set(null);
     this.applyError.set(null);

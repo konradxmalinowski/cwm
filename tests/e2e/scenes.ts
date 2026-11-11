@@ -964,6 +964,73 @@ export const SCENES: readonly Scene[] = [
     },
   },
   {
+    id: 'eksport/plan-decyzja',
+    view: 'Eksport',
+    state: 'ostrzezenie',
+    world: 'seeded',
+    reach: async (c) => {
+      // Prawdziwy plan jako podstawa, z konfliktem z opcjami i wpisem z zastapieniem katalogu:
+      // swiat seeded nie ma instrukcji globalnej bez znacznikow, a prawdziwy przeplyw jest
+      // w export-decision.spec.ts.
+      const id = item(c.w, 'acme-flat');
+      const real = await call<Record<string, unknown>>(c.page, 'export', 'plan', {
+        tool: 'codex',
+        itemIds: [id],
+      });
+      const entries = (real['entries'] as Record<string, unknown>[]).map((e, i) =>
+        i === 0
+          ? {
+              ...e,
+              action: 'modify',
+              warnings: [
+                'Nadpisze zawartość istniejącego katalogu "acme-flat". Cała jego poprzednia zawartość trafi do kopii zapasowej. Znikną z katalogu pliki, których nie ma w nowej wersji: notatki.txt, references/a.md.',
+              ],
+            }
+          : e,
+      );
+      await c.mock('export:plan', {
+        kind: 'reply',
+        result: {
+          ok: true,
+          value: {
+            ...real,
+            entries,
+            applicable: false,
+            conflicts: [
+              {
+                itemIds: [id],
+                relPath: 'AGENTS.md',
+                reason:
+                  'Plik AGENTS.md zawiera treść zaimportowaną z niego do tego elementu (3 linii), ale bez znaczników aplikacji. Zamiana wstawi blok aplikacji w miejsce tego fragmentu, a resztę pliku zostawi bez zmian. Dopisanie bloku na końcu zostawi starą treść w pliku, więc treść będzie w nim dwa razy.',
+                options: [
+                  { id: 'replace-fragment', label: 'Zamień ten fragment na blok aplikacji' },
+                  { id: 'append-block', label: 'Dopisz blok na końcu' },
+                ],
+              },
+              {
+                itemIds: [id, item(c.w, 'acme-deploy')],
+                relPath: 'skills/acme-deploy/SKILL.md',
+                reason: 'Komenda i skill o tej samej nazwie chcą zapisać ten sam plik.',
+              },
+            ],
+          },
+        },
+      });
+      await exportPlan(c, 'codex', ['acme-flat']);
+      await t(c.page, 'export-decisions').waitFor();
+    },
+    assert: async ({ page }) => {
+      const options = t(page, 'export-decision-option');
+      await expect(options).toHaveCount(2);
+      await expect(options.nth(0)).not.toBeChecked();
+      await expect(options.nth(1)).not.toBeChecked();
+      await expect(t(page, 'export-decision-overwrite')).toContainText('Nadpisze');
+      await expect(t(page, 'export-overwrite-files')).toContainText('notatki.txt');
+      await expect(t(page, 'export-conflict')).toHaveCount(1);
+      await expect(t(page, 'export-apply')).toBeDisabled();
+    },
+  },
+  {
     id: 'eksport/dialog-potwierdzenia',
     view: 'Eksport',
     world: 'seeded',

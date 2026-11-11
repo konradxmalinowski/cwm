@@ -268,7 +268,37 @@
             </div>
           }
 
-          <app-plan-view [plan]="p" [titles]="titleMap()" />
+          @if (replanError(); as message) {
+            <div class="notice" role="alert" data-testid="export-replan-error">
+              <p class="notice__text">
+                <span class="notice__label">Błąd.</span> Nie udało się przeliczyć planu po decyzji:
+                {{ message }}
+              </p>
+              <p class="notice__text">
+                Wybór został cofnięty. Poniższy plan nadal wymaga decyzji albo zapisuje to, co
+                pokazuje.
+              </p>
+            </div>
+          }
+
+          @if (replanning()) {
+            <div class="skeleton" aria-hidden="true" data-testid="export-replan-loading">
+              @for (row of [1, 2, 3, 4]; track row) {
+                <div class="skeleton__row">
+                  <span class="skeleton__bar skeleton__bar--s"></span>
+                  <span class="skeleton__bar skeleton__bar--l"></span>
+                </div>
+              }
+            </div>
+            <p role="status">Przeliczam plan po Twojej decyzji. Niczego nie zapisuję.</p>
+          } @else {
+            <app-plan-view
+              [plan]="p"
+              [titles]="titleMap()"
+              [decisions]="decisions()"
+              (decide)="decide($event.itemId, $event.relPath, $event.resolution)"
+            />
+          }
 
           <div class="import-total" data-testid="export-total">
             <p class="import-total__count">
@@ -313,7 +343,7 @@
                 type="button"
                 class="btn btn--primary"
                 data-testid="export-apply"
-                [disabled]="!p.applicable || applyError() !== null"
+                [disabled]="!p.applicable || applyError() !== null || replanning()"
                 [attr.aria-describedby]="p.applicable ? null : 'export-blockers'"
                 (click)="openConfirm()"
               >

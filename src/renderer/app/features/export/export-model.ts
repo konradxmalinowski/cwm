@@ -1,5 +1,6 @@
 import type {
   CompatibilityLevelDto,
+  ConflictResolutionDto,
   ExportApplyDto,
   ExportPlanDto,
   MaterializationModeDto,
@@ -194,6 +195,91 @@ export const EMPTY_COUNTS: PlanCounts = {
   changes: 0,
 };
 
+type ConflictDto = ExportPlanDto['conflicts'][number];
+
+/** Konflikt z decyzjami do wyboru. Bez `options` albo z pustym `options` zostaje informacja. */
+export function hasOptions(conflict: ConflictDto): boolean {
+  return (conflict.options?.length ?? 0) > 0;
+}
+
+/** Klucz decyzji: ten sam `itemId` i `relPath`, ktore wracaja w `ExportPlanRequest.resolutions`. */
+export function decisionKey(itemId: string, relPath: string): string {
+  return `${itemId}\u0000${relPath}`;
+}
+
+export function conflictKey(conflict: ConflictDto): string {
+  return decisionKey(conflict.itemIds[0] ?? '', conflict.relPath);
+}
+
+/** Konflikt z decyzja do podjecia i wybor uzytkownika; `null`, dopoki nic nie wybrano. */
+export interface DecisionView {
+  readonly key: string;
+  readonly itemId: string;
+  readonly relPath: string;
+  readonly itemIds: readonly string[];
+  readonly reason: string;
+  readonly options: readonly { readonly id: ConflictResolutionDto; readonly label: string }[];
+  readonly chosen: ConflictResolutionDto | null;
+  /** Konflikt nie wrocil w ostatnim planie, bo wybor go rozstrzygnal; grupa zostaje do zmiany zdania. */
+  readonly settled: boolean;
+}
+
+/**
+ * Sygnal przy opcji decyzji. Zamiana zmienia istniejacy tekst pliku, wiec dostaje sygnal
+ * "nadpisze"; dopisanie bloku na koncu niczego, co w pliku jest, nie zmienia.
+ */
+export const OPTION_HINT: Readonly<
+  Record<ConflictResolutionDto, { readonly overwrites: boolean; readonly text: string }>
+> = {
+  'replace-fragment': {
+    overwrites: true,
+    text: 'zmienia istniejący tekst pliku: ten fragment zniknie z pliku, a w jego miejscu stanie blok aplikacji. Poprzednia treść trafi najpierw do kopii zapasowej.',
+  },
+  'append-block': {
+    overwrites: false,
+    text: 'Istniejący tekst zostaje bez zmian. Blok aplikacji dochodzi na końcu pliku, więc treść będzie w pliku dwa razy.',
+  },
+};
+
+const OVERWRITE_PREFIX = 'Nadpisze';
+const VANISHING_MARK = 'Znikną z katalogu pliki, których nie ma w nowej wersji: ';
+
+export interface OverwriteInfo {
+  /** Zdanie ostrzezenia bez pierwszego slowa "Nadpisze" i bez listy plikow. */
+  readonly lead: string;
+  readonly vanishing: readonly string[];
+  /** Liczba plikow ponad limit listy w ostrzezeniu, np. "i 3 innych". */
+  readonly more: string | null;
+}
+
+/**
+ * Ostrzezenie wpisu planu zaczynajace sie od "Nadpisze" (zastapienie katalogu skilla): sygnal
+ * nadpisania z lista plikow, ktore znikna. Lista pochodzi z tresci ostrzezenia, plan nie ma
+ * na nia osobnego pola.
+ */
+export function overwriteInfo(entry: PlanEntryDto): OverwriteInfo | null {
+  const warning = entry.warnings.find((w) => w.startsWith(OVERWRITE_PREFIX));
+  if (warning === undefined) return null;
+  const at = warning.indexOf(VANISHING_MARK);
+  const head = (at === -1 ? warning : warning.slice(0, at)).trim();
+  const lead = head.slice(OVERWRITE_PREFIX.length).trim();
+  if (at === -1) return { lead, vanishing: [], more: null };
+  let list = warning.slice(at + VANISHING_MARK.length).trim();
+  if (list.endsWith('.')) list = list.slice(0, -1);
+  let more: string | null = null;
+  const tail = /^(.*) i (\d+ innych)$/.exec(list);
+  if (tail !== null) {
+    list = tail[1] as string;
+    more = `i ${tail[2] as string}`;
+  }
+  return { lead, vanishing: list.split(', ').filter((f) => f !== ''), more };
+}
+
+/** Ostrzezenia wpisu bez tego, ktore pokazuje sygnal nadpisania. */
+export function otherWarnings(entry: PlanEntryDto): string[] {
+  return entry.warnings.filter((w) => !w.startsWith(OVERWRITE_PREFIX));
+}
+
 /** Powody, dla ktorych plan nie nadaje sie do zapisu. Puste, gdy `applicable`. */
 export function blockers(plan: ExportPlanDto, counts: PlanCounts): string[] {
   if (plan.applicable) return [];
@@ -201,9 +287,15 @@ export function blockers(plan: ExportPlanDto, counts: PlanCounts): string[] {
   if (plan.toolMissing) {
     reasons.push('Narzędzia nie ma na tym komputerze.');
   }
-  if (plan.conflicts.length > 0) {
+  const open = plan.conflicts.filter(hasOptions).length;
+  if (open > 0) {
     reasons.push(
-      'Plan ma konflikty. Odznacz jeden z elementów w każdym konflikcie i przygotuj plan od nowa.',
+      'Plik w narzędziu wymaga decyzji. Wybierz jedną z opcji w sekcji Decyzje, a aplikacja przygotuje plan od nowa.',
+    );
+  }
+  if (plan.conflicts.length > open) {
+    reasons.push(
+      'Plan ma konflikty bez rozstrzygnięcia. Odznacz jeden z elementów w każdym konflikcie i przygotuj plan od nowa.',
     );
   }
   if (counts.blocked > 0) {

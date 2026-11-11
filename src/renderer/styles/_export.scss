@@ -538,3 +538,97 @@
     transform: translateY(4px);
   }
 }
+
+// ---- Decyzje przy konflikcie z opcjami ----
+// Wybor jest zaznaczeniem, wiec kobalt (cobalt-300); zadna opcja nie jest zaznaczona z gory.
+// Opcja, ktora zmienia istniejacy tekst pliku, niesie sygnal "nadpisze" w tresci opcji.
+.decision {
+  display: grid;
+  gap: var(--s3);
+  min-width: 0;
+  margin: 0 0 var(--s4);
+  padding: var(--s3) 0 0;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.decision__legend {
+  display: grid;
+  gap: var(--s1);
+  float: left;
+  width: 100%;
+  padding: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.decision__legend + * {
+  clear: both;
+}
+
+.decision__titles {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.decision__reason {
+  max-width: 72ch;
+}
+
+.decision__options {
+  display: grid;
+  gap: var(--s2);
+  max-width: 72ch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.decision__option {
+  display: grid;
+  gap: var(--s1);
+  padding: var(--s2) var(--s3);
+  border: 1px solid var(--text-muted);
+  border-radius: var(--radius);
+}
+
+.decision__option:has(input:checked) {
+  border-color: var(--cobalt-300);
+  box-shadow: inset 0 0 0 1px var(--cobalt-300);
+}
+
+.decision__option:has(input:focus-visible) {
+  outline: 2px solid var(--cobalt-300);
+  outline-offset: 2px;
+}
+
+.decision__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  min-height: 24px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.decision__label input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--cobalt-300);
+}
+
+.decision__label input:focus-visible {
+  outline: none;
+}
+
+.decision__hint {
+  color: var(--text-muted);
+}
+
+.signal__files {
+  margin: 0;
+  padding-left: var(--s4);
+  overflow-wrap: anywhere;
+}

@@ -518,12 +518,13 @@ Poprawione brzmienia (zachowane w historii, nie usunięte):
 | j | Zaznaczone pole wyboru wypełnione `cobalt-300` | zaznaczenie to `cobalt-300` wg nowej skali; mały element, nie duża powierzchnia |
 | k | Pozycje spisu treści bez ekranu w podglądzie (Import, Historia) są tekstem, nie linkami | brak martwych kontrolek |
 
-### Korekta kroju, 2026-11-11 (obowiązuje, zastępuje wpisy 8, h i i)
+### Korekta kroju i decyzje w planie eksportu, 2026-11-11 (korekta kroju obowiązuje, zastępuje wpisy 8, h i i)
 | # | Decyzja | Powód |
 |---|---|---|
 | l | Space Grotesk (SIL OFL 1.1, `@fontsource/space-grotesk` 5.3.0) zamiast Cabinet Grotesk. Te same role, wagi 500 i 700 | licencyjny, decyzja właściciela z 2026-11-11, patrz niżej |
 | m | Reguła „grotesk nie ma cyfr tabelarycznych" przestaje obowiązywać. Role bez zmian: kolumny liczą się w Source Sans 3 | Space Grotesk ma `tnum` |
 | n | Spis treści 192 px zamiast 168 px | „5. Synchronizacja" w Space Grotesk 18 px jest szersze niż pole 136 px i dotykało krawędzi panelu; krój jest szerszy niż Cabinet Grotesk |
+| o | Konflikt planu eksportu z `options` to grupa radio w sekcji Decyzje, bez opcji zaznaczonej z góry. Opcja „Zamień ten fragment na blok aplikacji” dostaje sygnał „Nadpisze” (zmienia istniejący tekst pliku), „Dopisz blok na końcu” jest neutralna. Wybór przelicza plan, nowy `planId` jest jedynym wykonywalnym. Konflikt bez `options` zostaje informacją. Ostrzeżenie wpisu zaczynające się od „Nadpisze” (zastąpienie katalogu skilla) dostaje sygnał nadpisania z listą plików, które znikną | decyzja użytkownika musi być jawna, a nadpisanie ma jeden znak rozpoznawczy |
 
 **Powód licencyjny (wpis l).** Cabinet Grotesk jest objęty ITF Free Font License 2.0
 (Indian Type Foundry, Fontshare, wersja z 17 sierpnia 2026, plik `License/FFL.txt`

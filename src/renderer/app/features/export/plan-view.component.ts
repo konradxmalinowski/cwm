@@ -1,6 +1,17 @@
-import { ChangeDetectionStrategy, Component, computed, input, linkedSignal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  input,
+  linkedSignal,
+  output,
+} from '@angular/core';
 
-import type { ExportPlanDto, PlanEntryDto } from '../../../../shared/ipc/export-contract';
+import type {
+  ConflictResolutionDto,
+  ExportPlanDto,
+  PlanEntryDto,
+} from '../../../../shared/ipc/export-contract';
 import { kindLabel, plural } from '../../core/labels';
 import { joinRootPath, toolLabel } from '../import/import-model';
 import { DiffViewComponent } from './diff-view.component';
@@ -10,13 +21,19 @@ import {
   actionMark,
   LEVELS,
   MATERIALIZATION,
+  OPTION_HINT,
   SCOPE_LABEL,
   SEGMENT_SLOTS,
+  conflictKey,
   countPlan,
   diffPair,
   entryKind,
   hasHiddenSecret,
+  otherWarnings,
+  overwriteInfo,
+  type DecisionView,
   type EntryKind,
+  type OverwriteInfo,
 } from './export-model';
 import { PlanStatsComponent } from './plan-stats.component';
 
@@ -38,6 +55,17 @@ export class PlanViewComponent {
   /** Poziom naglowkow sekcji: 2 w eksporcie, 3 gdy plan jest czescia wiekszego widoku. */
   readonly level = input<2 | 3>(2);
   readonly showStats = input(true);
+  /**
+   * Konflikty z decyzja do podjecia. Pusta lista: widok jest tylko do czytania (synchronizacja,
+   * cofanie), a konflikt zostaje informacja bez kontrolki.
+   */
+  readonly decisions = input<readonly DecisionView[]>([]);
+  /** Wybor zapisany w widoku nadrzednym, ktory przelicza plan: `chosen` w `DecisionView`. */
+  readonly decide = output<{
+    itemId: string;
+    relPath: string;
+    resolution: ConflictResolutionDto;
+  }>();
 
   protected readonly levels = LEVELS;
   protected readonly segmentSlots = SEGMENT_SLOTS;
@@ -47,6 +75,8 @@ export class PlanViewComponent {
   protected readonly hasHiddenSecret = hasHiddenSecret;
   protected readonly scopeLabel = SCOPE_LABEL;
   protected readonly materialization = MATERIALIZATION;
+  protected readonly optionHint = OPTION_HINT;
+  protected readonly otherWarnings = otherWarnings;
   protected readonly kindLabel = kindLabel;
   protected readonly plural = plural;
 
@@ -70,6 +100,12 @@ export class PlanViewComponent {
       ),
   );
 
+  /** Konflikty, dla ktorych widok nie ma grupy decyzji: informacja bez kontrolki. */
+  protected readonly plainConflicts = computed(() => {
+    const keys = new Set(this.decisions().map((d) => d.key));
+    return this.plan().conflicts.filter((k) => !keys.has(conflictKey(k)));
+  });
+
   private readonly titlesById = computed(() => {
     const map = new Map<string, string>(this.titles());
     const plan = this.plan();
@@ -82,6 +118,14 @@ export class PlanViewComponent {
 
   protected kindOf(entry: PlanEntryDto): EntryKind {
     return entryKind(entry);
+  }
+
+  protected overwriteOf(entry: PlanEntryDto): OverwriteInfo | null {
+    return overwriteInfo(entry);
+  }
+
+  protected choose(d: DecisionView, resolution: ConflictResolutionDto): void {
+    this.decide.emit({ itemId: d.itemId, relPath: d.relPath, resolution });
   }
 
   protected titleOf(itemId: string): string {

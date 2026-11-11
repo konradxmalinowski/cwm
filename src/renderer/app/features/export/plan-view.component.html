@@ -106,7 +106,11 @@
           [style.--i]="$index"
           [attr.data-action]="kind"
           [attr.data-blocked]="e.recoverability === 'blocked'"
-          [class.entry--overwrite]="kind === 'modify' && e.recoverability !== 'blocked'"
+          [class.entry--overwrite]="
+            (kind === 'modify' || overwriteOf(e) !== null) &&
+            kind !== 'delete' &&
+            e.recoverability !== 'blocked'
+          "
           [class.entry--remove]="kind === 'delete' && e.recoverability !== 'blocked'"
           [class.entry--blocked]="e.recoverability === 'blocked'"
           [class.entry--unchanged]="kind === 'unchanged'"
@@ -129,11 +133,6 @@
                 </p>
                 <p class="view__sub">Aplikacja odmawia zapisu zamiast ryzykować plik bez kopii.</p>
               </div>
-            } @else if (kind === 'modify') {
-              <p class="signal-overwrite" data-testid="export-overwrite">
-                <span><strong>Nadpisze</strong> istniejący plik.</span>
-                <span>Poprzednia treść trafi najpierw do kopii zapasowej.</span>
-              </p>
             } @else if (kind === 'delete') {
               <p class="signal-remove" data-testid="export-remove">
                 <span><strong>Usunie</strong> plik z dysku.</span>
@@ -141,6 +140,26 @@
                   Poprzednia treść trafi najpierw do kopii zapasowej. Odzyskasz ją osobnym krokiem w
                   Historii.
                 </span>
+              </p>
+            } @else if (overwriteOf(e); as ow) {
+              <div class="signal-overwrite" data-testid="export-overwrite">
+                <span><strong>Nadpisze</strong> {{ ow.lead }}</span>
+                @if (ow.vanishing.length > 0) {
+                  <span>Znikną z katalogu pliki, których nie ma w nowej wersji:</span>
+                  <ul class="mono signal__files" data-testid="export-overwrite-files">
+                    @for (f of ow.vanishing; track $index) {
+                      <li>{{ f }}</li>
+                    }
+                    @if (ow.more !== null) {
+                      <li>{{ ow.more }}</li>
+                    }
+                  </ul>
+                }
+              </div>
+            } @else if (kind === 'modify') {
+              <p class="signal-overwrite" data-testid="export-overwrite">
+                <span><strong>Nadpisze</strong> istniejący plik.</span>
+                <span>Poprzednia treść trafi najpierw do kopii zapasowej.</span>
               </p>
             }
 
@@ -160,11 +179,11 @@
               </p>
             }
 
-            @if (e.warnings.length > 0) {
+            @if (otherWarnings(e).length > 0) {
               <div class="entry__warn">
                 <p><span class="notice__label">Ostrzeżenia:</span></p>
                 <ul class="notice__list">
-                  @for (w of e.warnings; track $index) {
+                  @for (w of otherWarnings(e); track $index) {
                     <li>{{ w }}</li>
                   }
                 </ul>
@@ -254,7 +273,77 @@
   </section>
 }
 
-@if (p.conflicts.length > 0) {
+@if (decisions().length > 0) {
+  <section
+    class="section"
+    [attr.aria-labelledby]="prefix() + '-decisions'"
+    data-testid="export-decisions"
+  >
+    <p
+      class="section__title"
+      role="heading"
+      [attr.aria-level]="level()"
+      [id]="prefix() + '-decisions'"
+    >
+      Decyzje
+      <span class="group__count">{{ decisions().length }}</span>
+    </p>
+    <p class="view__sub">
+      Plik w narzędziu wymaga Twojej decyzji. Po wyborze aplikacja przygotuje plan od nowa i tylko
+      nowy plan da się zapisać.
+    </p>
+    @for (d of decisions(); track d.key; let i = $index) {
+      <fieldset
+        class="decision"
+        data-testid="export-decision"
+        [attr.data-decision-key]="d.key"
+        [attr.data-settled]="d.settled"
+        [attr.aria-describedby]="prefix() + '-dec-' + i + '-reason'"
+      >
+        <legend class="decision__legend">
+          <span class="mono">{{ d.relPath }}</span>
+          <span class="decision__titles">{{ titlesOf(d.itemIds) }}</span>
+        </legend>
+        <p class="decision__reason" [id]="prefix() + '-dec-' + i + '-reason'">{{ d.reason }}</p>
+        <ul class="decision__options">
+          @for (o of d.options; track o.id) {
+            @let hint = optionHint[o.id];
+            <li class="decision__option" [class.decision__option--overwrite]="hint.overwrites">
+              <label class="decision__label">
+                <input
+                  type="radio"
+                  data-testid="export-decision-option"
+                  [name]="prefix() + '-dec-' + i"
+                  [value]="o.id"
+                  [checked]="d.chosen === o.id"
+                  [attr.data-option]="o.id"
+                  [attr.aria-describedby]="prefix() + '-dec-' + i + '-' + o.id"
+                  (change)="choose(d, o.id)"
+                />
+                <span class="decision__text">{{ o.label }}</span>
+              </label>
+              @if (hint.overwrites) {
+                <p
+                  class="signal-overwrite"
+                  data-testid="export-decision-overwrite"
+                  [id]="prefix() + '-dec-' + i + '-' + o.id"
+                >
+                  <span><strong>Nadpisze</strong> {{ hint.text }}</span>
+                </p>
+              } @else {
+                <p class="decision__hint" [id]="prefix() + '-dec-' + i + '-' + o.id">
+                  {{ hint.text }}
+                </p>
+              }
+            </li>
+          }
+        </ul>
+      </fieldset>
+    }
+  </section>
+}
+
+@if (plainConflicts().length > 0) {
   <section
     class="section"
     [attr.aria-labelledby]="prefix() + '-conflicts'"
@@ -267,13 +356,13 @@
       [id]="prefix() + '-conflicts'"
     >
       Konflikty
-      <span class="group__count">{{ p.conflicts.length }}</span>
+      <span class="group__count">{{ plainConflicts().length }}</span>
     </p>
     <p class="view__sub">
       Dwa elementy chcą zapisać ten sam plik. Plan z konfliktem nie jest zapisywany.
     </p>
     <ul class="skipped">
-      @for (k of p.conflicts; track $index) {
+      @for (k of plainConflicts(); track $index) {
         <li class="skipped__row entry--blocked-row" data-testid="export-conflict">
           <p class="mono">{{ k.relPath }}</p>
           <p>{{ titlesOf(k.itemIds) }}</p>
