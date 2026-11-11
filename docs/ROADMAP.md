@@ -688,6 +688,7 @@ miejsce w kodzie albo ADR, w którym jest opisana.
 | Slug jest tylko ASCII, więc nazwa z polskimi literami dostaje slug przybliżony, a oryginał trafia do aliasów | `validate.ts`, R7 |
 | Kopia reguły zawierania w `tests/harness/isolation.ts` blokuje za dużo | `tests/harness/isolation.ts`, ARCHITECTURE 12.5 |
 | Kanarek harnessu na `~/.claude.json` daje fałszywe alarmy, gdy Claude Code zapisuje ten plik w trakcie sesji | `tests/harness/isolation.ts` |
+| Rzadki zawis E2E na macOS arm64 w CI (raz na około 30 przebiegów, przebieg `43013946705`): wisi najpewniej `app.close()` w `app-launch.spec.ts:26`, nie start. Nie odtworzony lokalnie. Plan: zamknięcie z limitem 15 s, które zapisuje stan procesu, stos (`sample <pid>`) i ogon stderr, a potem zabija proces | `tests/e2e/launch.ts` |
 | Zgodność indeksu z plikami przy starcie sprawdza tylko liczba elementów; nieudana aktualizacja indeksu przy zgodnej liczbie zostawia starą treść do ręcznej odbudowy | `syncIndex` w `LibraryService`, Etap 2 |
 
 ---
