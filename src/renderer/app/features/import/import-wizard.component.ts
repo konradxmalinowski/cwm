@@ -237,19 +237,10 @@ export class ImportWizardComponent {
       return;
     }
     this.scan.set(result.value);
-    // Zmienione elementy zostaja odznaczone mimo `selectedByDefault`: nadpisanie wersji w
-    // bibliotece wymaga swiadomego wyboru, a grupa "Zmienione" mowi uzytkownikowi, ze jest
-    // domyslnie pominieta. Zaznaczenie bez jego wiedzy byloby nadpisaniem po cichu.
     this.selected.set(
       new Set(
         result.value.candidates
-          .filter(
-            (c) =>
-              c.selectedByDefault &&
-              c.status !== 'changed' &&
-              c.secrets.length === 0 &&
-              isSelectable(c),
-          )
+          .filter((c) => c.selectedByDefault && c.secrets.length === 0 && isSelectable(c))
           .map((c) => c.candidateId),
       ),
     );

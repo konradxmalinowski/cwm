@@ -66,7 +66,7 @@ export interface CandidateDto {
   duplicateOf: string | null;
   secrets: SecretHitDto[];
   warnings: WarningDto[];
-  /** Domyslny wybor w kreatorze: false dla sekretow, duplikatow, unchanged i conflict. */
+  /** Domyslny wybor w kreatorze: true tylko dla `new` bez sekretow; false dla reszty, w tym `changed`. */
   selectedByDefault: boolean;
 }
 

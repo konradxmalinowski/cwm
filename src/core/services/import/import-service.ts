@@ -409,7 +409,8 @@ export class ImportService {
         existingItemId: existing[i] ?? null,
         duplicateOf: duplicateOf[i] ?? null,
         secrets,
-        selectedByDefault: secrets.length === 0 && (st === 'new' || st === 'changed'),
+        // `changed` zostaje odznaczone: nadpisanie wersji w bibliotece wymaga swiadomego wyboru.
+        selectedByDefault: secrets.length === 0 && st === 'new',
       };
     });
   }

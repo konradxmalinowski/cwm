@@ -55,7 +55,7 @@ describe('ImportService.scan: statusy i domyslny wybor', () => {
 
     expect(map.get('acme-same')?.selectedByDefault).toBe(false);
     expect(map.get('Acme-Case')?.selectedByDefault).toBe(false);
-    expect(map.get('acme-diff')?.selectedByDefault).toBe(true);
+    expect(map.get('acme-diff')?.selectedByDefault).toBe(false);
     expect(map.get('acme-fresh')?.selectedByDefault).toBe(true);
   });
 
