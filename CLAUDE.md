@@ -1,8 +1,15 @@
-# Universal AI Skills Manager
+# CWM - Claude Workspace Manager
 
 Lokalna aplikacja desktopowa (Electron + Angular) do zarządzania konfiguracją narzędzi AI
 do programowania: skille, agenci, komendy, instrukcje, reguły i hooki, z jednego miejsca.
 Pierwsze dwa obsługiwane narzędzia to Claude Code i OpenAI Codex.
+
+Dawna nazwa to Universal AI Skills Manager (v0.1.0 jest opublikowane pod nią). Nazwa techniczna
+to `cwm`, a w kodzie i dokumentach stara nazwa zostaje tylko tam, gdzie jest celowa: odczyt
+starych formatów, migracja katalogu danych, historia w ADR i `docs/ROADMAP.md` (ADR 0035).
+Kontrakt nazw: most w rendererze `window.cwm`, zmienne `CWM_*`, prefiks logów `[cwm]`,
+`userData` w `<appData>/CWM`, pakiet deb i polecenie na Linuksie `claude-workspace-manager`, marker bloku `cwm:start`/`cwm:end`, format kopii `cwm-backup`.
+Nie wprowadzaj starych nazw do nowego kodu.
 
 ## Dokumentacja projektu
 
@@ -15,6 +22,8 @@ Czytaj w tej kolejności, zanim zaczniesz jakąkolwiek pracę:
 - `docs/ROADMAP.md` - struktura katalogów, plan etapów z kryteriami akceptacji, ryzyka.
 - `docs/adr/` - rekordy decyzji architektonicznych. Zanim zaproponujesz zmianę technologii
   albo podejścia, sprawdź, czy nie ma już ADR, który to rozstrzyga.
+- `CHANGELOG.md` - zmiany użytkownika per wydanie (Keep a Changelog, SemVer). Każda zmiana
+  widoczna dla użytkownika dostaje wpis pod `## [Unreleased]`.
 
 ## Design System
 

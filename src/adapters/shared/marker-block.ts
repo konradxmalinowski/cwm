@@ -4,12 +4,15 @@
  * bajt w bajt, bo kazdy zapis to podmiana zakresu albo dopisanie sufiksu.
  */
 
-/** Markery sa przestrzenia nazw aplikacji. Ich zmiana osierocilaby wszystkie istniejace bloki. */
-export const BLOCK_START = '<!-- ai-skills-manager:start -->';
-export const BLOCK_END = '<!-- ai-skills-manager:end -->';
+/** Markery sa przestrzenia nazw aplikacji. Zapis zawsze uzywa nazwy `cwm`. */
+export const BLOCK_START = '<!-- cwm:start -->';
+export const BLOCK_END = '<!-- cwm:end -->';
+
+/** Nazwa z v0.1.0: odczyt ja rozpoznaje, zapis jej nie uzywa (ADR 0035). */
+export const LEGACY_BLOCK_NAME = 'ai-skills-manager';
 
 export type MarkerBlockResult =
-  | { readonly kind: 'created' | 'appended' | 'replaced'; readonly text: string }
+  | { readonly kind: 'created' | 'appended' | 'replaced' | 'migrated'; readonly text: string }
   | { readonly kind: 'unchanged'; readonly text: string }
   /** Tresc zarzadzana jest w pliku bez markerow: wymaga decyzji uzytkownika (regula 3). */
   | { readonly kind: 'conflict'; readonly reason: string }
@@ -51,7 +54,7 @@ function findMarkers(text: string): Marker[] {
   return out;
 }
 
-const OUR_NAME = 'ai-skills-manager';
+const OUR_NAME = 'cwm';
 
 export function dominantEol(text: string): '\n' | '\r\n' {
   const crlf = (text.match(/\r\n/g) ?? []).length;
@@ -93,9 +96,9 @@ export function containsManagedContent(existing: string, content: string): boole
 
 const BOM = '\uFEFF';
 
-/** Czy plik ma ktorykolwiek znacznik aplikacji (nawet uszkodzona para). */
+/** Czy plik ma ktorykolwiek znacznik aplikacji, nowy albo z v0.1.0 (nawet uszkodzona para). */
 export function hasOurMarkers(text: string): boolean {
-  return findMarkers(text).some((m) => m.name === OUR_NAME);
+  return findMarkers(text).some((m) => m.name === OUR_NAME || m.name === LEGACY_BLOCK_NAME);
 }
 
 export interface ManagedFragment {
@@ -165,10 +168,20 @@ export function applyMarkerBlock(
   const eol = dominantEol(existing);
   const markers = findMarkers(existing);
   const ours = markers.filter((m) => m.name === OUR_NAME);
-  const starts = ours.filter((m) => m.role === 'start');
-  const ends = ours.filter((m) => m.role === 'end');
+  const legacy = markers.filter((m) => m.name === LEGACY_BLOCK_NAME);
 
-  if (ours.length > 0) {
+  if (ours.length > 0 && legacy.length > 0) {
+    return {
+      kind: 'conflict',
+      reason:
+        'Plik ma dwa bloki aplikacji: ze znacznikami cwm i ze starymi znacznikami ai-skills-manager. Aplikacja nie wybiera, który jest właściwy. Usuń jeden z nich ręcznie.',
+    };
+  }
+
+  const found = ours.length > 0 ? ours : legacy;
+  if (found.length > 0) {
+    const starts = found.filter((m) => m.role === 'start');
+    const ends = found.filter((m) => m.role === 'end');
     const start = starts[0];
     const end = ends[0];
     if (starts.length !== 1 || ends.length !== 1 || start === undefined || end === undefined) {
@@ -188,6 +201,21 @@ export function applyMarkerBlock(
     const innerEnd = end.lineStart;
     const inner = existing.slice(innerStart, innerEnd);
     const replacement = `${withEol(body, eol)}${eol}`;
+    if (legacy.length > 0) {
+      // Zmienia sie tylko nazwa w liniach znacznikow; wciecie i tekst za nimi zostaja.
+      const renamed = (m: Marker): string =>
+        existing.slice(m.lineStart, m.lineEnd).replace(LEGACY_BLOCK_NAME, OUR_NAME);
+      return {
+        kind: 'migrated',
+        text:
+          existing.slice(0, start.lineStart) +
+          renamed(start) +
+          existing.slice(start.lineEnd, innerStart) +
+          replacement +
+          renamed(end) +
+          existing.slice(end.lineEnd),
+      };
+    }
     if (inner === replacement) return { kind: 'unchanged', text: existing };
     return {
       kind: 'replaced',
@@ -224,6 +252,6 @@ export function applyMarkerBlock(
 
 /** Czy plik ma blok aplikacji (do raportu sierot). */
 export function hasManagedBlock(text: string): boolean {
-  const ours = findMarkers(text).filter((m) => m.name === OUR_NAME);
+  const ours = findMarkers(text).filter((m) => m.name === OUR_NAME || m.name === LEGACY_BLOCK_NAME);
   return ours.some((m) => m.role === 'start') && ours.some((m) => m.role === 'end');
 }

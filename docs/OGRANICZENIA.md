@@ -100,12 +100,20 @@ Instrukcja globalna to jeden plik na narzędzie, który zwykle piszesz sam. Apli
 wyłącznie blokiem między dwiema liniami (każda sama w linii):
 
 ```
-<!-- ai-skills-manager:start -->
-<!-- ai-skills-manager:end -->
+<!-- cwm:start -->
+<!-- cwm:end -->
 ```
 
-Markery są niewidoczne po wyrenderowaniu i nie wolno ich zmieniać: po zmianie nazwy aplikacja
-przestaje rozpoznawać swój blok i dopisuje drugi.
+Tak oznacza blok CWM od v0.2.0. v0.1.0 (Universal AI Skills Manager) używała markerów
+`<!-- ai-skills-manager:start -->` i `<!-- ai-skills-manager:end -->`; CWM nadal je rozpoznaje
+(ADR 0035). Stary blok jest przy synchronizacji przepisywany na nowy marker jako wpis planu
+typu `modify` z ostrzeżeniem o migracji, który zatwierdzasz jak każdy inny zapis, z kopią. Plik
+zawierający jednocześnie stary i nowy blok jest konfliktem bez opcji rozwiązania w aplikacji:
+nie naprawia go po cichu, zostaw w nim ręcznie jeden blok i zaplanuj eksport jeszcze raz.
+
+Markery są niewidoczne po wyrenderowaniu i nie wolno ich zmieniać ręcznie: po zmianie
+aplikacja przestaje rozpoznawać swój blok i dopisuje drugi. Powrót do v0.1.0 po synchronizacji
+w CWM ma ten sam skutek, bo v0.1.0 nie zna markerów `cwm:*`.
 
 Zachowanie:
 

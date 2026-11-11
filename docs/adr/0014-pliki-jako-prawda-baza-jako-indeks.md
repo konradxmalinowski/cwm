@@ -3,6 +3,8 @@
 Status: zaakceptowane, uzupełnione przez ADR 0029
 Data: 2026-10-20
 
+Nazwa produktu zmieniona przez ADR 0035: `userData` to od v0.2.0 `<appData>/CWM`, a katalog v0.1.0 jest migrowany przez kopię. Układ opisany niżej bez zmian.
+
 > Uzupełnienie wprowadzone przez ADR 0029: odtwarzalność indeksu jest ścieżką kodu, nie
 > właściwością na papierze. Uszkodzony indeks jest odbudowywany po kwarantannie starego pliku,
 > a nie powodem odmowy startu. Wyjątek wymieniony niżej (log operacji, którego z plików

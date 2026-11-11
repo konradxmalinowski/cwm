@@ -2,8 +2,8 @@
 # Wydania w MVP sa niepodpisane swiadomie (ADR 0003): zero sekretow w CI,
 # zero autoaktualizacji, weryfikacja przez SHA256SUMS.
 
-appId: io.github.universal-ai-skills-manager
-productName: Universal AI Skills Manager
+appId: io.github.konradxmalinowski.cwm
+productName: CWM - Claude Workspace Manager
 copyright: ''
 
 directories:
@@ -20,7 +20,7 @@ files:
 
 # Nazwy plikow wydania bez spacji. GitHub zamienia spacje w nazwach zasobow na kropki, wtedy
 # nazwy w SHA256SUMS nie zgadzaly by sie z plikami do pobrania i `sha256sum -c` padal u uzytkownika.
-artifactName: universal-ai-skills-manager-${version}-${os}-${arch}.${ext}
+artifactName: cwm-${version}-${os}-${arch}.${ext}
 
 asar: true
 # Modul natywny musi lezec poza archiwum asar, bo `dlopen` nie otworzy pliku
@@ -63,21 +63,21 @@ win:
       arch: [x64]
 
 portable:
-  artifactName: universal-ai-skills-manager-${version}-portable-${arch}.${ext}
+  artifactName: cwm-${version}-portable-${arch}.${ext}
 
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  artifactName: universal-ai-skills-manager-${version}-setup-${arch}.${ext}
+  artifactName: cwm-${version}-setup-${arch}.${ext}
 
 linux:
   category: Development
-  maintainer: universal-ai-skills-manager
+  maintainer: claude-workspace-manager
   # Przypiete jawnie, bo nazwa binarki jest uzywana przez testy E2E
   # (tests/e2e/launch.ts). Domyslna wartosc pochodzi z productName, ktory ma
   # spacje - a wtedy szukanie binarki po nazwie staje sie zgadywaniem.
-  executableName: universal-ai-skills-manager
+  executableName: claude-workspace-manager
   # Katalog z plikami NxN.png (16 do 512); electron-builder wybiera z niego rozmiary.
   icon: resources/icons/linux
   target:
@@ -85,6 +85,11 @@ linux:
       arch: [x64]
     - target: deb
       arch: [x64]
+
+# Pakiet `cwm` istnieje w Debianie (calmwm, /usr/bin/cwm), wiec nazwa pakietu i binarki na Linuksie
+# jest dluzsza niz nazwa npm.
+deb:
+  packageName: claude-workspace-manager
 
 # Autoaktualizacja jest wylaczona (ADR 0003, ARCHITECTURE 14.3), wiec nie generujemy plikow
 # latest*.yml. Dwa runnery macOS tworzyly oba `latest-mac.yml` o tej samej nazwie i jeden

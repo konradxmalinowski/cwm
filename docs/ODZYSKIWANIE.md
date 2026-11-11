@@ -14,6 +14,17 @@ przed zapisem. Kroki w teście mają te same oznaczenia (A1, B2 i tak dalej).
 Gdzie leży katalog danych (`userData`), jest w `docs/INSTALACJA.md`. Wszystkie ścieżki niżej
 są względem niego.
 
+Jeśli aktualizowałeś z v0.1.0 (nazwa Universal AI Skills Manager, ADR 0035), przy pierwszym
+starcie CWM skopiował dane do nowego katalogu, a stary zostawił bez zmian. Kopie zapasowe
+sprzed aktualizacji leżą w obu miejscach, a kroki niżej działają tak samo w każdym z nich.
+Starych katalogów mogą być dwa (zainstalowana v0.1.0 i uruchomiona ze źródeł, nazwy w
+`docs/INSTALACJA.md`); migracja bierze ten, którego `library/` ma nowsze drzewo.
+
+Jeśli migracja się nie udała albo wybrałeś „Zacznij z pustą biblioteką”, biblioteka i `backups/`
+są w starym katalogu w całości. Żeby wrócić do tych danych: zamknij CWM, zmień nazwę nowego katalogu `CWM` na inną, skopiuj
+stary katalog pod nazwą `CWM` (bez plików `SingletonLock`, `SingletonSocket`, `SingletonCookie`
+i `lockfile`) i uruchom aplikację. To ręczny odpowiednik migracji.
+
 ## Zanim zaczniesz
 
 1. Zamknij aplikację. Zmiany robione, gdy działa, mogą się z nią zderzyć.
@@ -37,6 +48,7 @@ Jeśli trzeba cofnąć kilka zapisów, wracaj od najnowszej kopii do starszych.
 
 | Pole                        | Znaczenie                                                                  |
 | --------------------------- | -------------------------------------------------------------------------- |
+| `format`, `version`         | `cwm-backup` (zapis CWM) albo `uasm-backup` (zapis v0.1.0), obie w wersji 1. Kroki niżej są takie same |
 | `createdAt`, `tool`         | Kiedy i do którego narzędzia był zapis                                     |
 | `entries[].index`           | Numer wpisu, od 1                                                          |
 | `entries[].path`            | Pełna ścieżka pliku na tym komputerze                                      |

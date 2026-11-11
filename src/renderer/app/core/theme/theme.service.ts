@@ -2,16 +2,31 @@ import { Injectable, signal } from '@angular/core';
 
 export type ThemePreference = 'system' | 'light' | 'dark';
 
-const STORAGE_KEY = 'uasm.theme';
+const STORAGE_KEY = 'cwm.theme';
+const LEGACY_STORAGE_KEY = 'uasm.theme';
 
 function readStored(): ThemePreference {
   try {
-    const value = window.localStorage.getItem(STORAGE_KEY);
+    let value = window.localStorage.getItem(STORAGE_KEY);
+    if (value === null) {
+      value = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+      if (value !== null) migrateLegacy(value);
+    }
     if (value === 'light' || value === 'dark') return value;
   } catch {
     // Pamiec przegladarki bywa niedostepna; wtedy zostaje wybor systemu.
   }
   return 'system';
+}
+
+/** Jednorazowe przeniesienie klucza z v0.1.0; niepowodzenie zapisu nie gubi odczytanej wartosci. */
+function migrateLegacy(value: string): void {
+  try {
+    if (value === 'light' || value === 'dark') window.localStorage.setItem(STORAGE_KEY, value);
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // Przeniesienie zostanie ponowione przy nastepnym starcie.
+  }
 }
 
 export function applyTheme(preference: ThemePreference): void {

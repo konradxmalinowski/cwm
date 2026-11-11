@@ -1,4 +1,4 @@
-# Universal AI Skills Manager
+# CWM - Claude Workspace Manager
 
 Aplikacja desktopowa do zarządzania konfiguracją narzędzi AI do programowania z jednego
 miejsca: skillami, agentami, komendami, instrukcjami globalnymi i hookami. Obsługuje Claude Code
@@ -7,6 +7,39 @@ Twoja biblioteka to zwykłe pliki w katalogu danych aplikacji.
 
 Wydania są niepodpisane (ADR 0003), więc system ostrzeże cię przy pierwszym uruchomieniu.
 Postęp prac i kryteria wydania: `docs/ROADMAP.md`.
+Historia wydań i zmian: [`CHANGELOG.md`](CHANGELOG.md).
+
+## Zmiana nazwy (ADR 0035)
+
+Aplikacja nazywała się Universal AI Skills Manager. Wersja v0.1.0 została opublikowana pod
+tą nazwą i tak zostaje. Nazwa `CWM - Claude Workspace Manager` obowiązuje od v0.2.0; nazwa
+techniczna (pakiet npm, pliki wydania, zmienne środowiskowe) to `cwm`; na Linuksie pakiet deb
+i polecenie to `claude-workspace-manager`.
+
+Jeśli masz v0.1.0:
+
+- **Dane.** Katalog danych to teraz `<appData>/CWM` (ścieżki dla każdego systemu:
+  `docs/INSTALACJA.md`). Przy pierwszym starcie, gdy w nowym katalogu nie ma jeszcze danych i
+  nie podano `--user-data-dir`, aplikacja kopiuje do niego dane z katalogu v0.1.0, o ile ma on
+  niepustą bibliotekę. Stary katalog zostaje nietknięty jako kopia. Zamknij v0.1.0 przed
+  pierwszym startem CWM. Jeśli migracja się nie uda albo v0.1.0 działa, okno dialogowe pozwoli
+  zamknąć aplikację (następny start ponowi próbę) albo zacząć z pustą biblioteką (migracja już
+  nie wróci, dane odzyskasz ręcznie: `docs/ODZYSKIWANIE.md`). Kopia jest synchroniczna, więc
+  przy dużej historii okno może pojawić się z opóźnieniem; nie uruchamiaj aplikacji drugi raz.
+  Nie usuwaj starego katalogu od razu: dowiązania założone przez v0.1.0 w katalogach narzędzi
+  wskazują na jego `materialized/`, dopóki synchronizacja w CWM nie zmaterializuje ich na nowo.
+- **Linux.** Pakiet deb i polecenie nazywają się `claude-workspace-manager` (Debian ma już
+  pakiet `cwm`). Pliki wydania mają nazwę `cwm-<wersja>-...`.
+- **Pliki instrukcji.** Blok w `CLAUDE.md` i `AGENTS.md` jest oznaczony `cwm:start` i
+  `cwm:end`. Blok ze starym oznaczeniem `ai-skills-manager` aplikacja nadal rozpoznaje i przy
+  synchronizacji proponuje przepisać na nowe oznaczenie, jak każdą inną zmianę: z planem,
+  zatwierdzeniem i kopią (wpis `modify` z ostrzeżeniem). Plik z dwoma blokami, starym i nowym,
+  jest konfliktem bez opcji rozwiązania, dopóki sam nie zostawisz w nim jednego bloku.
+- **Kopie zapasowe.** Nowe kopie mają format `cwm-backup`. Kopie `uasm-backup` z v0.1.0 nadal
+  da się odczytać.
+- **Powrót do v0.1.0.** Stara wersja czyta swój katalog, ale nie rozpozna bloku `cwm:*` ani
+  kopii `cwm-backup`. Jeśli wrócisz do niej po synchronizacji w nowej, dopisze własny blok
+  obok.
 
 ## Dokumentacja dla użytkownika
 
@@ -138,7 +171,7 @@ konfiguracji (ARCHITECTURE 12.2):
 - liczy odcisk kontrolny plikow konfiguracyjnych wlasciciela przed i po calym
   przebiegu i porownuje je na koncu,
 - daje kazdemu testowi wlasne drzewo tymczasowe pod `tests/.tmp`
-  (`UASM_TEST_TMPDIR` nadpisuje lokalizacje).
+  (`CWM_TEST_TMPDIR` nadpisuje lokalizacje).
 
 Testy E2E przekierowuja katalog danych aplikacji na drzewo tymczasowe
 wbudowanym przelacznikiem Electrona `--user-data-dir`. W kodzie aplikacji nie ma

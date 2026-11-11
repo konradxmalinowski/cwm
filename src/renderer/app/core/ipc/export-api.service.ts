@@ -9,7 +9,7 @@ import type {
 import type { Result } from '../../../../shared/ipc/library-contract';
 import { callBridge } from './ipc-call';
 
-/** Typowane metody nad `window.uasm.export`. Brak handlera po stronie main wraca jako `Result` z bledem. */
+/** Typowane metody nad `window.cwm.export`. Brak handlera po stronie main wraca jako `Result` z bledem. */
 @Injectable({ providedIn: 'root' })
 export class ExportApiService {
   plan(request: ExportPlanRequest): Promise<Result<ExportPlanDto>> {

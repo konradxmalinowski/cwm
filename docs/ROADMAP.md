@@ -1,4 +1,4 @@
-# Universal AI Skills Manager - plan i roadmapa
+# CWM - Claude Workspace Manager - plan i roadmapa
 
 Dokument Etapu 0, uzupełnienie `docs/ARCHITECTURE.md`. Etapy pochodzą z
 `docs/00-wymagania-zrodlowe.md`; tu dostają strukturę katalogów, kryteria akceptacji, backlog
@@ -22,7 +22,7 @@ universal-ai-skills-manager/
     DESIGN.md
     ROADMAP.md
     design-preview.html
-    adr/0001 do 0034
+    adr/0001 do 0035
   .github/workflows/
     ci.yml
     release.yml
@@ -655,6 +655,19 @@ bez `--no-sandbox`, dowodem dla Linuksa jest deb), instalacji portable.
 6. Zweryfikować `sha256sum -c SHA256SUMS` (macOS: `shasum -a 256 -c`) na pobranych plikach.
 7. Dopiero po tym opublikować szkic i zamknąć status Etapu 10.
 
+### Zmiana nazwy na CWM: v0.2.0 (ADR 0035)
+
+Wydanie v0.1.0 zostało opublikowane pod nazwą Universal AI Skills Manager i tak zostaje;
+opisy Etapu 10 wyżej dotyczą tej nazwy. Pierwsze wydanie pod nazwą `CWM - Claude Workspace
+Manager` ma być v0.2.0. Zakres: nazwa produktu i techniczna `cwm`, `userData` w
+`<appData>/CWM` z migracją kopią z katalogu v0.1.0, nowe markery i format kopii z odczytem
+starych, nowy `appId` (na Windowsie instalacja obok v0.1.0), zmiana nazwy repozytorium.
+
+Stan: zmiana jest w pracy na gałęzi `feat/rename-to-cwm`, nie jest scalona ani wydana.
+Dokumentacja użytkownika (`README.md`, `docs/INSTALACJA.md`, `docs/ODZYSKIWANIE.md`,
+`docs/OGRANICZENIA.md`) opisuje stan docelowy v0.2.0. Wyniki weryfikacji, w tym dowody
+zgodności formatów i migracji, trafią tu po jej wykonaniu.
+
 ---
 
 ## 4. Backlog po MVP
@@ -1014,4 +1027,4 @@ Otwarte zostaje jedno pytanie:
 
 | Pytanie | Blokuje |
 |---|---|
-| 6. Ikona i nazwa produktu | Etap 10 (wydanie), nie prace wcześniejsze |
+| 6. Ikona i nazwa produktu | Etap 10 (wydanie), nie prace wcześniejsze. Nazwa rozstrzygnięta w ADR 0035 (CWM), ikona nadal otwarta |

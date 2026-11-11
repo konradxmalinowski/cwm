@@ -16,7 +16,7 @@ import type {
 } from '../../../../shared/ipc/library-contract';
 import { callBridge } from './ipc-call';
 
-/** Typowane metody nad `window.uasm.library`. Nic poza tym plikiem nie zna nazw kanalow. */
+/** Typowane metody nad `window.cwm.library`. Nic poza tym plikiem nie zna nazw kanalow. */
 @Injectable({ providedIn: 'root' })
 export class LibraryApiService {
   list(request: LibraryListRequest): Promise<Result<LibraryListDto>> {

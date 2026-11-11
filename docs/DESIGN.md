@@ -1,4 +1,4 @@
-# Universal AI Skills Manager - DESIGN.md
+# CWM - Claude Workspace Manager - DESIGN.md
 
 Kierunek wizualny jest zamknięty. Ten dokument opisuje wersję z **2026-10-20, po zmianie
 kierunku**, z korektą kroju z **2026-11-11** (Space Grotesk zamiast poprzedniego kroju, wpis l w Decisions Log). Czarne tło, jeden kolor, groteskowy krój wyświetlny. Poprzednia wersja

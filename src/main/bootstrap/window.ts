@@ -10,7 +10,7 @@ export function createMainWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     backgroundColor: '#161618',
-    title: 'Universal AI Skills Manager',
+    title: 'CWM - Claude Workspace Manager',
     // macOS bierze ikone z paczki (.icns), a pole `icon` jest tam ignorowane.
     ...(process.platform === 'darwin' ? {} : { icon: windowIcon() }),
     webPreferences: {
@@ -27,7 +27,7 @@ export function createMainWindow(): BrowserWindow {
       spellcheck: false,
       enableWebSQL: false,
       navigateOnDragDrop: false,
-      devTools: !process.env['UASM_DISABLE_DEVTOOLS'],
+      devTools: !process.env['CWM_DISABLE_DEVTOOLS'],
     },
   });
 

@@ -75,7 +75,11 @@ export function parseManifestView(raw: unknown): BackupManifestView {
   const backupId = str(r?.['backupId']);
   const tool = str(r?.['tool']);
   const list = r?.['entries'];
-  if (r === null || r['format'] !== 'uasm-backup' || r['version'] !== 1) {
+  if (
+    r === null ||
+    (r['format'] !== 'cwm-backup' && r['format'] !== 'uasm-backup') ||
+    r['version'] !== 1
+  ) {
     throw new Error('nieznany format kopii');
   }
   if (backupId === null || tool === null || !Array.isArray(list)) {

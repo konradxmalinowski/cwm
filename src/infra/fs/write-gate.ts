@@ -59,6 +59,7 @@ import {
   type LinkOps,
   type MaterialContent,
 } from './link-mode';
+import { LEGACY_USER_DATA_DIR_NAMES, USER_DATA_DIR_NAME } from '../store/user-data-migration';
 import { lstatOrNull } from './stat';
 import {
   Blocked,
@@ -303,6 +304,21 @@ type JournalItem =
       readonly path: string;
       readonly before: MaterialContent | null;
     };
+
+/**
+ * Korzen materializacji tego katalogu danych plus korzenie v0.1.0: dowiazania zalozone przed
+ * migracja nadal wskazuja stary katalog, a migracja go nie rusza (ADR 0035). Nowe materializacje
+ * ida zawsze do nowego korzenia.
+ */
+function ownMaterializedRoots(userDataDir: string): string[] {
+  const roots = [materializedRoot(userDataDir)];
+  if (path.basename(userDataDir) === USER_DATA_DIR_NAME) {
+    for (const name of LEGACY_USER_DATA_DIR_NAMES) {
+      roots.push(materializedRoot(path.join(path.dirname(userDataDir), name)));
+    }
+  }
+  return roots;
+}
 
 export class FsWriteGate implements WriteGate {
   private readonly clock: Clock;
@@ -830,7 +846,7 @@ export class FsWriteGate implements WriteGate {
 
   private isOurs(linkAbs: string, linkTarget: string): boolean {
     const absolute = path.resolve(path.dirname(linkAbs), linkTarget);
-    return isPathInside(absolute, materializedRoot(this.deps.userDataDir));
+    return ownMaterializedRoots(this.deps.userDataDir).some((root) => isPathInside(absolute, root));
   }
 
   private async fileOp(

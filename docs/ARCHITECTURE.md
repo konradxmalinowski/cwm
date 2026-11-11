@@ -1,4 +1,4 @@
-# Universal AI Skills Manager - architektura
+# CWM - Claude Workspace Manager - architektura
 
 Dokument Etapu 0. Odnosi się do `docs/00-wymagania-zrodlowe.md` i go nie zastępuje: wymagania
 mówią co i dlaczego, ten dokument mówi jak i gdzie, z uzasadnieniem każdej decyzji i jej kosztem.
@@ -921,6 +921,9 @@ Windowsie, dostajemy brak efektu i pokazujemy zieloną kontrolkę.
 
 ## 9. Strategia przechowywania danych
 
+Od v0.2.0 `<userData>` to `<appData>/CWM`, ustawiony jawnie przed `ready` (ADR 0035). Dane
+v0.1.0 są przy pierwszym starcie kopiowane z dawnego katalogu, który zostaje nietknięty.
+
 ```
 <userData>/
   library/
@@ -1458,6 +1461,9 @@ przeniesione do ADR-ów. Otwarte zostaje jedno, z zapisem, który etap blokuje.
    ilustracyjna wygląda lepiej w dużym rozmiarze, ale gubi detal w małym i wymaga więcej iteracji.
    Jeśli odpowiedź to nie, MVP wychodzi z placeholderem i zostaje to zapisane, żeby nie wracało
    jako pytanie.
+
+   Uzupełnienie (2026-11-11): nazwa produktu jest rozstrzygnięta w ADR 0035 (CWM - Claude
+   Workspace Manager). Pytanie o ikonę zostaje otwarte; ikona aplikacji nie zmienia się wraz z nazwą.
 
 ---
 

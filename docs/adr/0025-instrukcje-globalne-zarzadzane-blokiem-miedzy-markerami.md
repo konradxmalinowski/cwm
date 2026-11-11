@@ -3,6 +3,8 @@
 Status: zaakceptowane (odpowiedź właściciela produktu na pytanie 2 z Etapu 0, 2026-10-20)
 Data: 2026-10-20
 
+Nazwa produktu zmieniona przez ADR 0035: marker zapisu to od v0.2.0 `<!-- cwm:start -->` i `<!-- cwm:end -->`; odczyt rozpoznaje też `ai-skills-manager:start` i `ai-skills-manager:end` z poniższego uzupełnienia. Zasada stabilnego markera z decyzji poniżej obowiązuje: stary marker nie przestaje być rozpoznawany.
+
 > Uzupełnienie (2026-11-11):
 >
 > **Markery.** Faktyczne markery to `<!-- ai-skills-manager:start -->` i

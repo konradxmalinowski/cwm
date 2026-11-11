@@ -1,3 +1,4 @@
+import type { DataMigrationInfo } from '../../core/model/data-migration';
 import type { DatabaseProbe, DiagnosticsReport, RuntimeInfo } from '../../core/model/diagnostics';
 import type { IndexStartupInfo } from '../../core/model/index-health';
 import type { Clock } from '../../core/ports/clock';
@@ -15,6 +16,7 @@ export interface DiagnosticsDeps {
   readonly clock: Clock;
   readonly appIcon: 'placeholder' | 'provided';
   readonly stage: string;
+  readonly dataMigration?: DataMigrationInfo;
 }
 
 const PATH_TOKEN = /(?:[A-Za-z]:[\\/]|~[\\/]|\/)[^\s"'`)\]]*/g;
@@ -52,6 +54,10 @@ function sanitizeIndex(info: IndexStartupInfo): IndexStartupInfo {
   };
 }
 
+function sanitizeMigration(info: DataMigrationInfo): DataMigrationInfo {
+  return info.message === undefined ? info : { ...info, message: stripPaths(info.message) };
+}
+
 export function buildDiagnosticsReport(deps: DiagnosticsDeps): DiagnosticsReport {
   return {
     generatedAt: deps.clock.now().toISOString(),
@@ -64,5 +70,8 @@ export function buildDiagnosticsReport(deps: DiagnosticsDeps): DiagnosticsReport
     index: sanitizeIndex(deps.index),
     appIcon: deps.appIcon,
     stage: deps.stage,
+    ...(deps.dataMigration === undefined
+      ? {}
+      : { dataMigration: sanitizeMigration(deps.dataMigration) }),
   };
 }

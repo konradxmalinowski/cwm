@@ -54,9 +54,9 @@ test('synchronizacja: konflikt instrukcji globalnej, wybor "Zamien" przelicza pl
     const itemId = await page.evaluate(async () => {
       const bridge = (
         window as unknown as {
-          uasm: { library: { list: (request: object) => Promise<unknown> } };
+          cwm: { library: { list: (request: object) => Promise<unknown> } };
         }
-      ).uasm;
+      ).cwm;
       const result = (await bridge.library.list({})) as {
         value: { items: { id: string; kind: string }[] };
       };

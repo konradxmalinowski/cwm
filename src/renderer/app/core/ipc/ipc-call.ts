@@ -1,7 +1,7 @@
 import type { Result } from '../../../../shared/ipc/library-contract';
 import type { BridgeSurface } from '../../../../shared/ipc/surface';
 
-import './uasm-bridge';
+import './cwm-bridge';
 
 export function failure(code: string, message: string): Result<never> {
   return { ok: false, error: { code, message } };
@@ -30,7 +30,7 @@ function isResult(value: unknown): value is Result<unknown> {
 export async function callBridge<T>(
   invoke: (bridge: BridgeSurface) => Promise<unknown>,
 ): Promise<Result<T>> {
-  const bridge = window.uasm;
+  const bridge = window.cwm;
   if (bridge === undefined) {
     return failure(
       'bridge-missing',

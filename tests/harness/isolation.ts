@@ -198,7 +198,7 @@ export function diffFingerprints(
 }
 
 export function resolveTestBase(): string {
-  const override = process.env['UASM_TEST_TMPDIR'];
+  const override = process.env['CWM_TEST_TMPDIR'];
   if (override !== undefined && override !== '') return resolve(override);
   return resolve(join(process.cwd(), 'tests', '.tmp'));
 }

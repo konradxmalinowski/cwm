@@ -9,7 +9,7 @@ import type {
 } from '../../../../shared/ipc/sync-contract';
 import { callBridge } from './ipc-call';
 
-/** Typowane metody nad `window.uasm.history`. Cofniecie zwraca plan, ktory zapisuje `export.apply`. */
+/** Typowane metody nad `window.cwm.history`. Cofniecie zwraca plan, ktory zapisuje `export.apply`. */
 @Injectable({ providedIn: 'root' })
 export class HistoryApiService {
   list(request: HistoryListRequest): Promise<Result<HistoryListDto>> {

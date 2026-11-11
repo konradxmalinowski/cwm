@@ -3,7 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { type IpcChannel, isIpcChannel } from '../shared/ipc/channels';
 import { buildBridgeSurface } from '../shared/ipc/surface';
 
-const BRIDGE_KEY = 'uasm';
+const BRIDGE_KEY = 'cwm';
 
 function invoke(channel: IpcChannel, payload?: unknown): Promise<unknown> {
   if (!isIpcChannel(channel)) {

@@ -202,8 +202,8 @@ const RELEASE_DIR = 'release';
  * tym, ze test uruchomil `chrome-sandbox`, bo sortuje sie wczesniej niz
  * aplikacja - i padl na komunikacie o sandboxie, ktory nie mial nic do rzeczy.
  */
-const LINUX_EXECUTABLE = 'universal-ai-skills-manager';
-const WINDOWS_EXECUTABLE = 'Universal AI Skills Manager.exe';
+const LINUX_EXECUTABLE = 'claude-workspace-manager';
+const WINDOWS_EXECUTABLE = 'CWM - Claude Workspace Manager.exe';
 const HELPER_BINARIES = new Set(['chrome-sandbox', 'chrome_crashpad_handler', 'crashpad_handler']);
 
 function findInReleaseDir(dir: string): string | null {

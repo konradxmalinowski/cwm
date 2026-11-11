@@ -13,6 +13,7 @@ import { databaseFile, quarantineRoot, rendererRoot } from './bootstrap/paths';
 import { startIndex, type IndexOpenFailure } from './bootstrap/index-startup';
 import { handleAppScheme, registerAppScheme } from './bootstrap/protocol';
 import { blockOutboundNetwork, denyAllPermissions, hardenWebContents } from './bootstrap/security';
+import { configureUserData, resolveMigration } from './bootstrap/user-data';
 import { createMainWindow } from './bootstrap/window';
 import { startExport } from './bootstrap/export';
 import { startImport } from './bootstrap/import';
@@ -31,6 +32,8 @@ import { homedir } from 'node:os';
 
 registerAppScheme();
 app.enableSandbox();
+
+let dataMigration = configureUserData();
 
 let indexState: IndexState = { store: null, info: { outcome: 'refused' } };
 let libraryService: LibraryService | null = null;
@@ -56,14 +59,14 @@ function log(): Logger {
 
 function logImportError(error: unknown): void {
   log().error(
-    '[uasm] nieoczekiwany blad importu:',
+    '[cwm] nieoczekiwany blad importu:',
     error instanceof Error ? error.name : 'nieznany',
   );
 }
 
 function logExportError(error: unknown): void {
   log().error(
-    '[uasm] nieoczekiwany blad eksportu:',
+    '[cwm] nieoczekiwany blad eksportu:',
     error instanceof Error ? error.name : 'nieznany',
   );
 }
@@ -83,7 +86,7 @@ function reportIndexStartup(info: IndexStartupInfo): void {
   // razem z aplikacja.
   if (info.outcome === 'refused') {
     log().error(
-      '[uasm] indeks nie zostal otwarty:',
+      '[cwm] indeks nie zostal otwarty:',
       info.reason ?? 'nieznana przyczyna',
       info.message ?? '',
     );
@@ -92,7 +95,7 @@ function reportIndexStartup(info: IndexStartupInfo): void {
   }
 
   log().warn(
-    '[uasm] indeks byl uszkodzony i zostal odbudowany; stary plik:',
+    '[cwm] indeks byl uszkodzony i zostal odbudowany; stary plik:',
     info.quarantinedAs ?? '(brak)',
   );
 }
@@ -123,6 +126,14 @@ function start(): void {
   });
 
   void app.whenReady().then(() => {
+    // Przed indeksem, biblioteka, logiem i oknem: do decyzji nic nie zaklada danych w nowym katalogu.
+    const startupMigration = dataMigration;
+    const decision = resolveMigration(dataMigration);
+    if (!decision.proceed) {
+      app.quit();
+      return;
+    }
+    dataMigration = decision.info;
     handleAppScheme(rendererRoot());
     blockOutboundNetwork();
     denyAllPermissions();
@@ -151,12 +162,24 @@ function start(): void {
       operationLogOf: (store) => (store instanceof SqliteIndexStore ? store.operationLog() : null),
       logUnexpected: (error) => {
         log().error(
-          '[uasm] nieoczekiwany blad odbudowy indeksu:',
+          '[cwm] nieoczekiwany blad odbudowy indeksu:',
           error instanceof Error ? error.name : 'nieznany',
         );
       },
     });
+    if (startupMigration.outcome === 'failed' || startupMigration.outcome === 'deferred') {
+      log().error(
+        `[cwm] migracja danych z v0.1.0: ${startupMigration.outcome}, wybor: ${dataMigration.outcome}`,
+        startupMigration.errorCode ?? '',
+      );
+    } else if (dataMigration.outcome === 'migrated') {
+      log().info(
+        '[cwm] dane z v0.1.0 skopiowane do nowego katalogu danych, zrodlo:',
+        dataMigration.source ?? '',
+      );
+    }
     registerDiagnosticsHandler(registry, () => indexState, {
+      dataMigration,
       rebuild,
       startupSettled: () => startupSettled,
     });
@@ -164,7 +187,7 @@ function start(): void {
       service: () => libraryService,
       logUnexpected: (error) => {
         log().error(
-          '[uasm] nieoczekiwany blad biblioteki:',
+          '[cwm] nieoczekiwany blad biblioteki:',
           error instanceof Error ? error.name : 'nieznany',
         );
       },
@@ -194,7 +217,7 @@ function start(): void {
     const library = startLibrary(userData, () => indexState.store);
     libraryService = library.service;
     if (library.failure !== undefined)
-      log().error('[uasm] biblioteka niedostepna:', library.failure);
+      log().error('[cwm] biblioteka niedostepna:', library.failure);
     if (library.service !== null) {
       importService = startImport(library.service, logImportError);
       void startExport(library.service, logExportError, {
@@ -229,7 +252,7 @@ function start(): void {
     const releaseStartup = writeLock.tryEnterWrite();
     startupSettled = restoreLibraryIndex(libraryService, result.info, (error) => {
       log().error(
-        '[uasm] nie udalo sie wypelnic indeksu biblioteki:',
+        '[cwm] nie udalo sie wypelnic indeksu biblioteki:',
         error instanceof Error ? error.name : 'nieznany',
       );
     })
@@ -244,4 +267,5 @@ function start(): void {
   });
 }
 
-start();
+if (dataMigration.outcome === 'busy') app.quit();
+else start();
