@@ -27,7 +27,8 @@
   },
   "dependencies": {
     "better-sqlite3": "13.0.3",
-    "smol-toml": "1.9.1"
+    "smol-toml": "1.9.1",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@angular/build": "20.3.40",
