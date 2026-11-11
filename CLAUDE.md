@@ -22,6 +22,8 @@ Czytaj w tej kolejności, zanim zaczniesz jakąkolwiek pracę:
 - `docs/ROADMAP.md` - struktura katalogów, plan etapów z kryteriami akceptacji, ryzyka.
 - `docs/adr/` - rekordy decyzji architektonicznych. Zanim zaproponujesz zmianę technologii
   albo podejścia, sprawdź, czy nie ma już ADR, który to rozstrzyga.
+- `CHANGELOG.md` - zmiany użytkownika per wydanie (Keep a Changelog, SemVer). Każda zmiana
+  widoczna dla użytkownika dostaje wpis pod `## [Unreleased]`.
 
 ## Design System
 

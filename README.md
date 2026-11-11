@@ -7,6 +7,7 @@ Twoja biblioteka to zwykłe pliki w katalogu danych aplikacji.
 
 Wydania są niepodpisane (ADR 0003), więc system ostrzeże cię przy pierwszym uruchomieniu.
 Postęp prac i kryteria wydania: `docs/ROADMAP.md`.
+Historia wydań i zmian: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Zmiana nazwy (ADR 0035)
 
