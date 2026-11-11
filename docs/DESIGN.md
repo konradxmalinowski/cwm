@@ -526,16 +526,25 @@ Poprawione brzmienia (zachowane w historii, nie usunięte):
 | n | Spis treści 192 px zamiast 168 px | „5. Synchronizacja" w Space Grotesk 18 px jest szersze niż pole 136 px i dotykało krawędzi panelu; krój jest szerszy niż Cabinet Grotesk |
 
 **Powód licencyjny (wpis l).** Cabinet Grotesk jest objęty ITF Free Font License 2.0
-(Indian Type Foundry, Fontshare). Pozwala osadzić font w aplikacji, ale według odczytu
-właściciela zabrania udostępniania plików fontu przez repozytorium oraz jakiejkolwiek
-modyfikacji (subsetting, konwersja formatu). Pliki `cabinet-grotesk-500.woff2` i `-700.woff2`
-leżały w publicznym repozytorium i miały inny rozmiar niż oficjalne, więc łamały oba zakazy.
-Zewnętrzne streszczenie licencji (licenseorg.com) mówi krótko: „Fontshare fonts cannot be
-redistributed - you must direct others to download from fontshare.com". **Dosłowny cytat
-brzmienia z licencji: do uzupełnienia przez właściciela.** Strona fontshare.com/licenses/itf-ffl
-jest aplikacją JavaScript, której tekst nie dał się pobrać automatycznie, a nie zapisujemy
-w dokumencie cytatu, którego nie widzieliśmy. Historii gita nie przepisujemy; pliki są
-usunięte z drzewa roboczego od tego commita.
+(Indian Type Foundry, Fontshare, wersja z 17 sierpnia 2026, plik `License/FFL.txt`
+z oficjalnej paczki `api.fontshare.com/v2/fonts/download/cabinet-grotesk`). Licencja pozwala
+osadzić font w aplikacji („You may embed the Font Software in mobile or desktop applications
+and digital documents for the uses permitted under this License"), ale zabrania dwóch rzeczy,
+które robiło to repozytorium:
+
+> The Font Software may not, beyond the permitted copies and uses defined herein, be
+> distributed, duplicated, loaned, resold, sublicensed, transferred, donated, given away or
+> otherwise made available to any other person or entity, whether for free or for a fee. This
+> includes distributing the Font Software through another font website, font library,
+> marketplace, repository, download service, application or platform [...]
+
+> You may not modify, edit, adapt, translate, reverse engineer, decompile, disassemble or
+> otherwise alter the Font Software [...]. This includes modifying or replacing glyphs,
+> subsetting, format conversion, or altering font names [...]
+
+Pliki `cabinet-grotesk-500.woff2` i `-700.woff2` leżały w publicznym repozytorium i miały inny
+rozmiar niż oficjalne, więc łamały oba zakazy. Historii gita nie przepisujemy (decyzja
+właściciela z 2026-11-11); pliki są usunięte z drzewa roboczego od commita `2f2713d`.
 
 ## Pochodzenie kierunku
 
