@@ -119,8 +119,8 @@ Czego w drzewie jeszcze nie ma, choć wcześniejsza wersja tego dokumentu je wym
 - widoki `dashboard`, `agents`, `commands`, `rules`, `profiles`, `settings` (rodzaje elementów
   obsługuje wspólny widok `library`),
 - `core/services/diff-merge/`, `sync-planner/`, `policy/`, `profiles/`: synchronizacja jest w
-  `SyncService`, a diff to `before` i `after` w planie eksportu (kanał `diff:compute` nie ma
-  handlera),
+  `SyncService`, a diff to `before` i `after` w planie eksportu (kanału `diff:compute` już
+  nie ma, usunięty w Etapie 10),
 - `core/model/compatibility.ts`, `hook.ts`, `profile.ts`: poziomy zgodności są w `plan.ts`,
 - `core/ports/file-gateway.ts` i `toml-editor.ts`: portem zapisu jest `write-gate.ts`, a edytor
   TOML mieszka w `adapters/shared/toml/`,
@@ -391,8 +391,8 @@ wstrzykiwany przez port `rename`, a nie realnym odebraniem uprawnień.
 Zakres zrealizowany: `SyncService` z siedmioma stanami elementu (`never`, `in-sync`,
 `library-changed`, `tool-changed`, `conflict`, `missing-in-tool`, `unsupported`) i rozstrzygnięciem
 `library-wins`, `tool-wins`, `skip`; `WriteGate`; widoki Synchronizacja i Historia; cofanie
-przez `history:rollback` i `export:apply`. Diff jest częścią planu eksportu (kanał `diff:compute`
-nie ma handlera). Polityka usuwania: ADR 0034.
+przez `history:rollback` i `export:apply`. Diff jest częścią planu eksportu (kanału `diff:compute`
+już nie ma, usunięty w Etapie 10). Polityka usuwania: ADR 0034.
 
 Zakres: `SyncPlanner`, wybór celów, plan operacji, diff przed zapisem, identyfikacja konfliktów,
 zatwierdzenie, `WriteGate` (ADR 0012), backup, obsługa błędów, weryfikacja po synchronizacji,
@@ -568,6 +568,79 @@ Kryteria akceptacji:
 4. Instalacja od zera na czystym systemie każdej z trzech platform została wykonana i opisana.
 5. Wydanie zawiera `SHA256SUMS` i nie zawiera żadnej funkcji opisanej jako gotowa, która jest
    atrapą.
+
+#### Kryteria 4 i 5: dowody (pipeline wydania i atrapy)
+
+Status etapu: **otwarty**. Kryteria 4 i 5 mają dowód z CI poniżej, ale zostaje krok ręczny
+właściciela (checklista na końcu) i musi wylądować zawartość kryteriów 1–3 z `docs-agent`.
+
+**Pipeline wydania** (`.github/workflows/release.yml`). Tag `v*` uruchamia: `preflight` (tag
+musi równać się `v` + wersja z `package.json`), `build` na czterech celach z flagami jak w jobie
+`dist`, `collect` (scala sumy w jedno `SHA256SUMS`, sprawdza je `sha256sum -c` na plikach po
+przejściu przez artefakty, wymaga unikalnych nazw i zgodności listy plików z sumami) oraz
+`publish`, jedyny job z `contents: write`, który robi `gh release create --draft --verify-tag`.
+Wydanie nigdy nie jest publikowane przez workflow. `workflow_dispatch` z `dry_run=true`
+(domyślnie) wykonuje wszystko poza `publish`. Poprawki znalezione przy przeglądzie pod kątem
+pierwszego tagu: `latest*.yml` wyłączone (`publish: null`, dwa runnery macOS nadpisywały sobie
+`latest-mac.yml`); nazwy plików z productName zawierały spacje, a GitHub zamienia je w zasobach
+na kropki, więc `SHA256SUMS` nie pasowałoby do pobranych plików (nazwy teraz bez spacji,
+`artifactName` w `electron-builder.yml`).
+Przebieg próbny: `42893023897` (commit `7c5dc44`), cztery cele, `collect` zielony, `publish`
+pominięty. Zebrane pliki: deb, AppImage, DMG i ZIP dla arm64 i x64, instalator NSIS i wersja
+portable, razem z jednym `SHA256SUMS` (osiem plików, osiem sum, wszystkie `OK`). Nieprzetestowane
+bez tagu: sam krok `gh release create` (nie da się go uruchomić bez tagu i bez tworzenia wydania).
+
+**Kryterium 4: instalacja od zera.** Job `paczka <cel>` w `ci.yml`, przebieg `42893003790`
+(commit `7c5dc44`), cztery cele zielone. Każdy runner to czysta maszyna wirtualna. Kroki:
+`npm ci` i build, `electron-builder` z flagami wydania, `SHA256SUMS` policzone i sprawdzone,
+instalacja artefaktu jak u użytkownika (macOS: montowanie DMG i `ditto` do katalogu aplikacji
+oraz `lipo -archs` zgodne z celem; Windows: instalator NSIS z `/S`; Linux: `apt install` pakietu
+deb), potem `tests/smoke/dist-smoke.test.ts` na zainstalowanej binarce. Czysty start: aplikacja
+leży poza drzewem repozytorium (katalog tymczasowy runnera albo `/opt`), więc nie ma
+`node_modules` w jej ścieżce; `userData` to nowy katalog z `createTempTree`, a test wymaga, by
+`index.db` powstał od zera z migracjami 1 do 4 i by drugi start ich nie dublował. Podane jest
+`--user-data-dir`, więc domyślna ścieżka `userData` systemu nie jest tu sprawdzana.
+
+Czego CI **nie** sprawdza: interakcji z Gatekeeperem i SmartScreenem (runner instaluje bez GUI i
+bez atrybutu kwarantanny), pierwszego uruchomienia dwuklikiem z Findera, Eksploratora i menedżera
+plików, AppImage na systemie z pomocnikiem sandboxa (krok informacyjny, na Ubuntu 24.04 pada
+bez `--no-sandbox`, dowodem dla Linuksa jest deb), instalacji portable.
+
+**Kryterium 5: brak atrap.** Przejrzane miejsca:
+- `src/shared/ipc/channels.ts`: kanały bez handlera `diff:compute`, `profiles:list`,
+  `profiles:save`, `profiles:export-plan`, `settings:get`, `settings:set` **usunięte** (żaden
+  kod renderera ani maina ich nie wołał). `IMPLEMENTED_CHANNELS` jest teraz tą samą listą co
+  `IPC_CHANNELS`, a rejestr przy starcie odmawia, gdy któryś kanał nie ma handlera.
+- Zdarzenia `progress` i `operation-log`: zadeklarowane i wystawione w moście, ale `main` nie
+  nadawał ich nigdzie (brak `webContents.send`), a renderer nie miał subskrybenta. **Usunięte**
+  razem z gałęzią `events` mostu (`surface.ts`, `bridge.ts`).
+- Testy: `tests/unit/ipc-surface.test.ts` i `tests/e2e/renderer-hardening.spec.ts`; test
+  hartowania sprawdza teraz, że most nie ma `diff`, `profiles`, `settings` ani `events`, że jest
+  zamrożony i że ma dokładnie przestrzenie nazw z listy.
+- Widoki renderera (`src/renderer/app/features`): biblioteka, import, eksport, synchronizacja,
+  historia, diagnostyka; brak widoku profili i ustawień, brak przycisków do nich (potwierdza
+  też `controls-inventory.spec.ts` z Etapu 8).
+- `docs/ARCHITECTURE.md` 7.2 i dwa zdania w tym dokumencie, które wspominały o kanale bez handlera.
+- `README.md`, sekcja „Co aplikacja robi dzis”: wymienia tylko biblioteke, import, eksport,
+  synchronizację z historią i diagnostykę, co odpowiada widokom; zastrzeżenia (tylko konfiguracje
+  globalne, bez MCP, bez usuwania plików w narzędziach) są jawne. Zdanie „Etapy 1 do 5 są w kodzie,
+  to nie jest jeszcze wydanie” zostaje do przepisania przez `docs-agent` przy kryterium 1.
+- Wyniki lint, typecheck, `npm test` (1197 testów), `test:boundaries` (32 próby) i build zielone.
+
+**Do zrobienia ręcznie przez właściciela przed publikacją wydania:**
+1. Upewnić się, że kryteria 1–3 są na `main`, a `package.json` ma wersję równą tagowi.
+2. Utworzyć tag `vX.Y.Z`; workflow zostawia **szkic**. Sprawdzić w nim osiem plików i `SHA256SUMS`.
+3. macOS (osobno arm64 i x64, najlepiej czysty użytkownik): pobrać DMG przeglądarką (ustawia
+   kwarantannę), przeciągnąć aplikację do Programów, uruchomić dwuklikiem, zobaczyć ostrzeżenie
+   Gatekeepera, obejść je wg README (menu kontekstowe „Otwórz” albo `xattr -d
+   com.apple.quarantine`), sprawdzić start i działanie biblioteki.
+4. Windows: pobrać instalator przeglądarką, uruchomić dwuklikiem, przejść SmartScreen („Więcej
+   informacji”, „Uruchom mimo to”), zainstalować, uruchomić ze skrótu; osobno sprawdzić wersję
+   portable.
+5. Linux: `sudo apt install ./plik.deb`, uruchomić z menu aplikacji; AppImage jeśli README go
+   zaleca (uwaga na sandbox).
+6. Zweryfikować `sha256sum -c SHA256SUMS` (macOS: `shasum -a 256 -c`) na pobranych plikach.
+7. Dopiero po tym opublikować szkic i zamknąć status Etapu 10.
 
 ---
 
