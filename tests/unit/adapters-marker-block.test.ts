@@ -15,8 +15,8 @@ const body = 'Linia pierwsza.\n\nLinia druga.\n';
 
 describe('blok miedzy markerami (ADR 0025)', () => {
   it('markery sa komentarzami Markdown w przestrzeni nazw aplikacji', () => {
-    expect(BLOCK_START).toBe('<!-- ai-skills-manager:start -->');
-    expect(BLOCK_END).toBe('<!-- ai-skills-manager:end -->');
+    expect(BLOCK_START).toBe('<!-- cwm:start -->');
+    expect(BLOCK_END).toBe('<!-- cwm:end -->');
   });
 
   it('regula 4: brak pliku daje plik z samym blokiem', () => {

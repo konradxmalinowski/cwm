@@ -75,7 +75,7 @@ test('most IPC wystawia dokladnie zamknieta liste, bez kanalu ogolnego', async (
 
   try {
     const surface = await page.evaluate(() => {
-      const bridge = (globalThis as Record<string, unknown>)['uasm'];
+      const bridge = (globalThis as Record<string, unknown>)['cwm'];
       if (typeof bridge !== 'object' || bridge === null) return null;
       const out: Record<string, string[]> = {};
       for (const key of Object.keys(bridge)) {
@@ -108,7 +108,7 @@ test('most nie ma metody spoza listy: brak diff, profili, ustawien i zdarzen', a
 
   try {
     const result = await page.evaluate(() => {
-      const bridge = (globalThis as Record<string, unknown>)['uasm'] as Record<string, unknown>;
+      const bridge = (globalThis as Record<string, unknown>)['cwm'] as Record<string, unknown>;
       return {
         namespaces: Object.keys(bridge).sort(),
         absent: ['diff', 'profiles', 'settings', 'events'].map((key) => typeof bridge[key]),

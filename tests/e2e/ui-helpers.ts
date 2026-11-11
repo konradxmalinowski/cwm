@@ -65,23 +65,23 @@ export async function mockChannel(
   await app.evaluate(
     ({ ipcMain }, args) => {
       const g = globalThis as unknown as {
-        __uasmOriginals?: Map<string, unknown>;
-        __uasmHolds?: Map<string, (() => void)[]>;
+        __cwmOriginals?: Map<string, unknown>;
+        __cwmHolds?: Map<string, (() => void)[]>;
       };
       const handlers = (ipcMain as unknown as { _invokeHandlers: InvokeHandlers })._invokeHandlers;
       if (handlers === undefined || typeof handlers.get !== 'function') {
         throw new Error('Electron nie udostepnia _invokeHandlers: popraw ui-helpers.ts');
       }
-      g.__uasmOriginals ??= new Map();
-      g.__uasmHolds ??= new Map();
+      g.__cwmOriginals ??= new Map();
+      g.__cwmHolds ??= new Map();
       const original = handlers.get(args.channel);
       if (original === undefined) throw new Error(`brak handlera kanalu ${args.channel}`);
-      if (!g.__uasmOriginals.has(args.channel)) g.__uasmOriginals.set(args.channel, original);
+      if (!g.__cwmOriginals.has(args.channel)) g.__cwmOriginals.set(args.channel, original);
 
       const mode = args.mode;
       if (mode.kind === 'hold') {
         const waiting: (() => void)[] = [];
-        g.__uasmHolds.set(args.channel, waiting);
+        g.__cwmHolds.set(args.channel, waiting);
         handlers.set(
           args.channel,
           () =>
@@ -114,15 +114,15 @@ export async function mockChannel(
     restore: async () => {
       await app.evaluate(({ ipcMain }, name) => {
         const g = globalThis as unknown as {
-          __uasmOriginals?: Map<string, (...a: unknown[]) => unknown>;
-          __uasmHolds?: Map<string, (() => void)[]>;
+          __cwmOriginals?: Map<string, (...a: unknown[]) => unknown>;
+          __cwmHolds?: Map<string, (() => void)[]>;
         };
         const handlers = (ipcMain as unknown as { _invokeHandlers: InvokeHandlers })
           ._invokeHandlers;
-        const original = g.__uasmOriginals?.get(name);
+        const original = g.__cwmOriginals?.get(name);
         if (original !== undefined) handlers.set(name, original);
-        const waiting = g.__uasmHolds?.get(name) ?? [];
-        g.__uasmHolds?.delete(name);
+        const waiting = g.__cwmHolds?.get(name) ?? [];
+        g.__cwmHolds?.delete(name);
         for (const resolve of waiting) resolve();
       }, channel);
     },

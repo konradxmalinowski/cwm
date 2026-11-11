@@ -30,7 +30,7 @@ test('better-sqlite3 laduje sie w zbudowanej aplikacji i wykonuje zapytanie', as
 
   try {
     const report = (await page.evaluate(async () => {
-      const bridge = (globalThis as Record<string, unknown>)['uasm'] as {
+      const bridge = (globalThis as Record<string, unknown>)['cwm'] as {
         diagnostics: { report: () => Promise<unknown> };
       };
       return bridge.diagnostics.report();
@@ -53,7 +53,7 @@ test('raport diagnostyczny nie oddaje rendererowi absolutnej sciezki katalogu do
 
   try {
     const report = (await page.evaluate(async () => {
-      const bridge = (globalThis as Record<string, unknown>)['uasm'] as {
+      const bridge = (globalThis as Record<string, unknown>)['cwm'] as {
         diagnostics: { report: () => Promise<unknown> };
       };
       return bridge.diagnostics.report();

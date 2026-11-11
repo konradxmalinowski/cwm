@@ -47,7 +47,7 @@ describe('podglad diffu bez sekretow (kryterium 5)', () => {
         `ACME_TOKEN = "${TOML_TOKEN}"`,
         `OPENAI_KEY = "${SECRETS.openai}"`,
         '',
-        `# uasm:begin\n${token}\n# uasm:end`,
+        `# cwm:begin\n${token}\n# cwm:end`,
       ].join('\n');
     const settings = (extra: string): string =>
       `{\n  "env": { "GITHUB_TOKEN": "${SECRETS.github}", "PASSWORD": "${ASSIGNED}" },\n  "hooks": ${extra}\n}\n`;

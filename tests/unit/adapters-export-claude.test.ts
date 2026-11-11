@@ -298,7 +298,7 @@ describe('eksport Claude Code: swiezy ~/.claude bez podkatalogow i plikow', () =
       [id('global-instructions'), 'CLAUDE.md', 'create'],
     ]);
     expect(text(entryFor(plan, id('global-instructions'), 'CLAUDE.md')!.content)).toBe(
-      '<!-- ai-skills-manager:start -->\nTresc\n<!-- ai-skills-manager:end -->\n',
+      '<!-- cwm:start -->\nTresc\n<!-- cwm:end -->\n',
     );
   });
 });
@@ -311,7 +311,7 @@ describe('eksport Claude Code: instrukcja globalna', () => {
           title: 't',
           description: 'x',
           descriptionOrigin: 'derived',
-          body: '<!-- ai-skills-manager:start -->\nx\n<!-- ai-skills-manager:end -->\n',
+          body: '<!-- cwm:start -->\nx\n<!-- cwm:end -->\n',
         },
       }),
     );

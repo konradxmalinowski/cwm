@@ -111,7 +111,7 @@ async function exportFresh(layout: Layout): Promise<void> {
   // Pliki i katalogi powstaly pod istniejacym katalogiem glownym.
   const instructionFile = layout.tool === 'claude-code' ? 'CLAUDE.md' : 'AGENTS.md';
   expect(readFileSync(join(home, instructionFile), 'utf8')).toBe(
-    '<!-- ai-skills-manager:start -->\nTresc\n<!-- ai-skills-manager:end -->\n',
+    '<!-- cwm:start -->\nTresc\n<!-- cwm:end -->\n',
   );
   expect(readFileSync(join(home, 'skills', 'acme-s', 'references', 'n.md'), 'utf8')).toBe('n\n');
   const hooksFile = layout.tool === 'claude-code' ? 'settings.json' : 'hooks.json';

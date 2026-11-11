@@ -17,7 +17,7 @@ import { createTempTree, removeTempTrees } from '../harness/isolation';
  * wystartowal z paczki, zaladowal `better-sqlite3` z `app.asar.unpacked` i wykonal zapis.
  */
 
-const executable = process.env['UASM_DIST_EXECUTABLE'];
+const executable = process.env['CWM_DIST_EXECUTABLE'];
 const READY_TIMEOUT_MS = 90_000;
 const POLL_MS = 250;
 /** Cztery migracje: rejestr, log operacji, stan synchronizacji, indeks biblioteki. */
@@ -81,7 +81,7 @@ async function startOnce(userData: string): Promise<{ versions: number[]; exited
 describe('paczka dystrybucyjna po instalacji (Etap 9 kryterium 6)', () => {
   it('binarka z artefaktu startuje, laduje modul natywny i zaklada schemat; drugi start go nie dubluje', async () => {
     // Bez zmiennej test pada zamiast sie pomijac: pominiety dowod niczego nie dowodzi.
-    expect(executable, 'brak UASM_DIST_EXECUTABLE').toBeTruthy();
+    expect(executable, 'brak CWM_DIST_EXECUTABLE').toBeTruthy();
     expect(existsSync(executable as string), executable).toBe(true);
 
     const userData = createTempTree('acme-dist-');

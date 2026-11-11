@@ -61,9 +61,9 @@ test('import, edycja, synchronizacja do Codeksa i cofniecie wracaja do stanu co 
     const itemId = await page.evaluate(async (slug) => {
       const bridge = (
         window as unknown as {
-          uasm: { library: { list: (request: object) => Promise<unknown> } };
+          cwm: { library: { list: (request: object) => Promise<unknown> } };
         }
-      ).uasm;
+      ).cwm;
       const result = (await bridge.library.list({})) as {
         ok: boolean;
         value: { items: { id: string; slug: string }[] };

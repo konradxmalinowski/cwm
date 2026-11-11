@@ -12,7 +12,7 @@ test('aplikacja startuje, okno sie pojawia i powloka renderera jest widoczna', a
 
   try {
     await expect(page.locator('[data-testid="app-shell"]')).toBeVisible();
-    expect(await page.title()).toBe('Universal AI Skills Manager');
+    expect(await page.title()).toBe('CWM - Claude Workspace Manager');
 
     const windowCount = await app.evaluate(
       ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,

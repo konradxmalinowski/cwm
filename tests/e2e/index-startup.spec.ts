@@ -28,7 +28,7 @@ interface Report {
 
 async function readReport(page: import('@playwright/test').Page): Promise<Report> {
   return (await page.evaluate(async () => {
-    const bridge = (globalThis as Record<string, unknown>)['uasm'] as {
+    const bridge = (globalThis as Record<string, unknown>)['cwm'] as {
       diagnostics: { report: () => Promise<unknown> };
     };
     return bridge.diagnostics.report();
@@ -112,7 +112,7 @@ type Page = import('@playwright/test').Page;
 async function invoke<T>(page: Page, path: string, payload?: unknown): Promise<T> {
   return (await page.evaluate(
     async ({ path: target, payload: body }) => {
-      const bridge = (globalThis as Record<string, unknown>)['uasm'] as Record<
+      const bridge = (globalThis as Record<string, unknown>)['cwm'] as Record<
         string,
         Record<string, (arg?: unknown) => Promise<unknown>>
       >;

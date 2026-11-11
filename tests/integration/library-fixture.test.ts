@@ -28,8 +28,8 @@ import {
   type FixtureItem,
 } from './library-fixture-spec';
 
-// Jednorazowa regeneracja drzewa: UASM_WRITE_FIXTURE=1 npx vitest run tests/integration/library-fixture.test.ts
-const REGENERATE = process.env['UASM_WRITE_FIXTURE'] === '1';
+// Jednorazowa regeneracja drzewa: CWM_WRITE_FIXTURE=1 npx vitest run tests/integration/library-fixture.test.ts
+const REGENERATE = process.env['CWM_WRITE_FIXTURE'] === '1';
 
 const FIXTURE = join(process.cwd(), FIXTURE_DIR);
 
@@ -168,7 +168,7 @@ describe('kryterium 10: biblioteka zapisana na Linuksie otwiera sie na kazdym sy
 
     const expected = readTree(FIXTURE);
     const actual = readTree(fresh);
-    // Rozjazd po zmianie formatu: regeneracja przez UASM_WRITE_FIXTURE=1 (komentarz na gorze pliku).
+    // Rozjazd po zmianie formatu: regeneracja przez CWM_WRITE_FIXTURE=1 (komentarz na gorze pliku).
     expect([...actual.keys()].sort()).toEqual([...expected.keys()].sort());
     for (const [rel, content] of expected) {
       expect(actual.get(rel)?.equals(content), rel).toBe(true);

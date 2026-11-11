@@ -35,7 +35,7 @@ export async function call<T>(
 ): Promise<T> {
   const result = await page.evaluate(
     async ({ ns, fn, body }) => {
-      const bridge = (globalThis as unknown as Record<string, Record<string, unknown>>)['uasm'];
+      const bridge = (globalThis as unknown as Record<string, Record<string, unknown>>)['cwm'];
       const target = bridge?.[ns] as Record<string, (p?: unknown) => Promise<unknown>> | undefined;
       const handler = target?.[fn];
       if (handler === undefined) throw new Error(`brak kanalu ${ns}.${fn}`);

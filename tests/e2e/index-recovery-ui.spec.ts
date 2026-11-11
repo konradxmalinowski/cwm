@@ -33,7 +33,7 @@ test.afterAll(() => {
 
 async function indexReport(page: Page): Promise<IndexReport> {
   return (await page.evaluate(async () => {
-    const bridge = (globalThis as Record<string, unknown>)['uasm'] as {
+    const bridge = (globalThis as Record<string, unknown>)['cwm'] as {
       diagnostics: { report: () => Promise<unknown> };
     };
     return bridge.diagnostics.report();
@@ -42,7 +42,7 @@ async function indexReport(page: Page): Promise<IndexReport> {
 
 async function hasRebuildChannels(page: Page): Promise<boolean> {
   return page.evaluate(() => {
-    const bridge = (globalThis as Record<string, unknown>)['uasm'] as {
+    const bridge = (globalThis as Record<string, unknown>)['cwm'] as {
       diagnostics: Record<string, unknown>;
     };
     return (

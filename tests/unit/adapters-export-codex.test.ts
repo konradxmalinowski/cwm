@@ -219,9 +219,7 @@ describe('eksport Codeksa: agent w dwoch miejscach', () => {
     expect(entryFor(plan, id('skills'), 'acme-c')?.action).toBe('link');
     const md = entryFor(plan, id('global-instructions'), 'AGENTS.md')!;
     expect(md.action).toBe('create');
-    expect(text(md.content)).toMatch(
-      /^<!-- ai-skills-manager:start -->\nTresc\n<!-- ai-skills-manager:end -->\n$/,
-    );
+    expect(text(md.content)).toMatch(/^<!-- cwm:start -->\nTresc\n<!-- cwm:end -->\n$/);
     const hooks = entryFor(plan, id('hooks'), 'hooks.json')!;
     expect(hooks.action).toBe('create');
     expect(JSON.parse(text(hooks.content))).toEqual({
