@@ -192,6 +192,20 @@ idą tylko do środka. Reguła jest wymuszana lintem (`import/no-restricted-path
 wolą, bo pierwsza osoba, która zaimportuje `fs` do serwisu domenowego, zabiera nam testowalność
 całej logiki konwersji.
 
+### 3.2a Warstwa CWM (`src/core/cwm`, `src/infra/cwm`)
+
+Warstwa workspace (ADR 0037) leży w tych samych warstwach heksagonalnych co reszta aplikacji, bez
+własnego procesu. `src/core/cwm` jest czyste, bez I/O: typy manifestów i zasobów, walidatory
+pisane ręcznie, resolver (`resolve`) i `validatePolicy`. Źródło zasobów to port
+`ResourceRegistry`, synchroniczny, żeby rdzeń nie czytał dysku. `src/infra/cwm` robi jedno:
+zamienia tekst YAML na dane (`parseManifestYaml`, biblioteka `yaml`, bez aliasów i jawnych
+znaczników, z limitem rozmiaru), a walidator z `core` dostaje już `unknown`. Reguła zależności
+z 3.2 obowiązuje bez zmian: `core/cwm` nie importuje `yaml`.
+
+Dane CWM mają leżeć w `~/.cwm`. Stan na 2026-11-11 (gałąź `feat/cwm-core`, niescalona): model i
+resolver są w kodzie, ale nic ich nie wywołuje, nie ma odczytu `~/.cwm`, CLI, adaptera runtime ani
+lockfile. Zachowanie Claude Code, na którym ma stanąć adapter runtime, jest w ADR 0036.
+
 ### 3.3 Diagram komponentów
 
 ```mermaid
@@ -232,6 +246,7 @@ graph TB
       OBJ["Content store + backupy"]
       PLT["platform: lokalizacje, ACL,<br/>konce linii, wielkosc liter"]
       LOG["Logger z redakcja sekretow"]
+      YML["cwm: parser YAML manifestow (yaml)"]
     end
     WRK["Worker: skan drzewa, hash, diff"]
     IPCH --> SVC

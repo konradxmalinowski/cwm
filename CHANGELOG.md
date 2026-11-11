@@ -12,6 +12,10 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- Rdzeń warstwy CWM: model manifestów firmy, projektu i zasobów (skill, agent, workflow, plugin,
+  MCP), ręczne walidatory, resolver składający konfigurację z warstw global, firma, projekt i
+  importy oraz parser manifestów YAML (nowa zależność `yaml`). Wewnętrzne, jeszcze niepodłączone
+  do aplikacji (ADR 0037).
 - Jednorazowa migracja danych z v0.1.0 przy pierwszym starcie: biblioteka, historia i kopie
   zapasowe są kopiowane do nowego katalogu danych, a stary katalog zostaje nietknięty. Jawne
   `--user-data-dir` wyłącza migrację.

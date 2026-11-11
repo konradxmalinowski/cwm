@@ -329,6 +329,7 @@ Kryterium akceptacji Etapu 1 punkt 5: kazda pozycja w `package.json` ma powod.
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `better-sqlite3` | indeks metadanych, FTS5, synchroniczne API pasujace do procesu glownego (ADR 0007)                                                                              |
 | `smol-toml`      | niezalezny parser TOML do weryfikacji semantycznej edycji `config.toml` w `SegmentTomlEditor` (ADR 0011); zapisu nie robi, wiec komentarze uzytkownika nie gina |
+| `yaml`           | parser manifestow CWM w `src/infra/cwm` (ADR 0037); wersja przypieta dokladnie, aliasy i jawne znaczniki odrzucane                                              |
 
 ### Fonty (pliki w `src/renderer/assets/fonts/`, ida do paczki)
 

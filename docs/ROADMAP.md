@@ -80,6 +80,8 @@ universal-ai-skills-manager/
         history/                    HistoryService
         security/                   secret-classifier, secret-redactor
         normalization/              hash, line-endings
+      cwm/                          model manifestów i zasobów, walidatory, resolver, validatePolicy
+                                    (ADR 0037; na gałęzi feat/cwm-core, niescalone)
 
     adapters/
       index.ts
@@ -98,6 +100,7 @@ universal-ai-skills-manager/
       source/                       fs-source-reader
       platform/                     env, locations, root-salt
       logging/                      logger, redact
+      cwm/                          yaml-manifest (parser YAML manifestów, ADR 0037)
 
   tests/
     harness/                        podstawianie HOME, kanarek na plikach wlasciciela
@@ -686,6 +689,22 @@ właściciela, nie wynik CI; systemu i architektury nie podał.
 Dokumentacja użytkownika (`README.md`, `docs/INSTALACJA.md`, `docs/ODZYSKIWANIE.md`,
 `docs/OGRANICZENIA.md`) opisuje stan docelowy v0.2.0.
 
+### Warstwa CWM: model zasobów i workspace (ADR 0036, 0037)
+
+Kolejność etapów pochodzi z planu właściciela (`plans/2026-11-11-cwm-core.md`). Etapy nie mają
+jeszcze kryteriów akceptacji w stylu Etapów 1 do 10; powstaną przy planowaniu każdego z nich.
+
+| Krok | Zakres | Stan na 2026-11-11 |
+|---|---|---|
+| S1 | Spike: jak Claude Code ładuje konfigurację, co przenosi `CLAUDE_CONFIG_DIR` | Zrobione, ADR 0036 |
+| Model i resolver | Typy manifestów i zasobów, walidatory, `resolve`, `validatePolicy`, parser YAML (ADR 0037) | Zrobione na gałęzi `feat/cwm-core`, niescalone do `main`, bez testów (decyzja właściciela), nie podłączone do aplikacji |
+| Profile i manifesty firm | Odczyt `~/.cwm` (globalny manifest, firmy, zasoby) z limitem bajtów przed dekodowaniem, implementacja `ResourceRegistry` | Następny |
+| Konfiguracje projektów | Odczyt `project.yaml`, projekty zagnieżdżone | Następny po powyższym |
+| CLI `cwm` | Polecenia na modelu i resolverze, w tym lockfile | Planowane |
+| Adapter runtime | Profil Claude Code z `CLAUDE_CONFIG_DIR` na podstawie ADR 0036 | Planowane |
+| Pluginy i MCP | Zapis do konfiguracji silnika z ekranem zatwierdzania `EXECUTION_RELEVANT_FIELDS` i przeglądem bezpieczeństwa (ADR 0037, ADR 0020) | Planowane |
+| Dyspozytor workflow | Wybór workflow na podstawie `routing` | Planowane |
+
 ---
 
 ## 4. Backlog po MVP
@@ -706,6 +725,7 @@ W kolejności według stosunku wartości do ryzyka, nie według atrakcyjności.
 | Konfiguracje projektowe | Zaplanowane po MVP (ADR 0032). Wymagają wpisu w `CANDIDATES` i kanału wyboru katalogu, czyli nowego ADR |
 | Import z repozytorium Git jako źródła skilli | Wymagania o tym wspominają w kontekście bezpieczeństwa; funkcja wymaga pełnej ścieżki traktowania treści jako niezaufanej, która w MVP już istnieje |
 | Ikona aplikacji w finalnej formie | Zależy od odpowiedzi na pytanie 6 |
+| Niestabilny test E2E `tests/e2e/keyboard-flows.spec.ts:143` | Przekroczył limit czasu na linux-x64 w przebiegu CI `43105259320` (`main`) i na macos-x64 w przebiegu `43056335953`. Nie zbadany |
 
 ### Znane ograniczenia
 
