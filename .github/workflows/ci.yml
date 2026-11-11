@@ -240,17 +240,17 @@ jobs:
           dmgs=(release/*.dmg)
           # Jeden DMG na runner: architektura idzie z flagi, nie z electron-builder.yml.
           if [ "${#dmgs[@]}" -ne 1 ]; then echo "oczekiwalem jednego DMG, mam: ${dmgs[*]}"; exit 1; fi
-          mnt="$RUNNER_TEMP/uasm-dmg"
+          mnt="$RUNNER_TEMP/cwm-dmg"
           apps="$RUNNER_TEMP/Applications"
           mkdir -p "$mnt" "$apps"
           hdiutil attach "${dmgs[0]}" -nobrowse -readonly -mountpoint "$mnt"
-          ditto "$mnt/Universal AI Skills Manager.app" "$apps/Universal AI Skills Manager.app"
+          ditto "$mnt/CWM - Claude Workspace Manager.app" "$apps/CWM - Claude Workspace Manager.app"
           hdiutil detach "$mnt"
-          exe="$apps/Universal AI Skills Manager.app/Contents/MacOS/Universal AI Skills Manager"
+          exe="$apps/CWM - Claude Workspace Manager.app/Contents/MacOS/CWM - Claude Workspace Manager"
           archs="$(lipo -archs "$exe")"
           echo "architektura binarki: $archs"
           if [ "$archs" != "${{ matrix.mac_arch }}" ]; then echo "oczekiwalem ${{ matrix.mac_arch }}"; exit 1; fi
-          echo "UASM_DIST_EXECUTABLE=$exe" >> "$GITHUB_ENV"
+          echo "CWM_DIST_EXECUTABLE=$exe" >> "$GITHUB_ENV"
 
       - name: Instalacja instalatorem NSIS (Windows)
         if: runner.os == 'Windows'
@@ -258,14 +258,14 @@ jobs:
         run: |
           $setup = Get-ChildItem release -Filter '*-setup-x64.exe' | Select-Object -First 1
           if ($null -eq $setup) { throw 'brak instalatora NSIS w release/' }
-          $dir = Join-Path $env:RUNNER_TEMP 'uasm-install'
+          $dir = Join-Path $env:RUNNER_TEMP 'cwm-install'
           # /S: instalacja cicha, /D: katalog docelowy (musi byc ostatni i bez cudzyslowow).
           $proc = Start-Process -FilePath $setup.FullName -ArgumentList '/S', "/D=$dir" -Wait -PassThru
           if ($proc.ExitCode -ne 0) { throw "instalator zakonczyl sie kodem $($proc.ExitCode)" }
-          Get-Process -Name 'Universal AI Skills Manager' -ErrorAction SilentlyContinue | Stop-Process -Force
-          $exe = Join-Path $dir 'Universal AI Skills Manager.exe'
+          Get-Process -Name 'CWM - Claude Workspace Manager' -ErrorAction SilentlyContinue | Stop-Process -Force
+          $exe = Join-Path $dir 'CWM - Claude Workspace Manager.exe'
           if (-not (Test-Path $exe)) { Get-ChildItem -Recurse $dir | Select-Object -First 40; throw "brak $exe" }
-          "UASM_DIST_EXECUTABLE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CWM_DIST_EXECUTABLE=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Instalacja pakietu deb (Linux)
         if: runner.os == 'Linux'
@@ -274,9 +274,9 @@ jobs:
           set -euo pipefail
           debs=(release/*.deb)
           sudo apt-get install -y "./${debs[0]}"
-          exe="$(dpkg -L universal-ai-skills-manager | grep -E '^/opt/.*/universal-ai-skills-manager$' | head -1)"
+          exe="$(dpkg -L claude-workspace-manager | grep -E '^/opt/.*/claude-workspace-manager$' | head -1)"
           ls -l "$exe" "$(dirname "$exe")/chrome-sandbox"
-          echo "UASM_DIST_EXECUTABLE=$exe" >> "$GITHUB_ENV"
+          echo "CWM_DIST_EXECUTABLE=$exe" >> "$GITHUB_ENV"
 
       - name: Test dymny paczki dystrybucyjnej (Linux, pod xvfb)
         if: runner.os == 'Linux'
@@ -301,5 +301,5 @@ jobs:
           app="$(ls "$GITHUB_WORKSPACE"/release/*.AppImage)"
           chmod +x "$app"
           (cd "$RUNNER_TEMP" && "$app" --appimage-extract >/dev/null)
-          UASM_DIST_EXECUTABLE="$RUNNER_TEMP/squashfs-root/universal-ai-skills-manager" \
+          CWM_DIST_EXECUTABLE="$RUNNER_TEMP/squashfs-root/claude-workspace-manager" \
             xvfb-run --auto-servernum npx vitest run -c vitest.dist.config.ts

@@ -1,5 +1,5 @@
 {
-  "name": "universal-ai-skills-manager",
+  "name": "cwm",
   "version": "0.1.0",
   "private": true,
   "description": "Desktop manager for AI tool configuration: skills, agents, commands, rules.",
