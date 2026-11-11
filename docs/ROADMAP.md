@@ -552,7 +552,7 @@ narzędzia na zawsze (`sync-interrupted.test.ts`); lista architektur macOS w `el
 wygrywała z flagą, więc oba runnery macOS budowały oba DMG, a scalone `SHA256SUMS` miało dwie
 sumy dla jednego pliku; build Linuksa padał na pustym katalogu `resources/icons`.
 
-### Etap 10: Dokumentacja i wydanie MVP
+### Etap 10: Dokumentacja i wydanie MVP - ZAMKNIĘTY
 
 Zakres: README z instalacją i uruchomieniem, dokumentacja architektury (aktualizacja tego
 dokumentu i ADR-ów), lista obsługiwanych formatów, lista ograniczeń konwersji, procedura backupu
@@ -573,19 +573,23 @@ Dowody (stan na 2026-11-11):
 
 | Kryterium | Test albo dokument | Status |
 |---|---|---|
-| 1 | `docs/INSTALACJA.md` (wybór pliku DMG arm64 i x64, obejście Gatekeepera w dwóch wariantach z `xattr`, obejście SmartScreena, deb zalecany, AppImage na Ubuntu 24.04 z `--no-sandbox` i jego konsekwencją dla bezpieczeństwa, weryfikacja `SHA256SUMS` na trzech systemach, `npm ci` i `npm run dev`, katalogi `userData` na trzech systemach i ich zawartość, zakres z ADR 0032) oraz odnośniki w `README.md`. Ścieżki `userData` sprawdzone na macOS przez `app.getPath('userData')`, wzorzec polecenia sum na macOS; kroki obejść opisane według dokumentacji systemów, wynik na czystych systemach należy do kryterium 4 | spełnione dla treści; wykonanie na czystych systemach w kryterium 4 |
+| 1 | `docs/INSTALACJA.md` (wybór pliku DMG arm64 i x64, obejście Gatekeepera w dwóch wariantach z `xattr`, obejście SmartScreena, deb zalecany, AppImage na Ubuntu 24.04 z `--no-sandbox` i jego konsekwencją dla bezpieczeństwa, weryfikacja `SHA256SUMS` na trzech systemach, `npm ci` i `npm run dev`, katalogi `userData` na trzech systemach i ich zawartość, zakres z ADR 0032) oraz odnośniki w `README.md`. Ścieżki `userData` sprawdzone na macOS przez `app.getPath('userData')`, wzorzec polecenia sum na macOS; kroki obejść opisane według dokumentacji systemów, wynik na czystych systemach należy do kryterium 4 | spełnione; obejścia Gatekeepera i SmartScreena potwierdzone ręcznie 2026-11-11 (kryterium 4) |
+| 4 | Job `paczka <cel>` w `ci.yml` (czysta maszyna, instalacja artefaktu, test dymny) oraz ręczne pierwsze uruchomienie pobranych plików v0.1.0 na trzech systemach, 2026-11-11, według relacji właściciela (niepowtórzone przez CI). Szczegóły i luki: sekcja poniżej | spełnione; krok sum po pobraniu i wersja portable Windows nie zostały zgłoszone |
+| 5 | Przegląd atrap (kanały IPC, zdarzenia, widoki, README) i `SHA256SUMS` w wydaniu. Szczegóły: sekcja poniżej | spełnione |
 | 2 | `docs/OGRANICZENIA.md`: tabela typ elementu i narzędzie wyprowadzona z `claudeCapabilities` i `codexCapabilities` (`src/adapters/*/export.ts`), segmenter TOML z listą konstrukcji powodujących odmowę zgodną z `SegmentTomlEditor.checkScanned`, markery `ai-skills-manager` i reguły `applyMarkerBlock`, MCP (ADR 0020), sieroty (ADR 0034). Zachowania z dokumentu sprawdzone w kodzie: zablokowany eksport skilla nad zwykłym katalogiem (probe), dopisanie drugiego bloku po edycji zaimportowanej instrukcji (`applyMarkerBlock`) | spełnione |
 | 3 | `docs/ODZYSKIWANIE.md` i `tests/integration/recovery-procedure.test.ts`: kopia z prawdziwego `WriteGate` (zmiana pliku z trybem, nowy plik w nowym katalogu, dowiązanie do katalogu, plik zastąpiony dowiązaniem), kroki A1 do A4 wykonane samym `node:fs`, drzewo porównane przez `treeHash` bajt w bajt razem z trybami i celami dowiązań; A5 z `objects/`; D1 dla dowiązania wskazującego w próżnię; B1 do B3 dla elementu biblioteki i poprzedniej wersji z `objects/`; C dla indeksu w kwarantannie. Test widziany jako czerwony po usunięciu kroku `chmod` | spełnione |
 
 #### Kryteria 4 i 5: dowody (pipeline wydania i atrapy)
 
-Status etapu: **wydany, z jednym krokiem otwartym**. Wydanie
+Status etapu: **zamknięty 2026-11-11**. Wydanie
 [v0.1.0](https://github.com/konradxmalinowski/universal-ai-skills-manager/releases/tag/v0.1.0)
 opublikowane 2026-11-11 z commita `6d83a46` (przebieg `release.yml` `43018775505`, CI `main`
 zielone na czterech celach i czterech paczkach). Wydanie ma osiem plików i `SHA256SUMS`;
-suma DMG arm64 sprawdzona po pobraniu. Kryteria 1–5 mają dowód poniżej. Otwarty zostaje krok
-ręczny z checklisty na końcu: pierwsze uruchomienie pobranych plików przez Gatekeepera
-i SmartScreen nie zostało wykonane i jest wymienione w notatce wydania jako znane ograniczenie.
+suma DMG arm64 sprawdzona po pobraniu. Kryteria 1 do 5 mają dowód poniżej. Krok ręczny z checklisty
+na końcu (pierwsze uruchomienie pobranych plików przez Gatekeepera i SmartScreen) właściciel
+wykonał 2026-11-11; wynik jest w sekcji „Wynik ręcznej weryfikacji”. Jest to relacja właściciela,
+nie wynik CI. Dwie luki pozostają jawne: krok 6 (sumy na pobranych plikach) i wersja portable
+Windows nie zostały zgłoszone.
 
 **Pipeline wydania** (`.github/workflows/release.yml`). Tag `v*` uruchamia: `preflight` (tag
 musi równać się `v` + wersja z `package.json`), `build` na czterech celach z flagami jak w jobie
@@ -617,7 +621,8 @@ leży poza drzewem repozytorium (katalog tymczasowy runnera albo `/opt`), więc 
 Czego CI **nie** sprawdza: interakcji z Gatekeeperem i SmartScreenem (runner instaluje bez GUI i
 bez atrybutu kwarantanny), pierwszego uruchomienia dwuklikiem z Findera, Eksploratora i menedżera
 plików, AppImage na systemie z pomocnikiem sandboxa (krok informacyjny, na Ubuntu 24.04 pada
-bez `--no-sandbox`, dowodem dla Linuksa jest deb), instalacji portable.
+bez `--no-sandbox`, dowodem dla Linuksa jest deb), instalacji portable. Gatekeeper, SmartScreen
+i dwuklik na trzech systemach sprawdził ręcznie właściciel (niżej).
 
 **Kryterium 5: brak atrap.** Przejrzane miejsca:
 - `src/shared/ipc/channels.ts`: kanały bez handlera `diff:compute`, `profiles:list`,
@@ -640,7 +645,7 @@ bez `--no-sandbox`, dowodem dla Linuksa jest deb), instalacji portable.
   to nie jest jeszcze wydanie” zostaje do przepisania przez `docs-agent` przy kryterium 1.
 - Wyniki lint, typecheck, `npm test` (1197 testów), `test:boundaries` (32 próby) i build zielone.
 
-**Do zrobienia ręcznie przez właściciela przed publikacją wydania:**
+**Checklista ręczna przed publikacją wydania (wykonana, wynik niżej):**
 1. Upewnić się, że kryteria 1–3 są na `main`, a `package.json` ma wersję równą tagowi.
 2. Utworzyć tag `vX.Y.Z`; workflow zostawia **szkic**. Sprawdzić w nim osiem plików i `SHA256SUMS`.
 3. macOS (osobno arm64 i x64, najlepiej czysty użytkownik): pobrać DMG przeglądarką (ustawia
@@ -655,6 +660,17 @@ bez `--no-sandbox`, dowodem dla Linuksa jest deb), instalacji portable.
 6. Zweryfikować `sha256sum -c SHA256SUMS` (macOS: `shasum -a 256 -c`) na pobranych plikach.
 7. Dopiero po tym opublikować szkic i zamknąć status Etapu 10.
 
+**Wynik ręcznej weryfikacji (2026-11-11, relacja właściciela, niepowtórzona przez CI):**
+- macOS (architektura niezgłoszona osobno): DMG v0.1.0 pobrany z GitHub Releases, ostrzeżenie
+  Gatekeepera obejście według README, aplikacja startuje, biblioteka działa.
+- Windows: instalator NSIS przeszedł przez SmartScreen, aplikacja startuje ze skrótu. Wersja
+  portable nie została zgłoszona osobno.
+- Linux: deb zainstalowany przez `apt`, aplikacja startuje z menu aplikacji. AppImage nie został
+  zgłoszony.
+- Krok 6 (`sha256sum -c SHA256SUMS` na pobranych plikach): niezgłoszony. Sumy sprawdza job
+  `collect` w pipeline wydania, a suma DMG arm64 została sprawdzona po pobraniu wcześniej
+  (opis wyżej).
+
 ### Zmiana nazwy na CWM: v0.2.0 (ADR 0035)
 
 Wydanie v0.1.0 zostało opublikowane pod nazwą Universal AI Skills Manager i tak zostaje;
@@ -663,10 +679,12 @@ Manager` ma być v0.2.0. Zakres: nazwa produktu i techniczna `cwm`, `userData` w
 `<appData>/CWM` z migracją kopią z katalogu v0.1.0, nowe markery i format kopii z odczytem
 starych, nowy `appId` (na Windowsie instalacja obok v0.1.0), zmiana nazwy repozytorium.
 
-Stan: zmiana jest w pracy na gałęzi `feat/rename-to-cwm`, nie jest scalona ani wydana.
+Stan na 2026-11-11: PR #1 (`feat/rename-to-cwm`) został scalony do `main` (commit scalający
+`57c069b`). v0.2.0 nie jest jeszcze wydane. Tego samego dnia właściciel sprawdził ręcznie build po
+scaleniu: start aplikacji oraz migrację danych z v0.1.0 (okno dialogowe migracji). Jest to relacja
+właściciela, nie wynik CI; systemu i architektury nie podał.
 Dokumentacja użytkownika (`README.md`, `docs/INSTALACJA.md`, `docs/ODZYSKIWANIE.md`,
-`docs/OGRANICZENIA.md`) opisuje stan docelowy v0.2.0. Wyniki weryfikacji, w tym dowody
-zgodności formatów i migracji, trafią tu po jej wykonaniu.
+`docs/OGRANICZENIA.md`) opisuje stan docelowy v0.2.0.
 
 ---
 

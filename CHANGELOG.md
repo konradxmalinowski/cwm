@@ -7,7 +7,7 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ## [Unreleased]
 
-Zmiany z gałęzi `feat/rename-to-cwm`, przygotowane na v0.2.0 (ADR 0035). Numer wersji w
+Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersji w
 `package.json` zmieni się przy wydaniu.
 
 ### Added
