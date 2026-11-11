@@ -69,7 +69,7 @@ interface ManifestEntry {
   path: string;
   action: string;
   before: {
-    state: 'file' | 'missing' | 'symlink';
+    state: 'file' | 'missing' | 'symlink' | 'directory';
     sha256?: string;
     mode?: string;
     backupFile?: string;
@@ -230,6 +230,89 @@ describe('A. odtworzenie plikow narzedzia z backups/<id>/', () => {
     expect(read(join(f.skillsRoot, 'acme', 'old.md'))).toBe('stare');
     expect(sha256(readFileSync(object))).toBe(hash);
   });
+});
+
+/** Pliki katalogu: sciezka, tryb i tresc. Katalogi pomijamy, bo ich trybow kopia nie zapisuje. */
+function filesOf(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (current: string, rel: string): void => {
+    for (const name of readdirSync(current).sort()) {
+      const abs = join(current, name);
+      const label = rel === '' ? name : `${rel}/${name}`;
+      if (lstatSync(abs).isDirectory()) walk(abs, label);
+      else
+        out.push(
+          `${label} ${(lstatSync(abs).mode & 0o777).toString(8)} ${sha256(readFileSync(abs))}`,
+        );
+    }
+  };
+  walk(dir, '');
+  return out;
+}
+
+describe.skipIf(!posix)('A3 (before.state = directory): zastapiony katalog skilla', () => {
+  for (const mode of ['dowiazanie', 'kopia'] as const) {
+    it(`odtworzenie katalogu bajt w bajt z trybami, zapis jako ${mode}`, async () => {
+      const f = makeFixture({ capability: mode === 'dowiazanie' ? ALL_LINKS : NO_LINKS });
+      const dir = join(f.skillsRoot, 'acme-skill');
+      mkdirSync(join(dir, 'scripts'), { recursive: true });
+      mkdirSync(join(dir, 'pusty'));
+      writeFileSync(join(dir, 'SKILL.md'), 'stary skill\n');
+      writeFileSync(join(dir, 'scripts', 'run.sh'), '#!/bin/sh\necho ok\n');
+      writeFileSync(join(dir, 'dodany-recznie.md'), 'plik spoza planu');
+      chmodSync(join(dir, 'SKILL.md'), 0o644);
+      chmodSync(join(dir, 'scripts', 'run.sh'), 0o755);
+      chmodSync(join(dir, 'dodany-recznie.md'), 0o600);
+      const before = filesOf(dir);
+
+      const probed = await f.gate.probe(
+        makePlan([
+          entry({
+            relPath: 'acme-skill',
+            action: mode === 'dowiazanie' ? 'link' : 'modify',
+            content: null,
+            files: [{ relPath: 'SKILL.md', bytes: text('nowy skill\n') }],
+            previous: text('stary skill\n'),
+          }),
+        ]),
+      );
+      expect(probed.applicable).toBe(true);
+      const report = await f.gate.apply(probed, { planId: probed.planId });
+      expect(report.verified).toBe(true);
+      expect(read(join(dir, 'SKILL.md'))).toBe('nowy skill\n');
+      expect(existsSync(join(dir, 'dodany-recznie.md'))).toBe(false);
+
+      const backupDir = join(f.userData, 'backups', report.backupId);
+      const manifest = JSON.parse(read(join(backupDir, 'MANIFEST'))) as {
+        entries: (ManifestEntry & {
+          before: {
+            files?: { relPath: string; sha256: string; mode: string; backupFile: string }[];
+          };
+        })[];
+      };
+      const wpis = manifest.entries.find((e) => e.before.state === 'directory');
+      expect(wpis?.path).toBe(dir);
+      expect(wpis?.before.files).toHaveLength(3);
+
+      // A3, krok 1: usuwamy to, co jest pod path (dowiazanie albo nowy katalog).
+      if (lstatSync(dir).isSymbolicLink()) unlinkSync(dir);
+      else rmSync(dir, { recursive: true });
+      // krok 2: katalog.
+      mkdirSync(dir);
+      // krok 3: kazdy plik z before.files, podkatalogi, tryb, suma.
+      for (const file of wpis?.before.files ?? []) {
+        const target = join(dir, ...file.relPath.split('/'));
+        mkdirSync(dirname(target), { recursive: true });
+        copyFileSync(join(backupDir, ...file.backupFile.split('/')), target);
+        chmodSync(target, parseInt(file.mode, 8));
+        expect(sha256(readFileSync(target))).toBe(file.sha256);
+      }
+
+      // Pusty podkatalog nie wraca: jest to udokumentowane ograniczenie. Reszta jest identyczna.
+      expect(existsSync(join(dir, 'pusty'))).toBe(false);
+      expect(filesOf(dir)).toEqual(before);
+    });
+  }
 });
 
 describe('D. skill, ktorego dowiazanie wskazuje w prozni', () => {

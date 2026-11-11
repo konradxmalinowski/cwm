@@ -41,10 +41,11 @@ Jeśli trzeba cofnąć kilka zapisów, wracaj od najnowszej kopii do starszych.
 | `entries[].index`           | Numer wpisu, od 1                                                          |
 | `entries[].path`            | Pełna ścieżka pliku na tym komputerze                                      |
 | `entries[].action`          | Co zrobił zapis: `create`, `modify`, `link`, `delete` albo `restore-link`  |
-| `entries[].before`          | Stan **przed** zapisem: `state` to `file`, `missing` albo `symlink`        |
+| `entries[].before`          | Stan **przed** zapisem: `state` to `file`, `missing`, `symlink` albo `directory` |
 | `entries[].before.backupFile` | Dla `file`: ścieżka kopii względem katalogu kopii, np. `files/0001-SKILL.md` |
 | `entries[].before.sha256`, `mode` | Dla `file`: suma kontrolna i uprawnienia pliku (np. `0644`)          |
 | `entries[].before.linkTarget` | Dla `symlink`: dokąd wskazywało dowiązanie                               |
+| `entries[].before.files[]`  | Dla `directory`: lista plików katalogu, każdy z `relPath`, `sha256`, `size`, `mode` i `backupFile` |
 | `entries[].after`           | Stan po zapisie: `file`, `symlink`, `directory` albo `missing`             |
 
 Wpisy można przejrzeć w terminalu.
@@ -122,6 +123,51 @@ New-Item -ItemType Junction -Path "<path>" -Target "<linkTarget>"
 
 Pierwsze polecenie dla symlinku, drugie dla junction. Jeśli dowiązanie było do katalogu,
 a nie możesz utworzyć symlinku, użyj junction.
+
+*`before.state` = `directory`: pod `path` był zwykły katalog (na przykład skill), który zapis zastąpił
+dowiązaniem albo nowym katalogiem. Odtwórz go w całości.*
+
+1. Usuń to, co jest teraz pod `path`. Jeśli to dowiązanie, usuń samo dowiązanie. Jeśli to
+   katalog, jest to nowy katalog zapisany przez aplikację: obejrzyj go i usuń razem z zawartością.
+2. Utwórz katalog `path`.
+3. Dla każdego pliku z `before.files`: utwórz brakujące podkatalogi z `relPath` (separatorem jest
+   `/`), skopiuj `<katalog kopii>/<backupFile>` na `path/<relPath>`, na macOS i Linuksie ustaw
+   uprawnienia z pola `mode` tego pliku i sprawdź, że SHA-256 pliku równa się `sha256`.
+
+macOS i Linux (`<N>` to `index` wpisu):
+
+```
+rm "<path>"                  # gdy pod path jest dowiązanie; dla katalogu: rm -r "<path>"
+mkdir -p "<path>"
+jq -r '.entries[] | select(.index==<N>) | .before.files[] | [.backupFile, .relPath, .mode] | @tsv' MANIFEST |
+  while IFS=$'\t' read -r kopia rel mode; do
+    mkdir -p "$(dirname "<path>/$rel")"
+    cp "<katalog kopii>/$kopia" "<path>/$rel"
+    chmod "$mode" "<path>/$rel"
+  done
+```
+
+Windows (PowerShell):
+
+```
+cmd /c rmdir "<path>"        # dowiązanie lub junction; katalog z plikami: Remove-Item -Recurse
+$wpis = (Get-Content MANIFEST -Raw | ConvertFrom-Json).entries | Where-Object index -eq <N>
+foreach ($f in $wpis.before.files) {
+  $cel = Join-Path $wpis.path ($f.relPath -replace '/', '\')
+  New-Item -ItemType Directory -Force -Path (Split-Path $cel) | Out-Null
+  Copy-Item -LiteralPath (Join-Path "<katalog kopii>" ($f.backupFile -replace '/', '\')) -Destination $cel -Force
+}
+```
+
+Gdy katalogu kopii nie ma, treść każdego pliku jest w `objects/<aa>/<sha256>` (krok A5).
+
+Dwa ograniczenia tej procedury, takie same jak przy cofnięciu z widoku Historia (`docs/OGRANICZENIA.md`):
+
+- Pusty podkatalog nie wraca. Kopia zawiera listę plików, więc katalog bez plików nie ma w niej
+  wpisu. Utwórz go ręcznie, jeśli go potrzebujesz.
+- Uprawnienia katalogów nie są zapisane w kopii. Cofnięcie z Historii nadaje odtworzonym
+  katalogom tryb 0700, a ręczne `mkdir` daje domyślny tryb twojej powłoki (zwykle 0755).
+  Uprawnienia plików wracają dokładnie, z pola `mode`.
 
 **A4. Posprzątaj puste katalogi.** Jeśli zapis utworzył katalog (na przykład
 `~/.claude/skills/nowy-skill/`), po usunięciu plików katalog zostaje pusty. Usuń go, jeśli nie

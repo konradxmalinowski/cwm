@@ -54,7 +54,9 @@ dowiązanie do kopii w katalogu danych aplikacji (`docs/INSTALACJA.md`). Dwie ko
   w całości, z trybami plików. Gdy kopii nie da się zrobić (plik nieczytelny, dowiązanie albo
   wpis specjalny wewnątrz katalogu, ponad 1000 plików), wpis jest zablokowany i nic się nie
   zmienia (ADR 0028). Pusty podkatalog nie wraca przy cofnięciu z Historii, a katalogi
-  odtworzone z Historii dostają tryb 0700.
+  odtworzone z Historii dostają tryb 0700. Ręczna procedura z `docs/ODZYSKIWANIE.md` ma to samo pierwsze ograniczenie
+  (pusty podkatalog nie wraca) i nie zapisuje trybów katalogów: ręcznie utworzone katalogi mają
+  domyślny tryb powłoki, nie 0700. Tryby plików wracają w obu drogach.
 - Zmiana skilla w bibliotece trafia do narzędzia dopiero przy kolejnym eksporcie. Status
   synchronizacji sprawdza tylko, czy dowiązanie istnieje, nie czy treść kopii w katalogu danych
   się zmieniła.
