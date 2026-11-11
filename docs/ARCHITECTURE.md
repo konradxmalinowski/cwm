@@ -1373,11 +1373,10 @@ powstaje jako jeden z ostatnich, bo agreguje to, co już działa, i bez tego pok
 
 ### 13.3 Ikona aplikacji
 
-Nierozstrzygnięte. Wymagania nie mówią o ikonie ani o nazwie produktu widocznej dla użytkownika,
-a brief decyzji o niej nie zawiera. Potrzebne formaty, gdy decyzja zapadnie: `.icns` dla macOS,
-`.ico` dla Windowsa, PNG w kilku rozmiarach dla Linuksa, plus ikona okna. Do czasu decyzji build
-wychodzi z placeholderem i jest to widoczne w Diagnostics, a nie przemilczane. Pytanie dla
-właściciela: sekcja 15.2, punkt 6.
+Rozstrzygnięte (2026-11-10): płaski monogram „AS" w kobalcie `cobalt-300` na czerni, wariant v1
+(okrągłe S, ciężkie), z wersją małą w rozmiarach do 32 px. Litery są narysowane geometrycznie,
+nie pochodzą z fontu. Pliki (`.icns`, `.ico`, PNG dla Linuksa, ikona okna) i generator leżą w
+`resources/icons/`; `appIcon` w Diagnostics ma wartość `provided`.
 
 ---
 

@@ -1,17 +1,21 @@
 # Ikony aplikacji
 
-Pusto celowo. Nazwa produktu widoczna dla uzytkownika i ikona nie sa jeszcze
-rozstrzygniete (ARCHITECTURE 13.3, sekcja 15 punkt 6). Do czasu decyzji build
-wychodzi z domyslna ikona Electrona, a raport diagnostyczny mowi o tym wprost
-(`appIcon: "placeholder"`) zamiast to przemilczec.
+Monogram „AS" w kobalcie `cobalt-300` (`#7F9FFF`) na czerni, jeden kolor, bez gradientow
+i efektow. Litery sa narysowane geometrycznie jako sciezki SVG w `src/make.py`, nie pochodza
+z zadnego fontu. Wariant v1 (okragle S, ciezkie) wybral wlasciciel produktu.
 
-Gdy decyzja zapadnie, tu trafia:
+- `icon.icns` - macOS, zaokraglone cialo 824 px na kanwie 1024 (siatka Big Sur),
+- `icon.ico` - Windows, 16, 24, 32, 48, 64, 128, 256 (ksztalt plaski),
+- `linux/` - Linux, rozmiary od 16 do 512 (ksztalt plaski); `electron-builder` czyta ten katalog,
+- `icon.png` - 512 px, ikona okna na Linuksie i Windowsie; kopia trafia do `src/renderer/assets/icons/app-icon.png` (`src/main/bootstrap/window.ts`),
+- `src/` - zrodlowe SVG i generatory.
 
-- `icon.icns` - macOS,
-- `icon.ico` - Windows, minimum 256x256,
-- `icon.png` - Linux, 512x512 (electron-builder wygeneruje mniejsze rozmiary),
-- ikona okna, jesli ma byc inna niz ikona aplikacji.
+W rozmiarach do 32 px uzywana jest wersja mala (`*-small.svg`): grubsza kreska i wiekszy
+znak, bo normalna wersja zlewa sie w 16 px.
 
-Po dolozeniu plikow `electron-builder` znajdzie je sam przez `buildResources`.
-Trzeba wtedy zmienic `appIcon` w `src/main/ipc/handlers/diagnostics.ts`
-na `provided`.
+Odtworzenie wszystkich plikow (wymaga `python3`, `rsvg-convert` i `iconutil` z macOS):
+
+    python3 resources/icons/src/build.py
+
+Ksztalt ciala macOS to superelipsa (n = 5), przyblizenie ciaglego naroza Apple. Przed
+wydaniem warto porownac je z oficjalnym szablonem ikony Apple.

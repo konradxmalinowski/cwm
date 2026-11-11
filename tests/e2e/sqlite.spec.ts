@@ -63,7 +63,7 @@ test('raport diagnostyczny nie oddaje rendererowi absolutnej sciezki katalogu do
 
     expect(report.database.locationLabel).toBeDefined();
     expect(report.database.locationLabel).not.toContain(homeDir);
-    expect(report.appIcon).toBe('placeholder');
+    expect(report.appIcon).toBe('provided');
     expect(report.runtime.packaged).toBe(false);
   } finally {
     await app.close();

@@ -9,6 +9,11 @@ export function rendererRoot(): string {
   return resolve(join(__dirname, '..', '..', 'renderer'));
 }
 
+/** Ikona okna na Linuksie i Windowsie; plik leży w bundlu renderera (resources/icons/src/build.py). */
+export function windowIcon(): string {
+  return join(rendererRoot(), 'assets', 'icons', 'app-icon.png');
+}
+
 export function preloadScript(): string {
   return resolve(join(__dirname, '..', '..', 'preload', 'bridge.js'));
 }

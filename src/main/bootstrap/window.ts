@@ -1,6 +1,6 @@
 import { BrowserWindow } from 'electron';
 
-import { APP_ENTRY_URL, preloadScript } from './paths';
+import { APP_ENTRY_URL, preloadScript, windowIcon } from './paths';
 
 export function createMainWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -11,6 +11,8 @@ export function createMainWindow(): BrowserWindow {
     show: false,
     backgroundColor: '#161618',
     title: 'Universal AI Skills Manager',
+    // macOS bierze ikone z paczki (.icns), a pole `icon` jest tam ignorowane.
+    ...(process.platform === 'darwin' ? {} : { icon: windowIcon() }),
     webPreferences: {
       preload: preloadScript(),
       contextIsolation: true,

@@ -39,6 +39,7 @@ buildDependenciesFromSource: false
 
 mac:
   category: public.app-category.developer-tools
+  icon: resources/icons/icon.icns
   # Architektura przychodzi z wiersza polecen (`--arm64`, `--x64`), nie z tej listy. Lista
   # architektur w pliku wygrywala z flaga, wiec kazdy z dwoch runnerow macOS w release.yml
   # budowal oba DMG o tych samych nazwach, a scalone SHA256SUMS mialo po dwie rozne sumy dla
@@ -54,6 +55,7 @@ mac:
   gatekeeperAssess: false
 
 win:
+  icon: resources/icons/icon.ico
   target:
     - target: nsis
       arch: [x64]
@@ -76,11 +78,8 @@ linux:
   # (tests/e2e/launch.ts). Domyslna wartosc pochodzi z productName, ktory ma
   # spacje - a wtedy szukanie binarki po nazwie staje sie zgadywaniem.
   executableName: universal-ai-skills-manager
-  # Jawnie domyslna ikona Electrona, dopoki nie ma wlasnej (ARCHITECTURE 13.3). Bez tego
-  # electron-builder 26 widzi katalog resources/icons (sam README), nie znajduje w nim obrazka
-  # i build AppImage i deb pada na `reading 'file'`. Wykryte pierwszym buildem Linuksa w CI.
-  # Do usuniecia razem z dolozeniem resources/icons/icon.png.
-  icon: node_modules/app-builder-lib/templates/icons/electron-linux
+  # Katalog z plikami NxN.png (16 do 512); electron-builder wybiera z niego rozmiary.
+  icon: resources/icons/linux
   target:
     - target: AppImage
       arch: [x64]

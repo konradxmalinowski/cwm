@@ -47,7 +47,7 @@ export function registerDiagnosticsHandler(
       indexStore: state.store,
       index: state.info,
       clock: systemClock,
-      appIcon: 'placeholder',
+      appIcon: 'provided',
       stage: STAGE,
     });
   });
