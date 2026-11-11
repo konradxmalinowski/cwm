@@ -147,6 +147,19 @@ describe('SyncService: stany', () => {
     expect(wins.applicable).toBe(true);
   });
 
+  it('exportDecisions trafiaja do planu eksportu jako decyzje', async () => {
+    const s = await setup();
+    const decision = {
+      itemId: s.itemId,
+      relPath: 'CLAUDE.md',
+      resolution: 'replace-fragment' as const,
+    };
+    await s.sync.plan(['claude-code'], [s.itemId], [], [decision]);
+    expect(s.exporter.contexts.at(-1)?.decisions).toEqual([decision]);
+    await s.sync.plan(['claude-code'], [s.itemId]);
+    expect(s.exporter.contexts.at(-1)?.decisions).toBeUndefined();
+  });
+
   it('apply: wymaga zatwierdzenia, plan jest jednorazowy i wygasa', async () => {
     const s = await setup();
     const plan = await s.sync.plan(['claude-code'], [s.itemId]);

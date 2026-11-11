@@ -1,3 +1,4 @@
+import type { ItemId } from '../../../core/model/item';
 import { LibraryError } from '../../../core/model/library-errors';
 import { ExportError } from '../../../core/services/export/export-service';
 import { HistoryError, type HistoryService } from '../../../core/services/history/history-service';
@@ -101,7 +102,16 @@ export function registerSyncHandlers(registry: IpcRegistry, deps: SyncHandlerDep
   registry.register(
     'sync:plan',
     guarded(deps.sync, parseSyncPlanRequest, async (service, request) => {
-      const report = await service.plan(request.tools, request.itemIds, request.resolutions ?? []);
+      const report = await service.plan(
+        request.tools,
+        request.itemIds,
+        request.resolutions ?? [],
+        (request.exportResolutions ?? []).map((r) => ({
+          itemId: r.itemId as ItemId,
+          relPath: r.relPath,
+          resolution: r.resolution,
+        })),
+      );
       const value: SyncPlanDto = {
         syncId: report.syncId,
         plans: report.plans.map(toPlanDto),

@@ -1,4 +1,4 @@
-import type { ExportApplyDto, ExportPlanDto } from './export-contract';
+import type { ConflictResolutionDto, ExportApplyDto, ExportPlanDto } from './export-contract';
 import type { ToolIdDto } from './import-contract';
 import type { ItemKindDto, Result } from './library-contract';
 
@@ -61,6 +61,8 @@ export interface SyncPlanRequest {
   itemIds: string[];
   /** Decyzja dla elementow w stanie `conflict` i `tool-changed`; bez niej sa pomijane. */
   resolutions?: { itemId: string; tool: ToolIdDto; resolution: SyncResolutionDto }[];
+  /** Decyzje dla konfliktow planu eksportu (instrukcja globalna); te same co w `export:plan`. */
+  exportResolutions?: { itemId: string; relPath: string; resolution: ConflictResolutionDto }[];
 }
 
 export interface SyncPlanDto {

@@ -522,7 +522,27 @@
             @if (tp.entries.length === 0 && tp.verdicts.length === 0) {
               <p class="view__sub">Dla tego narzędzia nie powstanie żaden plik.</p>
             }
-            <app-plan-view [plan]="tp" [titles]="planTitles()" [level]="3" [showStats]="false" />
+            @if (replanning()) {
+              <p role="status" data-testid="sync-replan-loading">
+                Przeliczam plan po Twojej decyzji. Niczego nie zapisuję.
+              </p>
+            } @else {
+              <app-plan-view
+                [plan]="tp"
+                [titles]="planTitles()"
+                [level]="3"
+                [showStats]="false"
+                [decisions]="decisionsFor(tp)"
+                (decide)="decide(tp.tool, $event.itemId, $event.relPath, $event.resolution)"
+              />
+            }
+            @if (replanError() !== null) {
+              <div class="notice" role="alert" data-testid="sync-replan-error">
+                <p class="notice__text">
+                  <span class="notice__label">Błąd.</span> {{ replanError() }}
+                </p>
+              </div>
+            }
           </section>
         }
 

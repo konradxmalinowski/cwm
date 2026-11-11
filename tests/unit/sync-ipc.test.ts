@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { registerSyncHandlers } from '../../src/main/ipc/handlers/sync';
+import { parseSyncPlanRequest } from '../../src/main/ipc/handlers/sync-validation';
 import { IpcRegistry } from '../../src/main/ipc/registry';
 import type { Result } from '../../src/shared/ipc/library-contract';
 import { IMPLEMENTED_CHANNELS, IPC_CHANNELS } from '../../src/shared/ipc/channels';
@@ -45,6 +46,14 @@ describe('kanaly sync:* i history:*', () => {
           resolutions: [{ itemId: 'a', tool: 'codex', resolution: 'x' }],
         },
       ],
+      [
+        'sync:plan',
+        {
+          tools: ['codex'],
+          itemIds: ['a'],
+          exportResolutions: [{ itemId: 'a', relPath: 'AGENTS.md', resolution: 'nadpisz' }],
+        },
+      ],
       ['sync:apply', { syncId: 'a', approved: false }],
       ['sync:apply', { syncId: 'a' }],
       ['history:list', { limit: 0 }],
@@ -62,5 +71,20 @@ describe('kanaly sync:* i history:*', () => {
     const result = await call('sync:apply', { syncId: 'abc', approved: true });
     expect(result.ok === false && result.error.code).toBe('sync-unavailable');
     expect((await call('history:list')).ok).toBe(false);
+  });
+});
+
+describe('sync:plan: exportResolutions', () => {
+  it('przepuszcza poprawne decyzje eksportu i pomija puste pole', () => {
+    const base = { tools: ['codex'], itemIds: ['a'] };
+    const withDecisions = parseSyncPlanRequest({
+      ...base,
+      exportResolutions: [{ itemId: 'a', relPath: 'AGENTS.md', resolution: 'replace-fragment' }],
+    });
+    expect(withDecisions.ok && withDecisions.value.exportResolutions).toEqual([
+      { itemId: 'a', relPath: 'AGENTS.md', resolution: 'replace-fragment' },
+    ]);
+    const without = parseSyncPlanRequest({ ...base, exportResolutions: [] });
+    expect(without.ok && without.value.exportResolutions).toBeUndefined();
   });
 });

@@ -8,7 +8,7 @@ import {
   signal,
 } from '@angular/core';
 
-import type { ExportPlanDto } from '../../../../shared/ipc/export-contract';
+import type { ConflictResolutionDto, ExportPlanDto } from '../../../../shared/ipc/export-contract';
 import type { ToolIdDto } from '../../../../shared/ipc/import-contract';
 import type {
   SyncApplyDto,
@@ -28,11 +28,15 @@ import {
   EMPTY_COUNTS,
   addCounts,
   blockers,
+  conflictKey,
   countPlan,
+  decisionKey,
+  hasOptions,
   HIDDEN_SECRET_NOTE,
   diffPair,
   entryKind,
   hasHiddenSecret,
+  type DecisionView,
   type PlanCounts,
 } from '../export/export-model';
 import { PlanStatsComponent } from '../export/plan-stats.component';
@@ -110,6 +114,20 @@ export class SyncCenterComponent {
   protected readonly result = signal<SyncApplyDto | null>(null);
   protected readonly confirming = signal(false);
 
+  /** Decyzje dla konfliktow planu eksportu (instrukcja globalna), po narzedziu i `decisionKey`. */
+  private readonly exportChoices = signal<ReadonlyMap<string, ConflictResolutionDto>>(new Map());
+  /** Konflikty z opcjami widziane w kolejnych planach; rozstrzygniety konflikt znika z planu, grupa zostaje. */
+  private readonly exportPoints = signal<
+    ReadonlyMap<string, Omit<DecisionView, 'chosen' | 'settled'> & { readonly tool: ToolIdDto }>
+  >(new Map());
+  protected readonly replanning = signal(false);
+  protected readonly replanError = signal<string | null>(null);
+  private lastRequest: {
+    tools: ToolIdDto[];
+    itemIds: string[];
+    resolutions: { itemId: string; tool: ToolIdDto; resolution: SyncResolutionDto }[];
+  } | null = null;
+
   private seq = 0;
   private statusSeq = 0;
 
@@ -186,7 +204,7 @@ export class SyncCenterComponent {
     if (reasons.length === 0) {
       reasons.push(
         this.planCounts().changes === 0 && plan.adoptions.length === 0
-          ? 'Nic nie wymaga zapisu: wybrane elementy są już zgodne albo czekają na Twoją decyzję.'
+          ? 'Nic do zapisania. Wszystko jest aktualne.'
           : 'Plan nie nadaje się do zapisu.',
       );
     }
@@ -229,7 +247,7 @@ export class SyncCenterComponent {
           if (plan.plans.some((p) => p.toolMissing))
             return 'Brakuje katalogu narzędzia, więc nie da się zapisać planu.';
           if (c.blocked > 0) return 'Część plików jest zablokowana, więc nie da się zapisać planu.';
-          return 'Z tego wyboru nie wynika żadna zmiana.';
+          return 'Nic do zapisania. Wszystko jest aktualne.';
         }
         const parts: string[] = [];
         if (c.changes > 0)
@@ -477,8 +495,13 @@ export class SyncCenterComponent {
         return { itemId, tool, resolution };
       })
       .filter((r) => this.selected().has(r.itemId) && this.planTools().includes(r.tool));
+    this.lastRequest = { tools: [...this.planTools()], itemIds, resolutions };
+    this.exportChoices.set(new Map());
+    this.exportPoints.set(new Map());
+    this.replanning.set(false);
+    this.replanError.set(null);
     const result = await this.api.plan({
-      tools: [...this.planTools()],
+      tools: this.lastRequest.tools,
       itemIds,
       ...(resolutions.length > 0 ? { resolutions } : {}),
     });
@@ -488,9 +511,105 @@ export class SyncCenterComponent {
       this.phase.set('status');
       return;
     }
+    this.rememberDecisions(result.value);
     this.plan.set(result.value);
     this.applyError.set(null);
     this.phase.set('plan');
+  }
+
+  /** Grupy decyzji jednego narzedzia; wybor jest odczytywany z `exportChoices`. */
+  protected decisionsFor(plan: ExportPlanDto): DecisionView[] {
+    const open = new Set(plan.conflicts.filter(hasOptions).map(conflictKey));
+    const choices = this.exportChoices();
+    return [...this.exportPoints().entries()]
+      .filter(([, point]) => point.tool === plan.tool)
+      .map(([mapKey, point]) => ({
+        key: point.key,
+        itemId: point.itemId,
+        relPath: point.relPath,
+        itemIds: point.itemIds,
+        reason: point.reason,
+        options: point.options,
+        chosen: choices.get(mapKey) ?? null,
+        settled: !open.has(point.key),
+      }));
+  }
+
+  /**
+   * Wybor opcji konfliktu: to samo zapytanie o plan z decyzjami dla wszystkich konfliktow, w ktorych
+   * cos wybrano. Nowy plan ma nowy `syncId`; stary nie jest juz zapisywany.
+   */
+  protected async decide(
+    tool: ToolIdDto,
+    itemId: string,
+    relPath: string,
+    resolution: ConflictResolutionDto,
+  ): Promise<void> {
+    const request = this.lastRequest;
+    if (request === null || this.phase() !== 'plan' || this.replanning()) return;
+    const mapKey = `${tool}\u0000${decisionKey(itemId, relPath)}`;
+    const previous = this.exportChoices();
+    const next = new Map(previous);
+    next.set(mapKey, resolution);
+    const seq = ++this.seq;
+    this.exportChoices.set(next);
+    this.replanError.set(null);
+    this.replanning.set(true);
+    const exportResolutions = [...next.entries()].map(([k, value]) => {
+      const point = this.exportPoints().get(k);
+      return { itemId: point?.itemId ?? '', relPath: point?.relPath ?? '', resolution: value };
+    });
+    const result = await this.api.plan({
+      tools: request.tools,
+      itemIds: request.itemIds,
+      ...(request.resolutions.length > 0 ? { resolutions: request.resolutions } : {}),
+      exportResolutions,
+    });
+    if (seq !== this.seq) return;
+    this.replanning.set(false);
+    if (!result.ok) {
+      this.exportChoices.set(previous);
+      this.replanError.set(result.error.message);
+    } else {
+      this.rememberDecisions(result.value);
+      this.plan.set(result.value);
+    }
+    setTimeout(() => {
+      const group = Array.from(document.querySelectorAll<HTMLElement>('[data-decision-key]')).find(
+        (el) => el.dataset['decisionKey'] === decisionKey(itemId, relPath),
+      );
+      const radio =
+        group?.querySelector<HTMLInputElement>('input:checked') ??
+        group?.querySelector<HTMLInputElement>('input');
+      radio?.focus();
+    }, 0);
+  }
+
+  /** Zapamietuje konflikty z opcjami i usuwa wybory, ktorych plan juz nie oferuje. */
+  private rememberDecisions(plan: SyncPlanDto): void {
+    const points = new Map(this.exportPoints());
+    const choices = new Map(this.exportChoices());
+    for (const tp of plan.plans) {
+      for (const conflict of tp.conflicts) {
+        if (!hasOptions(conflict)) continue;
+        const key = conflictKey(conflict);
+        const mapKey = `${tp.tool}\u0000${key}`;
+        const options = conflict.options ?? [];
+        points.set(mapKey, {
+          tool: tp.tool,
+          key,
+          itemId: conflict.itemIds[0] ?? '',
+          relPath: conflict.relPath,
+          itemIds: conflict.itemIds,
+          reason: conflict.reason,
+          options,
+        });
+        const chosen = choices.get(mapKey);
+        if (chosen !== undefined && !options.some((o) => o.id === chosen)) choices.delete(mapKey);
+      }
+    }
+    this.exportPoints.set(points);
+    this.exportChoices.set(choices);
   }
 
   protected cancelPlanning(): void {
@@ -502,6 +621,10 @@ export class SyncCenterComponent {
 
   protected backToSelection(): void {
     this.seq++;
+    this.replanning.set(false);
+    this.replanError.set(null);
+    this.exportChoices.set(new Map());
+    this.exportPoints.set(new Map());
     this.plan.set(null);
     this.applyError.set(null);
     this.confirming.set(false);

@@ -8,7 +8,7 @@ import {
 } from '../../model/item';
 import { LibraryError } from '../../model/library-errors';
 import { MAX_FILE_BYTES } from '../../model/library-limits';
-import type { MaterializationMode } from '../../model/plan';
+import type { ExportDecision, MaterializationMode } from '../../model/plan';
 import type { Clock } from '../../ports/clock';
 import { cryptoRandomBytes } from '../../ports/id-generator';
 import type { OperationLog } from '../../ports/operation-log';
@@ -297,6 +297,7 @@ export class SyncService {
     tools: readonly ToolId[],
     itemIds: readonly string[],
     resolutions: readonly { itemId: string; tool: ToolId; resolution: SyncResolution }[] = [],
+    exportDecisions: readonly ExportDecision[] = [],
   ): Promise<SyncPlanReport> {
     const ids = [...new Set(itemIds)];
     const wantedTools = [...new Set(tools)];
@@ -379,7 +380,7 @@ export class SyncService {
 
       if (toExport.length > 0) {
         try {
-          plans.push(await this.deps.exports.plan(tool, toExport));
+          plans.push(await this.deps.exports.plan(tool, toExport, exportDecisions));
         } catch (error: unknown) {
           if (!(error instanceof ExportError)) throw error;
           for (const id of toExport) skipped.push({ itemId: id, tool, reason: error.message });

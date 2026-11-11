@@ -88,7 +88,31 @@ export function parseSyncPlanRequest(payload: unknown): Parsed<SyncPlanRequest> 
       });
     }
   }
-  return { ok: true, value: { tools, itemIds, resolutions } };
+  const value: SyncPlanRequest = { tools, itemIds, resolutions };
+  const rawExport = payload['exportResolutions'];
+  if (rawExport !== undefined) {
+    if (!Array.isArray(rawExport) || rawExport.length > MAX_RESOLUTIONS) {
+      return fail('exportResolutions');
+    }
+    const decisions: NonNullable<SyncPlanRequest['exportResolutions']> = [];
+    for (const r of rawExport as unknown[]) {
+      if (
+        !isRecord(r) ||
+        !idOf(r['itemId']) ||
+        !idOf(r['relPath']) ||
+        (r['resolution'] !== 'replace-fragment' && r['resolution'] !== 'append-block')
+      ) {
+        return fail('exportResolutions');
+      }
+      decisions.push({
+        itemId: r['itemId'],
+        relPath: r['relPath'],
+        resolution: r['resolution'],
+      });
+    }
+    if (decisions.length > 0) value.exportResolutions = decisions;
+  }
+  return { ok: true, value };
 }
 
 export function parseSyncApplyRequest(payload: unknown): Parsed<SyncApplyRequest> {
