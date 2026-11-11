@@ -1,6 +1,13 @@
 import type { LoadedItem, ToolId } from '../../../core/model/item';
 import type { ExportContext, RootKind } from '../../../core/ports/tool-adapter';
-import { applyMarkerBlock, hasManagedBlock } from '../marker-block';
+import type { ConflictResolution, PlanConflictOption } from '../../../core/model/plan';
+import {
+  applyMarkerBlock,
+  findManagedFragment,
+  hasManagedBlock,
+  hasOurMarkers,
+  replaceFragment,
+} from '../marker-block';
 import { TextDecodeError, encodeUtf8 } from '../text';
 import { mergeHooks, parseOriginalHook, type HookInput } from './hooks-export';
 import { isJsonRecord, jsonEqual, setTopLevelKey } from './json-key';
@@ -30,6 +37,25 @@ export interface FileTargetSpec {
   readonly tool: ToolId;
   readonly kind: RootKind;
   readonly fileName: string;
+}
+
+const REPLACE_OPTION: PlanConflictOption = {
+  id: 'replace-fragment' satisfies ConflictResolution,
+  label: 'Zamień ten fragment na blok aplikacji',
+};
+const APPEND_OPTION: PlanConflictOption = {
+  id: 'append-block' satisfies ConflictResolution,
+  label: 'Dopisz blok na końcu',
+};
+
+function fragmentReason(fileName: string, lines: number, unique: boolean): string {
+  const found = unique
+    ? `Plik ${fileName} zawiera treść zaimportowaną z niego do tego elementu (${lines} linii), ale bez znaczników aplikacji.`
+    : `Plik ${fileName} zawiera treść zaimportowaną z niego do tego elementu w kilku miejscach, ale bez znaczników aplikacji.`;
+  const replace = unique
+    ? 'Zamiana wstawi blok aplikacji w miejsce tego fragmentu, a resztę pliku zostawi bez zmian. '
+    : '';
+  return `${found} ${replace}Dopisanie bloku na końcu zostawi starą treść w pliku, więc treść będzie w nim dwa razy.`;
 }
 
 function refuseAll(b: PlanBuilder, items: readonly LoadedItem[], reason: string): void {
@@ -120,7 +146,43 @@ export async function planInstructions(
     );
     return;
   }
-  const result = applyMarkerBlock(text, body);
+  let appendAnyway = false;
+  // Regula 3 (ADR 0025): plik ma niezarzadzany fragment ze snapshotu zrodla tego elementu.
+  if (text !== null && snap !== undefined && !hasOurMarkers(text)) {
+    const snapRaw = decodeRaw(snap);
+    const fragment = findManagedFragment(text, snapRaw);
+    if (fragment !== null) {
+      const decision = ctx.decisions?.find(
+        (d) => d.itemId === loaded.item.id && d.relPath === spec.fileName,
+      )?.resolution;
+      const unique = fragment.count === 1;
+      if (decision === undefined || (decision === 'replace-fragment' && !unique)) {
+        b.conflict(ids, spec.fileName, fragmentReason(spec.fileName, fragment.lines, unique), [
+          ...(unique ? [REPLACE_OPTION] : []),
+          APPEND_OPTION,
+        ]);
+        return;
+      }
+      if (decision === 'replace-fragment') {
+        const replaced = replaceFragment(text, fragment, body);
+        b.entry({
+          rootId: root.rootId,
+          relPath: spec.fileName,
+          action: 'modify',
+          scope: 'marker-block',
+          itemIds: ids,
+          content: encodeUtf8(replaced),
+          previous,
+          warnings: [
+            'Fragment pliku zaimportowany z tego pliku zostanie zastąpiony blokiem aplikacji z nową treścią. Reszta pliku zostaje bez zmian.',
+          ],
+        });
+        return;
+      }
+      appendAnyway = true;
+    }
+  }
+  const result = applyMarkerBlock(text, body, { skipDuplicateCheck: appendAnyway });
   if (result.kind === 'conflict') {
     b.conflict(ids, spec.fileName, result.reason);
     return;

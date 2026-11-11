@@ -7,7 +7,17 @@ import type { ToolId } from '../model/item';
 export type BackupBeforeView =
   | { readonly state: 'missing' }
   | { readonly state: 'file'; readonly sha256: string; readonly backupFile: string }
-  | { readonly state: 'symlink'; readonly linkTarget: string };
+  | { readonly state: 'symlink'; readonly linkTarget: string }
+  /** Katalog zastapiony w calosci; `relPath` plikow wzgledem tego katalogu. */
+  | {
+      readonly state: 'directory';
+      readonly files: readonly {
+        readonly relPath: string;
+        readonly sha256: string;
+        readonly mode: number;
+        readonly backupFile: string;
+      }[];
+    };
 
 export type BackupAfterView =
   | { readonly state: 'file'; readonly sha256: string }

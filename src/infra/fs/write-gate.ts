@@ -1,4 +1,15 @@
-import { mkdir, readFile, readlink, rm, rmdir, stat, statfs } from 'node:fs/promises';
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  rmdir,
+  stat,
+  statfs,
+} from 'node:fs/promises';
 import path from 'node:path';
 
 import type { ItemId, RootId, ToolId } from '../../core/model/item';
@@ -114,6 +125,27 @@ interface FileOp {
   readonly before: Existing;
   readonly final: Uint8Array;
   readonly unchanged: boolean;
+  /** Tryb pliku, ktory zastepuje katalog (przy `before` rownym brak pliku). */
+  readonly mode?: number;
+}
+
+/** Zwykly katalog w calosci: kazdy plik i podkatalog, takze spoza planu (ADR 0028). */
+interface TreeSnapshot {
+  readonly mode: number;
+  readonly files: readonly {
+    readonly relPath: string;
+    readonly bytes: Uint8Array;
+    readonly mode: number;
+  }[];
+  readonly dirs: readonly { readonly relPath: string; readonly mode: number }[];
+}
+
+/** Katalog usuwany przed zapisem nowego stanu; kopia calosci powstaje przed pierwszym zapisem. */
+interface ReplacedDir {
+  readonly abs: string;
+  readonly rootId: RootId;
+  readonly relPath: string;
+  readonly tree: TreeSnapshot;
 }
 
 interface DirLink {
@@ -134,6 +166,8 @@ interface LinkPlan {
   readonly alreadyLinked: boolean;
   readonly material: MaterialContent;
   readonly materialBefore: MaterialContent | null;
+  /** Zwykly katalog, ktory dowiazanie zastapi; null, gdy celu nie ma albo jest dowiazaniem. */
+  readonly replacedDir: TreeSnapshot | null;
 }
 
 /** Usuniecie pliku albo dowiazania przy cofaniu operacji (ADR 0028, ADR 0019). */
@@ -162,6 +196,8 @@ interface Resolved {
   readonly restore: RestorePlan | null;
   readonly ops: readonly FileOp[];
   readonly dirLink: DirLink | null;
+  /** Zwykly katalog zastepowany nowym zestawem plikow (kopia zapisu bez dowiazania). */
+  readonly replaced: ReplacedDir | null;
   readonly link: LinkPlan | null;
   /** Tryb, ktory zapis faktycznie uzyje; `null` dla wpisow niebedacych `link`. */
   readonly effective: MaterializationMode | null;
@@ -175,6 +211,7 @@ interface EntryAnalysis {
 }
 
 const MAX_DIR_FILES = 1000;
+const MAX_DIR_DEPTH = 16;
 const VALID_ACTIONS = new Set(['create', 'modify', 'link', 'unchanged', 'delete', 'restore-link']);
 
 class VerifyError extends Error {
@@ -257,6 +294,8 @@ type JournalItem =
     }
   | { readonly t: 'remove'; readonly abs: string }
   | { readonly t: 'rmdir'; readonly abs: string }
+  /** Zwykly katalog usuniety przed zapisem; rollback odtwarza go z kopii w pamieci i content store. */
+  | { readonly t: 'restore-tree'; readonly abs: string; readonly tree: TreeSnapshot }
   /** Katalog usuniety przy sprzataniu po `delete`; rollback tworzy go z powrotem. */
   | { readonly t: 'mkdir'; readonly abs: string }
   | {
@@ -504,6 +543,10 @@ export class FsWriteGate implements WriteGate {
     for (const op of resolved.ops) {
       if (!op.unchanged && op.before.kind === 'file') need += op.before.bytes.length * 2;
     }
+    const replacedTree = resolved.replaced?.tree ?? resolved.link?.replacedDir ?? null;
+    if (replacedTree !== null) {
+      need += replacedTree.files.reduce((sum, f) => sum + f.bytes.length * 2, 0);
+    }
     if (resolved.link !== null) {
       const { material, before } = resolved.link;
       if (before.kind === 'file') need += before.bytes.length * 2;
@@ -569,8 +612,14 @@ export class FsWriteGate implements WriteGate {
     if (entry.action === 'link') {
       return this.analyzeLink(tool, entry, rootPath, fileRoot, capability, claim, materialOwners);
     }
-    const { ops, dirLink } = await this.buildWriteOps(entry, rootPath, fileRoot, false, claim);
-    return this.resolved(entry, 'files', ops, dirLink, null, null, null);
+    const { ops, dirLink, replaced } = await this.buildWriteOps(
+      entry,
+      rootPath,
+      fileRoot,
+      false,
+      claim,
+    );
+    return { ...this.resolved(entry, 'files', ops, dirLink, null, null, null), replaced };
   }
 
   /** Usuniecie to cofniecie zapisu aplikacji: plik ma te tresc, jaka widzial plan, a dowiazanie jest nasze. */
@@ -657,7 +706,18 @@ export class FsWriteGate implements WriteGate {
     effective: MaterializationMode | null,
     note: string | null,
   ): Resolved {
-    return { entry, kind, removal: null, restore: null, ops, dirLink, link, effective, note };
+    return {
+      entry,
+      kind,
+      removal: null,
+      restore: null,
+      ops,
+      dirLink,
+      replaced: null,
+      link,
+      effective,
+      note,
+    };
   }
 
   private async isFileRoot(entry: WritePlanEntry, rootPath: string): Promise<boolean> {
@@ -682,7 +742,7 @@ export class FsWriteGate implements WriteGate {
     fileRoot: boolean,
     allowLinkReplace: boolean,
     claim: (abs: string) => void,
-  ): Promise<{ ops: FileOp[]; dirLink: DirLink | null }> {
+  ): Promise<{ ops: FileOp[]; dirLink: DirLink | null; replaced: ReplacedDir | null }> {
     if (entry.content !== null) {
       const loc = await locateTarget(rootPath, entry.relPath, {
         platform: this.platform,
@@ -694,7 +754,7 @@ export class FsWriteGate implements WriteGate {
         allowLinkReplace,
         forceMissing: false,
       });
-      return { ops: [op], dirLink: null };
+      return { ops: [op], dirLink: null, replaced: null };
     }
 
     const files = entry.files ?? [];
@@ -721,6 +781,18 @@ export class FsWriteGate implements WriteGate {
       throw new Blocked('W miejscu katalogu docelowego jest plik.');
     }
 
+    // Zwykly katalog z plikami spoza planu: nowy stan zastepuje go w calosci, wiec kopia obejmuje
+    // wszystko, a pliki spoza planu znikna. Bez takich plikow wystarczy kopia nadpisywanych.
+    let replaced: ReplacedDir | null = null;
+    if (dirInfo?.isDirectory() === true) {
+      const tree = await this.snapshotTree(dirLoc.abs);
+      const wanted = new Set(files.map((f) => f.relPath));
+      if (tree.files.some((f) => !wanted.has(f.relPath))) {
+        replaced = { abs: dirLoc.abs, rootId: entry.rootId, relPath: entry.relPath, tree };
+      }
+    }
+    const oldFiles = new Map((replaced?.tree.files ?? []).map((f) => [f.relPath, f]));
+
     const ops: FileOp[] = [];
     for (const file of files) {
       const reason = checkRelPath(file.relPath);
@@ -736,15 +808,24 @@ export class FsWriteGate implements WriteGate {
           : { assumeReplaced: { abs: dirLoc.abs, parentReal: dirLoc.parentReal } }),
       });
       claim(loc.abs);
-      ops.push(
-        await this.fileOp(entry, loc, rel, file.bytes, {
-          checkPrevious: false,
-          allowLinkReplace: false,
-          forceMissing: dirLink !== null,
-        }),
-      );
+      const op = await this.fileOp(entry, loc, rel, file.bytes, {
+        checkPrevious: false,
+        allowLinkReplace: false,
+        forceMissing: dirLink !== null || replaced !== null,
+      });
+      const old = oldFiles.get(file.relPath);
+      const mode = file.mode ?? old?.mode;
+      ops.push({
+        ...op,
+        ...(old === undefined
+          ? {}
+          : {
+              final: applyTargetEol(file.bytes, { kind: 'file', bytes: old.bytes, mode: old.mode }),
+            }),
+        ...(mode === undefined ? {} : { mode }),
+      });
     }
-    return { ops, dirLink };
+    return { ops, dirLink, replaced };
   }
 
   private isOurs(linkAbs: string, linkTarget: string): boolean {
@@ -825,6 +906,56 @@ export class FsWriteGate implements WriteGate {
     }
   }
 
+  /** Cale drzewo zwyklego katalogu; cokolwiek, czego kopia nie odtworzy bajt w bajt, to `Blocked`. */
+  private async snapshotTree(abs: string): Promise<TreeSnapshot> {
+    const files: { relPath: string; bytes: Uint8Array; mode: number }[] = [];
+    const dirs: { relPath: string; mode: number }[] = [];
+    const walk = async (dir: string, rel: string, depth: number): Promise<void> => {
+      if (depth > MAX_DIR_DEPTH)
+        throw new Blocked('Katalog docelowy jest zagnieżdżony zbyt głęboko.');
+      let names: string[];
+      try {
+        names = (await readdir(dir)).sort();
+      } catch (error: unknown) {
+        const code = errnoCode(error);
+        if (code === 'EACCES' || code === 'EPERM') {
+          throw new Blocked(
+            'Katalog docelowy jest nieczytelny, więc nie da się zrobić jego kopii.',
+          );
+        }
+        throw error;
+      }
+      for (const name of names) {
+        const child = path.join(dir, name);
+        const shown = rel === '' ? name : `${rel}/${name}`;
+        const info = await lstat(child);
+        if (info.isSymbolicLink()) {
+          throw new Blocked(
+            'Katalog docelowy zawiera dowiązanie, którego kopia nie odtworzy. Zapis nie jest wykonywany.',
+          );
+        }
+        if (info.isDirectory()) {
+          dirs.push({ relPath: shown, mode: info.mode & 0o777 });
+          await walk(child, shown, depth + 1);
+        } else if (info.isFile()) {
+          if (files.length >= MAX_DIR_FILES) {
+            throw new Blocked('Katalog docelowy ma zbyt wiele plików, żeby zrobić jego kopię.');
+          }
+          const snap = await this.snapshot(child);
+          if (snap.kind !== 'file') {
+            throw new Blocked('Plik w katalogu docelowym zmienił się w trakcie sprawdzania.');
+          }
+          files.push({ relPath: shown, bytes: snap.bytes, mode: snap.mode });
+        } else {
+          throw new Blocked('Katalog docelowy zawiera wpis specjalny, którego kopia nie odtworzy.');
+        }
+      }
+    };
+    const rootInfo = await lstat(abs);
+    await walk(abs, '', 0);
+    return { mode: rootInfo.mode & 0o777, files, dirs };
+  }
+
   private async analyzeLink(
     tool: ToolId,
     entry: WritePlanEntry,
@@ -837,21 +968,34 @@ export class FsWriteGate implements WriteGate {
     const kind = entry.files !== null ? 'directory' : 'file';
     const choice = chooseMaterialization(capability, kind, entry.materialization);
     if (choice.mode === 'copy') {
-      const { ops, dirLink } = await this.buildWriteOps(entry, rootPath, fileRoot, true, claim);
-      return this.resolved(entry, 'files', ops, dirLink, null, 'copy', choice.degradedReason);
+      const { ops, dirLink, replaced } = await this.buildWriteOps(
+        entry,
+        rootPath,
+        fileRoot,
+        true,
+        claim,
+      );
+      return {
+        ...this.resolved(entry, 'files', ops, dirLink, null, 'copy', choice.degradedReason),
+        replaced,
+      };
     }
 
     const loc = await locateTarget(rootPath, entry.relPath, { platform: this.platform, fileRoot });
     claim(loc.abs);
 
     let before: Existing;
+    let replacedDir: TreeSnapshot | null = null;
     if (kind === 'directory') {
       const info = await lstatOrNull(loc.abs);
       if (info === null) before = { kind: 'missing' };
       else if (info.isSymbolicLink()) before = await this.snapshot(loc.abs);
-      else {
+      else if (info.isDirectory()) {
+        before = { kind: 'missing' };
+        replacedDir = await this.snapshotTree(loc.abs);
+      } else {
         throw new Blocked(
-          'W miejscu docelowym jest katalog albo plik, którego nie zastąpię dowiązaniem. Usuń go albo wybierz tryb kopii.',
+          'W miejscu docelowym jest plik, którego nie zastąpię dowiązaniem do katalogu.',
         );
       }
     } else {
@@ -900,6 +1044,7 @@ export class FsWriteGate implements WriteGate {
       alreadyLinked,
       material,
       materialBefore,
+      replacedDir,
     };
     return this.resolved(entry, 'link', [], null, link, choice.mode, choice.degradedReason);
   }
@@ -946,8 +1091,18 @@ export class FsWriteGate implements WriteGate {
           after: { state: 'directory' },
         });
       }
+      if (item.replaced !== null) {
+        items.push({
+          rootId: item.replaced.rootId,
+          relPath: item.replaced.relPath,
+          path: item.replaced.abs,
+          action,
+          before: { state: 'directory', files: item.replaced.tree.files },
+          after: { state: 'directory' },
+        });
+      }
       for (const op of item.ops) {
-        if (op.unchanged) continue;
+        if (op.unchanged || item.replaced !== null) continue;
         items.push({
           rootId: op.rootId,
           relPath: op.relPath,
@@ -965,7 +1120,10 @@ export class FsWriteGate implements WriteGate {
           relPath: link.relPath,
           path: link.abs,
           action,
-          before: toBefore(link.before),
+          before:
+            link.replacedDir === null
+              ? toBefore(link.before)
+              : { state: 'directory', files: link.replacedDir.files },
           after,
         });
       }
@@ -976,10 +1134,17 @@ export class FsWriteGate implements WriteGate {
   /** Content store (ADR 0019) jest zrodlem rollbacku; kopia musi byc czytelna z powrotem, zanim cokolwiek zapiszemy. */
   private async storeInObjects(items: readonly BackupItem[]): Promise<void> {
     for (const item of items) {
-      if (item.before.state !== 'file') continue;
-      const hash = await this.deps.objects.put(item.before.bytes);
-      if (hash !== sha256Bytes(item.before.bytes) || (await this.deps.objects.get(hash)) === null) {
-        throw new BackupError('Kopia w content store jest nieczytelna.');
+      const stored =
+        item.before.state === 'file'
+          ? [item.before.bytes]
+          : item.before.state === 'directory'
+            ? item.before.files.map((f) => f.bytes)
+            : [];
+      for (const bytes of stored) {
+        const hash = await this.deps.objects.put(bytes);
+        if (hash !== sha256Bytes(bytes) || (await this.deps.objects.get(hash)) === null) {
+          throw new BackupError('Kopia w content store jest nieczytelna.');
+        }
       }
     }
   }
@@ -1008,6 +1173,10 @@ export class FsWriteGate implements WriteGate {
 
   private async executeFiles(item: Resolved, journal: JournalItem[]): Promise<boolean> {
     let changed = false;
+    if (item.replaced !== null) {
+      await this.removeTree(item.replaced, journal);
+      changed = true;
+    }
     if (item.dirLink !== null && item.ops.some((op) => !op.unchanged)) {
       journal.push(this.restoreOf(item.dirLink.abs, item.dirLink.before));
       await removeLink(item.dirLink.abs);
@@ -1019,6 +1188,16 @@ export class FsWriteGate implements WriteGate {
       changed = true;
     }
     return changed;
+  }
+
+  /** Dziennik dostaje pelna kopie drzewa, zanim cokolwiek zniknie; rollback odtwarza je z niej. */
+  private async removeTree(
+    dir: { readonly abs: string; readonly tree: TreeSnapshot },
+    journal: JournalItem[],
+  ): Promise<void> {
+    journal.push({ t: 'restore-tree', abs: dir.abs, tree: dir.tree });
+    await rm(dir.abs, { recursive: true, force: true });
+    if ((await lstatOrNull(dir.abs)) !== null) throw new VerifyError();
   }
 
   private async executeDelete(removal: RemovalPlan, journal: JournalItem[]): Promise<void> {
@@ -1069,7 +1248,11 @@ export class FsWriteGate implements WriteGate {
     journal.push(this.restoreOf(op.abs, op.before));
     await removeStaleTemps(op.abs, this.clock.now().getTime());
     await writeFileAtomic(op.abs, op.final, {
-      ...(op.before.kind === 'file' ? { mode: op.before.mode } : {}),
+      ...(op.mode !== undefined
+        ? { mode: op.mode }
+        : op.before.kind === 'file'
+          ? { mode: op.before.mode }
+          : {}),
       ...(this.deps.atomicOps === undefined ? {} : { ops: this.deps.atomicOps }),
     });
     await this.verifyFile(op.abs, op.final);
@@ -1112,6 +1295,9 @@ export class FsWriteGate implements WriteGate {
     }
 
     await this.mkdirTracked(path.dirname(link.abs), journal);
+    if (link.replacedDir !== null) {
+      await this.removeTree({ abs: link.abs, tree: link.replacedDir }, journal);
+    }
     journal.push(this.restoreOf(link.abs, link.before));
     try {
       await createLink(link.materialPath, link.abs, link.kind, link.mode, {
@@ -1194,6 +1380,9 @@ export class FsWriteGate implements WriteGate {
             await this.recreateLink(item);
             break;
           }
+          case 'restore-tree':
+            await this.restoreTree(item.abs, item.tree);
+            break;
           case 'remove': {
             const current = await lstatOrNull(item.abs);
             if (current?.isSymbolicLink() === true) await removeLink(item.abs);
@@ -1215,6 +1404,27 @@ export class FsWriteGate implements WriteGate {
       }
     }
     return failures;
+  }
+
+  private async restoreTree(abs: string, tree: TreeSnapshot): Promise<void> {
+    const atomic = this.deps.atomicOps === undefined ? {} : { ops: this.deps.atomicOps };
+    const current = await lstatOrNull(abs);
+    if (current?.isSymbolicLink() === true) await removeLink(abs);
+    await mkdir(abs, { recursive: true, mode: 0o700 });
+    for (const dir of tree.dirs) {
+      await mkdir(path.join(abs, ...dir.relPath.split('/')), { recursive: true, mode: 0o700 });
+    }
+    for (const file of tree.files) {
+      const bytes = await this.fromBackup(file.bytes);
+      await writeFileAtomic(path.join(abs, ...file.relPath.split('/')), bytes, {
+        mode: file.mode,
+        ...atomic,
+      });
+    }
+    for (const dir of [...tree.dirs].reverse()) {
+      await chmod(path.join(abs, ...dir.relPath.split('/')), dir.mode);
+    }
+    await chmod(abs, tree.mode);
   }
 
   /** Rollback czyta z content store; kopia w pamieci to tylko zabezpieczenie, gdyby store zawiodl. */

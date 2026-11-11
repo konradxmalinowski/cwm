@@ -206,16 +206,19 @@ describe('materializacja: katalog', () => {
     expect(read(join(f.skillsRoot, 'acme-skill', 'SKILL.md'))).toBe('a2');
   });
 
-  posixOnly('rzeczywisty katalog w miejscu linku blokuje wpis', async () => {
-    const f = makeFixture({ capability: ALL_LINKS });
-    mkdirSync(join(f.skillsRoot, 'acme-skill'));
-    writeFileSync(join(f.skillsRoot, 'acme-skill', 'reczny.md'), 'moj');
-    const probed = await f.gate.probe(
-      makePlan([dirEntry([{ relPath: 'SKILL.md', bytes: text('a') }])]),
-    );
-    expect(probed.entries[0]?.recoverability?.status).toBe('blocked');
-    expect(read(join(f.skillsRoot, 'acme-skill', 'reczny.md'))).toBe('moj');
-  });
+  posixOnly(
+    'rzeczywisty katalog w miejscu linku jest zastepowany z kopia, sonda nic nie zmienia',
+    async () => {
+      const f = makeFixture({ capability: ALL_LINKS });
+      mkdirSync(join(f.skillsRoot, 'acme-skill'));
+      writeFileSync(join(f.skillsRoot, 'acme-skill', 'reczny.md'), 'moj');
+      const probed = await f.gate.probe(
+        makePlan([dirEntry([{ relPath: 'SKILL.md', bytes: text('a') }])]),
+      );
+      expect(probed.entries[0]?.recoverability?.status).toBe('recoverable');
+      expect(read(join(f.skillsRoot, 'acme-skill', 'reczny.md'))).toBe('moj');
+    },
+  );
 
   posixOnly(
     'przejscie z linku na kopie zastepuje nasze dowiazanie katalogiem z plikami',

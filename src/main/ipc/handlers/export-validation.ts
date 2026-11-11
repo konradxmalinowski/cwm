@@ -35,7 +35,28 @@ export function parsePlanRequest(payload: unknown): Parsed<ExportPlanRequest> {
     }
     itemIds.push(entry);
   }
-  return { ok: true, value: { tool: tool as ToolIdDto, itemIds } };
+  const request: ExportPlanRequest = { tool: tool as ToolIdDto, itemIds };
+  const rawRes = payload['resolutions'];
+  if (rawRes !== undefined) {
+    if (!Array.isArray(rawRes) || rawRes.length > MAX_ITEMS) return fail('resolutions');
+    const resolutions: NonNullable<ExportPlanRequest['resolutions']> = [];
+    for (const r of rawRes as unknown[]) {
+      if (!isRecord(r)) return fail('resolutions');
+      const { itemId, relPath, resolution } = r;
+      if (typeof itemId !== 'string' || itemId.length === 0 || itemId.length > MAX_ID) {
+        return fail('resolutions');
+      }
+      if (typeof relPath !== 'string' || relPath.length === 0 || relPath.length > MAX_ID) {
+        return fail('resolutions');
+      }
+      if (resolution !== 'replace-fragment' && resolution !== 'append-block') {
+        return fail('resolutions');
+      }
+      resolutions.push({ itemId, relPath, resolution });
+    }
+    if (resolutions.length > 0) request.resolutions = resolutions;
+  }
+  return { ok: true, value: request };
 }
 
 export function parseExportApplyRequest(payload: unknown): Parsed<ExportApplyRequest> {

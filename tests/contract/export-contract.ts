@@ -186,9 +186,14 @@ export function describeExportContract(spec: ExportContractSpec): void {
     return { reader, roots };
   }
 
-  const ctxOf = (roots: readonly DetectedRoot[], reader: SourceReader): ExportContext => ({
+  const ctxOf = (
+    roots: readonly DetectedRoot[],
+    reader: SourceReader,
+    decisions: ExportContext['decisions'] = undefined,
+  ): ExportContext => ({
     roots,
     reader,
+    ...(decisions === undefined ? {} : { decisions }),
     materialization: { directory: 'symlink', file: 'symlink' },
   });
 
@@ -551,6 +556,111 @@ export function describeExportContract(spec: ExportContractSpec): void {
         expect(plan.conflicts).toHaveLength(1);
         expect(plan.conflicts[0]?.reason).toMatch(/znacznik/);
         expect(plan.applicable).toBe(false);
+      });
+
+      describe('regula 3: tresc zaimportowana z pliku, po edycji elementu (ADR 0025)', () => {
+        const IMPORTED = 'Stara tresc A.\n\nStara tresc B.\n';
+        const EDITED = 'Nowa tresc A.\n\nNowa tresc B.\n';
+
+        const edited = (imported: string): LoadedItem => {
+          const base = d('instruction');
+          return toLoaded({
+            ...base,
+            content: { ...base.content, body: EDITED },
+            source: {
+              snapshots: [
+                {
+                  tool: adapter.id,
+                  files: [{ relPath: spec.instructionFile, bytes: enc(imported), mode: 0o644 }],
+                  unmappedKeys: [],
+                },
+              ],
+              importedFrom: null,
+            },
+          });
+        };
+
+        async function plan(
+          file: string,
+          item: LoadedItem,
+          resolution?: 'replace-fragment' | 'append-block',
+        ): Promise<{ plan: WritePlan; rootId: RootId }> {
+          const { reader, roots } = memoryTarget();
+          const rootId = roots[rootIdx]!.rootId;
+          reader.file(rootId, spec.instructionFile, file);
+          const decisions =
+            resolution === undefined
+              ? undefined
+              : [{ itemId: item.item.id, relPath: spec.instructionFile, resolution }];
+          return { plan: await adapter.plan([item], ctxOf(roots, reader, decisions)), rootId };
+        }
+
+        it('bez decyzji: konflikt z dwiema opcjami, brak wpisu, plan niewykonywalny', async () => {
+          const { plan: p } = await plan(`Wstep\n\n${IMPORTED}\nKoniec\n`, edited(IMPORTED));
+          expect(p.entries).toEqual([]);
+          expect(p.conflicts).toHaveLength(1);
+          expect(p.conflicts[0]?.options?.map((o) => o.id)).toEqual([
+            'replace-fragment',
+            'append-block',
+          ]);
+          expect(p.conflicts[0]?.reason).toMatch(/znacznik/);
+          expect(p.applicable).toBe(false);
+        });
+
+        it('zamien: fragment zastapiony blokiem, reszta bajt w bajt, drugi plan unchanged', async () => {
+          const head = 'Wstep\r\n\r\n';
+          const tail = '\r\nKoniec  \r\n';
+          const crlf = IMPORTED.replace(/\n/g, '\r\n');
+          const file = `${head}${crlf}${tail}`;
+          const item = edited(crlf);
+          const { plan: p, rootId } = await plan(file, item, 'replace-fragment');
+          expect(p.conflicts).toEqual([]);
+          const e = entryFor(p, rootId, spec.instructionFile)!;
+          expect(e.action).toBe('modify');
+          expect(e.scope).toBe('marker-block');
+          const after = text(e.content);
+          expect(after.startsWith(`${head}${BLOCK_START}\r\n`)).toBe(true);
+          expect(after.endsWith(`${BLOCK_END}\r\n${tail}`)).toBe(true);
+          expect(after).not.toContain('Stara');
+          expect(after).toContain('Nowa tresc B.');
+
+          const { reader, roots } = memoryTarget();
+          const id = roots[rootIdx]!.rootId;
+          reader.file(id, spec.instructionFile, after);
+          const second = await adapter.plan([item], ctxOf(roots, reader));
+          expect(second.conflicts).toEqual([]);
+          expect(second.entries.map((x) => x.action)).toEqual(['unchanged']);
+        });
+
+        it('dopisz: dzisiejsze zachowanie, stary tekst zostaje, blok na koncu', async () => {
+          const file = `Wstep\n\n${IMPORTED}`;
+          const { plan: p, rootId } = await plan(file, edited(IMPORTED), 'append-block');
+          expect(p.conflicts).toEqual([]);
+          const e = entryFor(p, rootId, spec.instructionFile)!;
+          expect(e.action).toBe('modify');
+          const after = text(e.content);
+          expect(after.startsWith(file)).toBe(true);
+          expect(after.endsWith(`${BLOCK_START}\n${EDITED}${BLOCK_END}\n`)).toBe(true);
+          expect(e.warnings.length).toBeGreaterThan(0);
+        });
+
+        it('fragment w kilku miejscach: tylko dopisanie, zamiana nie jest oferowana', async () => {
+          const { plan: p } = await plan(`${IMPORTED}\n---\n${IMPORTED}`, edited(IMPORTED));
+          expect(p.conflicts[0]?.options?.map((o) => o.id)).toEqual(['append-block']);
+          const { plan: forced } = await plan(
+            `${IMPORTED}\n---\n${IMPORTED}`,
+            edited(IMPORTED),
+            'replace-fragment',
+          );
+          expect(forced.entries).toEqual([]);
+          expect(forced.applicable).toBe(false);
+        });
+
+        it('plik bez fragmentu ze snapshotu: zwykle dopisanie bez konfliktu', async () => {
+          const { plan: p } = await plan('Zupelnie inny plik.\n', edited(IMPORTED));
+          expect(p.conflicts).toEqual([]);
+          expect(p.entries).toHaveLength(1);
+        });
       });
 
       it('brak pliku daje plik z samym blokiem', async () => {

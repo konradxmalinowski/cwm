@@ -95,6 +95,8 @@ export function makeSyncStack(options: SyncStackOptions = {}) {
     tree,
     home,
     userData,
+    catalog,
+    reader,
     skills: join(home, '.claude', 'skills'),
     lib,
     index,

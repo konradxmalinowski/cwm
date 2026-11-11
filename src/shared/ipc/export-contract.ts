@@ -8,9 +8,17 @@ import type { ToolIdDto } from './import-contract';
 export type CompatibilityLevelDto = 'full' | 'partial' | 'lossy' | 'unsupported';
 export type MaterializationModeDto = 'symlink' | 'junction' | 'copy';
 
+/** Decyzja dla konfliktu instrukcji globalnej bez znacznikow (ADR 0025, regula 3). */
+export type ConflictResolutionDto = 'replace-fragment' | 'append-block';
+
 export interface ExportPlanRequest {
   tool: ToolIdDto;
   itemIds: string[];
+  /**
+   * Decyzje dla konfliktow z poprzedniego planu: ten sam `itemId` i `relPath`, co w konflikcie.
+   * Brak pola albo konflikt bez decyzji: plan zostaje niewykonywalny.
+   */
+  resolutions?: { itemId: string; relPath: string; resolution: ConflictResolutionDto }[];
 }
 
 export interface ItemVerdictDto {
@@ -56,7 +64,13 @@ export interface ExportPlanDto {
   verdicts: ItemVerdictDto[];
   entries: PlanEntryDto[];
   refusals: { itemId: string; kind: ItemKindDto; slug: string; reason: string }[];
-  conflicts: { itemIds: string[]; relPath: string; reason: string }[];
+  conflicts: {
+    itemIds: string[];
+    relPath: string;
+    reason: string;
+    /** Decyzje do wyboru; brak pola: konflikt nie ma rozstrzygniecia w interfejsie. */
+    options?: { id: ConflictResolutionDto; label: string }[];
+  }[];
   /** Tylko raport: aplikacja nigdy sama nie usuwa plikow w narzedziu (decyzja 2026-11-03). */
   orphans: { rootLabel: string; relPath: string; reason: string }[];
   applicable: boolean;

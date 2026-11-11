@@ -5,7 +5,10 @@ import {
   BLOCK_START,
   applyMarkerBlock,
   containsManagedContent,
+  findManagedFragment,
   hasManagedBlock,
+  hasOurMarkers,
+  replaceFragment,
 } from '../../src/adapters/shared/marker-block';
 
 const body = 'Linia pierwsza.\n\nLinia druga.\n';
@@ -81,5 +84,54 @@ describe('blok miedzy markerami (ADR 0025)', () => {
     expect(hasManagedBlock(`${BLOCK_START}\n${BLOCK_END}\n`)).toBe(true);
     expect(hasManagedBlock(`${BLOCK_START}\n`)).toBe(false);
     expect(hasManagedBlock('<!-- antislop:start -->\n<!-- antislop:end -->\n')).toBe(false);
+  });
+
+  it('hasOurMarkers widzi tez pojedynczy znacznik, ale nie obcy', () => {
+    expect(hasOurMarkers(`a\n${BLOCK_START}\n`)).toBe(true);
+    expect(hasOurMarkers('<!-- antislop:start -->\n')).toBe(false);
+  });
+
+  describe('regula 3: fragment ze snapshotu', () => {
+    const snap = 'Pierwsza.\n\nDruga.\n';
+
+    it('znajduje fragment niezaleznie od rodzaju konca linii i liczy wystapienia', () => {
+      const file = 'Wstep\r\nPierwsza.\r\n\r\nDruga.\r\nKoniec\r\n';
+      const f = findManagedFragment(file, snap);
+      expect(f).toMatchObject({ count: 1, lines: 3 });
+      expect(file.slice(f?.start, f?.end)).toBe('Pierwsza.\r\n\r\nDruga.');
+      expect(findManagedFragment(`${snap}${snap}`, snap)?.count).toBe(2);
+      expect(findManagedFragment('inny tekst', snap)).toBeNull();
+      expect(findManagedFragment('cokolwiek', '  \n')).toBeNull();
+    });
+
+    it('metaznaki wyrazen regularnych w tresci sa literalami', () => {
+      const text = 'a (b) [c] *d* $e ^f\\g.h';
+      expect(findManagedFragment(`x\n${text}\ny`, text)?.count).toBe(1);
+      expect(findManagedFragment('a b c', 'a.b')).toBeNull();
+    });
+
+    it('zamiana zostawia reszte bajt w bajt, a markery stoja w osobnych liniach', () => {
+      const file = 'Wstep\r\nPierwsza.\r\n\r\nDruga.\r\nKoniec  ';
+      const f = findManagedFragment(file, snap)!;
+      const out = replaceFragment(file, f, 'Nowa.\n');
+      expect(out).toBe(`Wstep\r\n${BLOCK_START}\r\nNowa.\r\n${BLOCK_END}\r\nKoniec  `);
+    });
+
+    it('fragment w srodku linii dostaje znaczniki w osobnych liniach', () => {
+      const file = 'przed Pierwsza. po';
+      const f = findManagedFragment(file, 'Pierwsza.')!;
+      expect(replaceFragment(file, f, 'N')).toBe(`przed \n${BLOCK_START}\nN\n${BLOCK_END}\n po`);
+    });
+
+    it('po zamianie blok jest rozpoznany i nic nie zmienia', () => {
+      const f = findManagedFragment(snap, snap)!;
+      const out = replaceFragment(snap, f, 'Nowa.\n');
+      expect(applyMarkerBlock(out, 'Nowa.\n').kind).toBe('unchanged');
+    });
+
+    it('skipDuplicateCheck dopisuje blok mimo tej samej tresci w pliku', () => {
+      expect(applyMarkerBlock(`${body}`, body).kind).toBe('conflict');
+      expect(applyMarkerBlock(`${body}`, body, { skipDuplicateCheck: true }).kind).toBe('appended');
+    });
   });
 });

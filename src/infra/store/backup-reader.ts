@@ -36,6 +36,22 @@ function before(raw: unknown): BackupBeforeView | null {
     const backupFile = str(r['backupFile']);
     return sha256 === null || backupFile === null ? null : { state: 'file', sha256, backupFile };
   }
+  if (r['state'] === 'directory') {
+    const list = r['files'];
+    if (!Array.isArray(list)) return null;
+    const files: { relPath: string; sha256: string; mode: number; backupFile: string }[] = [];
+    for (const raw of list as unknown[]) {
+      const f = rec(raw);
+      const relPath = str(f?.['relPath']);
+      const sha256 = str(f?.['sha256']);
+      const backupFile = str(f?.['backupFile']);
+      const mode = Number.parseInt(str(f?.['mode']) ?? '', 8);
+      if (relPath === null || sha256 === null || backupFile === null) return null;
+      if (!Number.isInteger(mode) || mode < 0 || mode > 0o777) return null;
+      files.push({ relPath, sha256, mode, backupFile });
+    }
+    return { state: 'directory', files };
+  }
   return null;
 }
 

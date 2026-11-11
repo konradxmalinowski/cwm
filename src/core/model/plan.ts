@@ -65,7 +65,14 @@ export interface WritePlanEntry {
    * Dla wpisu katalogowego (skill z plikami pomocniczymi): pelna zawartosc katalogu, sciezki
    * wzgledem `relPath`. Wtedy `content` jest null, a `link` dotyczy calego katalogu.
    */
-  readonly files: readonly { readonly relPath: string; readonly bytes: Uint8Array }[] | null;
+  readonly files:
+    | readonly {
+        readonly relPath: string;
+        readonly bytes: Uint8Array;
+        /** Tryb pliku do odtworzenia (cofniecie z kopii); brak: tryb istniejacego pliku albo domyslny. */
+        readonly mode?: number;
+      }[]
+    | null;
   /** Bajty pliku przed zapisem, null gdy plik nie istnieje; podstawa podgladu i weryfikacji. */
   readonly previous: Uint8Array | null;
   readonly materialization: MaterializationMode | null;
@@ -84,11 +91,32 @@ export interface PlanRefusal {
   readonly reason: string;
 }
 
+/**
+ * Decyzje uzytkownika dla konfliktu instrukcji globalnej bez znacznikow (ADR 0025, regula 3):
+ * zamiana fragmentu zaimportowanego z pliku na blok aplikacji albo dopisanie bloku na koncu.
+ */
+export type ConflictResolution = 'replace-fragment' | 'append-block';
+
+export interface PlanConflictOption {
+  readonly id: ConflictResolution;
+  /** Etykieta dla uzytkownika, po polsku. */
+  readonly label: string;
+}
+
+/** Decyzja podana przy planowaniu: dotyczy konfliktu o danym elemencie i pliku. */
+export interface ExportDecision {
+  readonly itemId: ItemId;
+  readonly relPath: string;
+  readonly resolution: ConflictResolution;
+}
+
 /** Konflikt wymagajacy decyzji (np. komenda i skill o tej samej nazwie w Codeksie, ADR 0021). */
 export interface PlanConflict {
   readonly itemIds: readonly ItemId[];
   readonly relPath: string;
   readonly reason: string;
+  /** Decyzje, ktore da sie podac w kolejnym planie; brak pola: konflikt nie ma rozstrzygniecia w UI. */
+  readonly options?: readonly PlanConflictOption[];
 }
 
 /** Plik w narzedziu, ktorego biblioteka juz nie realizuje. Tylko raport, nigdy usuniecie. */

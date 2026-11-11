@@ -195,6 +195,8 @@ export class HistoryService {
     m: BackupEntryView,
     itemIds: readonly ItemId[],
   ): Promise<WritePlanEntry | { conflict: string } | null> {
+    if (m.before.state === 'directory')
+      return this.restoreDirectory(backupId, m, m.before, itemIds);
     if (m.after.state === 'directory') {
       return {
         conflict:
@@ -258,6 +260,63 @@ export class HistoryService {
         };
       }
     }
+  }
+
+  /**
+   * Katalog zastapiony przez zapis: wpis katalogowy z pelna lista plikow z kopii. Brama zastapi
+   * to, co jest teraz pod sciezka (dowiazanie aplikacji albo zwykly katalog), i zrobi wlasna kopie.
+   */
+  private async restoreDirectory(
+    backupId: string,
+    m: BackupEntryView,
+    before: Extract<BackupEntryView['before'], { state: 'directory' }>,
+    itemIds: readonly ItemId[],
+  ): Promise<WritePlanEntry | { conflict: string }> {
+    const files: { relPath: string; bytes: Uint8Array; mode: number }[] = [];
+    for (const f of before.files) {
+      let bytes: Uint8Array;
+      try {
+        bytes = await this.deps.backups.readFile(backupId, f.backupFile);
+      } catch {
+        return { conflict: 'Plik w kopii zapasowej jest nieczytelny.' };
+      }
+      if (sha256Bytes(bytes) !== f.sha256) {
+        return { conflict: 'Plik w kopii zapasowej nie zgadza się z sumą w MANIFEST.' };
+      }
+      files.push({ relPath: f.relPath, bytes, mode: f.mode });
+    }
+    if (files.length === 0) {
+      return { conflict: 'Kopia katalogu jest pusta, więc nie ma czego przywrócić.' };
+    }
+    let exists: boolean;
+    try {
+      const entries = await this.deps.reader.list(m.rootId, parentOf(m.relPath));
+      const found = entries.find((e) => e.name === nameOf(m.relPath));
+      if (found !== undefined && found.type === 'file') {
+        return { conflict: 'W miejscu katalogu leży teraz plik. Nie zastąpię go katalogiem.' };
+      }
+      exists = found !== undefined;
+    } catch (error: unknown) {
+      if (!(error instanceof SourceReadError && error.failure === 'not-found')) {
+        return { conflict: 'Nie da się sprawdzić obecnego stanu katalogu.' };
+      }
+      exists = false;
+    }
+    return {
+      rootId: m.rootId,
+      relPath: m.relPath,
+      action: exists ? 'modify' : 'create',
+      scope: 'whole-file',
+      itemIds,
+      content: null,
+      files,
+      previous: null,
+      materialization: null,
+      warnings: [
+        'Cofnięcie zastąpi obecną zawartość katalogu stanem sprzed zapisu. Przed zapisem powstanie kopia.',
+      ],
+      recoverability: null,
+    };
   }
 
   private async currentOf(rootId: string, relPath: string): Promise<Current> {

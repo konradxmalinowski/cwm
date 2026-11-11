@@ -83,8 +83,16 @@ export async function planSkillDirectory(
     }
   } catch (error) {
     if (!(error instanceof SourceReadError)) throw error;
-    b.refuse(loaded.item, `Nie udało się odczytać stanu katalogu "${dirName}" (${error.failure}).`);
-    return;
+    if (error.failure !== 'permission-denied') {
+      b.refuse(
+        loaded.item,
+        `Nie udało się odczytać stanu katalogu "${dirName}" (${error.failure}).`,
+      );
+      return;
+    }
+    // Nieczytelny plik w katalogu: wpis idzie do bramki, ktora go zablokuje (ADR 0028), zeby plan
+    // pokazal blokade z powodem zamiast cichej odmowy.
+    state = { kind: 'directory', files: new Map() };
   }
   if (state.kind === 'other') {
     b.refuse(
@@ -99,15 +107,11 @@ export async function planSkillDirectory(
   const notes = [...warnings];
   if (state.kind === 'directory' && dirMatches(state.files, files)) {
     action = 'unchanged';
-  } else if (linkMode) {
-    action = 'link';
-    if (state.kind === 'directory') {
-      notes.push(
-        'Istniejący katalog zostanie zastąpiony dowiązaniem do kopii z biblioteki. Poprzednia zawartość trafi do kopii zapasowej.',
-      );
-    }
   } else {
-    action = state.kind === 'absent' ? 'create' : 'modify';
+    action = linkMode ? 'link' : state.kind === 'absent' ? 'create' : 'modify';
+    if (state.kind === 'directory') {
+      notes.push(overwriteNote(dirName, linkMode, state.files, files));
+    }
   }
   b.entry({
     rootId: root.rootId,
@@ -120,6 +124,27 @@ export async function planSkillDirectory(
     materialization: action === 'unchanged' ? null : mode,
     warnings: notes,
   });
+}
+
+const MAX_LISTED = 10;
+
+/** Ostrzezenie "nadpisze": zwykly katalog jest zastepowany, a pliki spoza nowej wersji znikaja. */
+function overwriteNote(
+  dirName: string,
+  linkMode: boolean,
+  existing: ReadonlyMap<string, Uint8Array>,
+  wanted: readonly { readonly relPath: string }[],
+): string {
+  const keep = new Set(wanted.map((w) => w.relPath));
+  const vanishing = [...existing.keys()].filter((p) => p !== '\0link' && !keep.has(p)).sort();
+  const head = linkMode
+    ? `Nadpisze istniejący katalog "${dirName}": zostanie zastąpiony dowiązaniem do kopii z biblioteki.`
+    : `Nadpisze zawartość istniejącego katalogu "${dirName}".`;
+  const tail = 'Cała jego poprzednia zawartość trafi do kopii zapasowej.';
+  if (vanishing.length === 0) return `${head} ${tail}`;
+  const shown = vanishing.slice(0, MAX_LISTED).join(', ');
+  const rest = vanishing.length > MAX_LISTED ? ` i ${vanishing.length - MAX_LISTED} innych` : '';
+  return `${head} ${tail} Znikną z katalogu pliki, których nie ma w nowej wersji: ${shown}${rest}.`;
 }
 
 /**

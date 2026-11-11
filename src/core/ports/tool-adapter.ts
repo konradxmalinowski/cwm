@@ -1,5 +1,10 @@
 import type { ItemDraft, ItemKind, LibraryItem, LoadedItem, RootId, ToolId } from '../model/item';
-import type { CompatibilityVerdict, MaterializationMode, WritePlan } from '../model/plan';
+import type {
+  CompatibilityVerdict,
+  ExportDecision,
+  MaterializationMode,
+  WritePlan,
+} from '../model/plan';
 import type { SourceReader } from './source-reader';
 
 /**
@@ -96,6 +101,8 @@ export interface ExportContext {
   /** Rooty tego narzedzia z warstwy lokalizacji; eksport tylko do istniejacych (decyzja 2026-11-03). */
   readonly roots: readonly DetectedRoot[];
   readonly reader: SourceReader;
+  /** Decyzje uzytkownika dla konfliktow z poprzedniego planu (ADR 0025, regula 3). */
+  readonly decisions?: readonly ExportDecision[];
   /** Najlepszy tryb dostepny na tym systemie dla katalogu i dla pliku (ADR 0015). */
   readonly materialization: {
     readonly directory: MaterializationMode;

@@ -46,8 +46,15 @@ export class PlanBuilder {
     this.refusals.push({ itemId: item.id, kind: item.kind, slug: item.identity.slug, reason });
   }
 
-  conflict(itemIds: readonly ItemId[], relPath: string, reason: string): void {
-    this.conflicts.push({ itemIds, relPath, reason });
+  conflict(
+    itemIds: readonly ItemId[],
+    relPath: string,
+    reason: string,
+    options?: PlanConflict['options'],
+  ): void {
+    this.conflicts.push(
+      options === undefined ? { itemIds, relPath, reason } : { itemIds, relPath, reason, options },
+    );
   }
 
   orphan(rootId: RootId, relPath: string, reason: string): void {

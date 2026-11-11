@@ -1,3 +1,4 @@
+import type { ItemId } from '../../../core/model/item';
 import { LibraryError } from '../../../core/model/library-errors';
 import type { WritePlanEntry } from '../../../core/model/plan';
 import {
@@ -126,6 +127,9 @@ export function toPlanDto(report: ExportPlanReport): ExportPlanDto {
       itemIds: [...c.itemIds],
       relPath: c.relPath,
       reason: c.reason,
+      ...(c.options === undefined
+        ? {}
+        : { options: c.options.map((o) => ({ id: o.id, label: o.label })) }),
     })),
     orphans: plan.orphans.map((o) => ({
       rootLabel: labelOf(o.rootId),
@@ -173,7 +177,19 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
   registry.register(
     'export:plan',
     guarded(parsePlanRequest, async (service, request) =>
-      ok(toPlanDto(await service.plan(request.tool, request.itemIds))),
+      ok(
+        toPlanDto(
+          await service.plan(
+            request.tool,
+            request.itemIds,
+            (request.resolutions ?? []).map((r) => ({
+              itemId: r.itemId as ItemId,
+              relPath: r.relPath,
+              resolution: r.resolution,
+            })),
+          ),
+        ),
+      ),
     ),
   );
 

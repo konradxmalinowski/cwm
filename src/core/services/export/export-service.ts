@@ -1,5 +1,5 @@
 import type { ItemId, LoadedItem, Sha256, ToolId } from '../../model/item';
-import type { ApplyReport, WritePlan } from '../../model/plan';
+import type { ApplyReport, ExportDecision, WritePlan } from '../../model/plan';
 import type { Clock } from '../../ports/clock';
 import { cryptoRandomBytes } from '../../ports/id-generator';
 import type { SourceReader } from '../../ports/source-reader';
@@ -137,14 +137,22 @@ export class ExportService {
     this.newPlanId = deps.newPlanId ?? defaultPlanId;
   }
 
-  async plan(tool: ToolId, itemIds: readonly string[]): Promise<ExportPlanReport> {
-    const report = await this.preview(tool, itemIds);
+  async plan(
+    tool: ToolId,
+    itemIds: readonly string[],
+    decisions: readonly ExportDecision[] = [],
+  ): Promise<ExportPlanReport> {
+    const report = await this.preview(tool, itemIds, decisions);
     if (!report.toolMissing) this.remember(report);
     return report;
   }
 
   /** Jak `plan`, ale plan nie jest zapamietany: do odczytu stanu (sieroty, status) bez wypierania planow. */
-  async preview(tool: ToolId, itemIds: readonly string[]): Promise<ExportPlanReport> {
+  async preview(
+    tool: ToolId,
+    itemIds: readonly string[],
+    decisions: readonly ExportDecision[] = [],
+  ): Promise<ExportPlanReport> {
     const exporter = this.exporters.get(tool);
     if (exporter === undefined) {
       throw new ExportError(
@@ -192,6 +200,7 @@ export class ExportService {
     const ctx: ExportContext = {
       roots,
       reader: this.deps.reader,
+      ...(decisions.length === 0 ? {} : { decisions }),
       materialization: materializationFor(await this.deps.links()),
     };
     const drafted = await exporter.plan(loaded, ctx);

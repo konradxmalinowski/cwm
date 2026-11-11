@@ -47,10 +47,14 @@ Na macOS i Linuksie (na Windowsie przez symlink albo junction) katalog skilla tr
 dowiązanie do kopii w katalogu danych aplikacji (`docs/INSTALACJA.md`). Dwie konsekwencje:
 
 - Jeśli w narzędziu leży już zwykły katalog skilla o tej nazwie, a jego zawartość różni się od
-  biblioteki, eksport tego skilla jest zablokowany z komunikatem „W miejscu docelowym jest
-  katalog albo plik, którego nie zastąpię dowiązaniem”. Aplikacja nie kasuje cudzych katalogów.
-  Przenieś katalog poza narzędzie (np. `mv ~/.claude/skills/acme ~/acme-stare`) i zaplanuj
-  eksport jeszcze raz. Zawartość z momentu importu masz w bibliotece w `snapshots/`.
+  biblioteki, eksport go zastępuje, ale dopiero po kopii całego katalogu: każdego pliku, także
+  tych spoza planu (dodanych po imporcie). Plan pokazuje wpis z ostrzeżeniem „Nadpisze” i listą
+  plików, które znikną z katalogu, bo nie ma ich w nowej wersji. Kopia trafia do `backups/<id>/`
+  (z listą plików w MANIFEST) i do content store. Cofnięcie z widoku Historia przywraca katalog
+  w całości, z trybami plików. Gdy kopii nie da się zrobić (plik nieczytelny, dowiązanie albo
+  wpis specjalny wewnątrz katalogu, ponad 1000 plików), wpis jest zablokowany i nic się nie
+  zmienia (ADR 0028). Pusty podkatalog nie wraca przy cofnięciu z Historii, a katalogi
+  odtworzone z Historii dostają tryb 0700.
 - Zmiana skilla w bibliotece trafia do narzędzia dopiero przy kolejnym eksporcie. Status
   synchronizacji sprawdza tylko, czy dowiązanie istnieje, nie czy treść kopii w katalogu danych
   się zmieniła.
@@ -117,10 +121,17 @@ instrukcji globalnych celuje w ten sam plik (aplikacja ich nie łączy).
 
 **Import bierze cały plik.** Element „instrukcja globalna” zaimportowany z `CLAUDE.md` zawiera
 całą treść pliku, nie tylko blok. Jeśli zmienisz go w bibliotece i wyeksportujesz do tego samego
-pliku, a treść nie jest już tym, co w pliku, aplikacja dopisze na końcu blok z całą nową treścią
-i **nie usunie starego tekstu** (sprawdzone na zmianie jednej linii). Plik będzie miał treść
-dwa razy. Usuń starą wersję z pliku ręcznie po eksporcie, albo najpierw otocz ją markerami.
-Z kolei usunięcie linii z elementu daje konflikt z punktu 4.
+pliku, który nadal ma tekst z importu bez markerów, aplikacja nie dopisuje bloku po cichu.
+Plan ma konflikt z dwiema decyzjami do wyboru:
+
+- „Zamień ten fragment na blok aplikacji”: tekst zaimportowany z pliku zostaje zastąpiony blokiem
+  z markerami i nową treścią, reszta pliku zostaje bajt w bajt. Oferowane, gdy ten tekst
+  występuje w pliku dokładnie raz.
+- „Dopisz blok na końcu”: blok z całą nową treścią trafia na koniec, a stary tekst zostaje, więc
+  treść jest w pliku dwa razy.
+
+Bez wyboru plan nie jest wykonywalny. Usunięcie linii z elementu, który nie ma snapshotu z tego
+pliku, daje konflikt z punktu 4 bez wyboru: otocz treść markerami ręcznie.
 
 Usunięcie elementu z biblioteki nie usuwa bloku z pliku.
 

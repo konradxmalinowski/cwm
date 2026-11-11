@@ -528,19 +528,22 @@ Verdykt jest wyliczany przez adapter z konkretnego elementu, a nie wpisany na sz
 Ten sam skill może być `full` albo `lossy` w zależności od tego, czy ma frontmatter i czy jego
 `declaredName` zgadza się ze slugiem.
 
-Macierz bazowa:
+Macierz bazowa. Źródłem prawdy są `claudeCapabilities` (`src/adapters/claude-code/export.ts`)
+i `codexCapabilities` (`src/adapters/codex/export.ts`); tabela opisuje je, nie odwrotnie.
+Poziomy skilla, agenta i komendy są wyliczane z elementu, więc komórka podaje zakres, w którym
+poziom się porusza, a kolumna ostatnia mówi, co go przesuwa.
 
-| Typ elementu | Claude Code | Codex | Powód i co ginie |
+| Typ elementu | Claude Code | Codex | Co przesuwa poziom i co ginie |
 |---|---|---|---|
-| Skill katalogowy z frontmatterem | full | full lub lossy | `lossy`, gdy `declaredName` rozjeżdża się ze slugiem: Codex pokaże element pod inną nazwą niż Claude (ADR 0026) |
-| Skill płaski bez frontmattera | full | lossy | Codex wymaga frontmattera, więc adapter dopisuje `name` i `description`. Nic nie ginie, ale coś jest dodawane (`addedAttributes`) |
-| Agent | full | partial | Dwa miejsca docelowe: `agents/<name>.toml` plus wpis `[agents.<name>]`. `model` mapuje się na `model_reasoning_effort` przybliżeniem, `color` i `memory` nie mają odpowiednika i zostają w snapshotcie |
-| Komenda | full | lossy | Codex nie ma pojęcia komendy. Mapujemy na skill, ginie semantyka wywołania przez `/nazwa` |
+| Skill katalogowy z frontmatterem | full lub partial | full, partial lub lossy | `partial`, gdy frontmatter ma pola z drugiego narzędzia (zostają w snapshotcie). Codex `lossy`, gdy `declaredName` rozjeżdża się ze slugiem (Codex pokaże element pod inną nazwą niż Claude, ADR 0026) albo brakuje `name` lub `description` i adapter je dopisuje (`addedAttributes`) |
+| Skill płaski bez frontmattera | full | lossy | Codex wymaga katalogu i frontmattera, więc adapter dopisuje `name` i `description`. Nic nie ginie, ale coś jest dodawane |
+| Agent | full, partial lub lossy | partial lub lossy | Claude: `partial` przy polach obcych, `lossy`, gdy brakuje `name` lub `description` i adapter je dopisuje. Codex: zawsze co najmniej `partial` (dwa miejsca docelowe: `agents/<nazwa>.toml` i wpis `[agents.<nazwa>]`; `model` przybliżany przez `model_reasoning_effort`, `color` i `memory` giną), `lossy` przy dopisywanych polach |
+| Komenda | full lub partial | lossy | Claude `partial` przy polach obcych. Codex nie ma komend: element staje się skillem, ginie wywołanie przez `/nazwa` (ADR 0021) |
 | Instrukcja globalna | partial | partial | Jeden plik na narzędzie (`CLAUDE.md`, `AGENTS.md`), więc zarządzany jest blok między markerami aplikacji, nie plik. Treść poza blokiem nie jest eksportowana ani kontrolowana (ADR 0025) |
-| Instrukcja projektowa | full | partial | Po stronie Codeksa `[projects."..."]` trzyma wyłącznie `trust_level`, więc zakres projektowy jest w pliku, nie w konfiguracji |
-| Hook | full | partial | Codex czyta tylko `hooks.<Zdarzenie>` i po cichu pomija nieznane zdarzenia. Adapter ostrzega, gdy zdarzenia nie ma na liście znanych Codeksowi |
-| Serwer MCP | n/d | unsupported | Decyzja polityczna, nie techniczna (ADR 0020). Codex nie ma MCP per projekt, więc nie da się przenieść zakresu |
-| Pliki pomocnicze skilla | full | full | Kopiowane razem z elementem |
+| Instrukcja projektowa | unsupported | unsupported | Leży w katalogu projektu, a MVP obsługuje tylko konfigurację globalną (ADR 0032) |
+| Hook | full | partial | Codex jest zawsze `partial`: czyta tylko `hooks.<Zdarzenie>` i po cichu pomija nieznane zdarzenia. Dla zdarzenia spoza listy znanych Codeksowi adapter dodaje ostrzeżenie |
+| Serwer MCP (`tool-setting`) | unsupported | unsupported | Decyzja polityczna, nie techniczna (ADR 0020) |
+| Pliki pomocnicze skilla | w poziomie skilla | w poziomie skilla | Kopiowane razem z elementem, nie mają własnego werdyktu (`reference-asset` jest `unsupported` jako samodzielny element) |
 | Pozostałe ustawienia narzędzia | unsupported | unsupported | Poza MVP |
 
 Zasada nadrzędna z wymagań: przy `unsupported` nie udajemy konwersji. Element jest jawnie

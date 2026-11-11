@@ -91,7 +91,73 @@ export function containsManagedContent(existing: string, content: string): boole
   return lines.every((l) => present.has(l));
 }
 
-export function applyMarkerBlock(existing: string | null, content: string): MarkerBlockResult {
+const BOM = '\uFEFF';
+
+/** Czy plik ma ktorykolwiek znacznik aplikacji (nawet uszkodzona para). */
+export function hasOurMarkers(text: string): boolean {
+  return findMarkers(text).some((m) => m.name === OUR_NAME);
+}
+
+export interface ManagedFragment {
+  readonly start: number;
+  readonly end: number;
+  /** Ile razy fragment wystepuje w pliku; zamiana jest jednoznaczna tylko dla 1. */
+  readonly count: number;
+  readonly lines: number;
+}
+
+/**
+ * Regula 3 (ADR 0025): fragment pliku, ktory jest trescia zaimportowana z tego pliku (snapshot
+ * zrodla), a stoi poza znacznikami. Porownanie ignoruje rodzaj konca linii; zakres wraca
+ * we wspolrzednych oryginalnego tekstu, zeby reszta pliku zostala bajt w bajt.
+ */
+export function findManagedFragment(
+  existing: string,
+  snapshotText: string,
+): ManagedFragment | null {
+  const wanted = snapshotText
+    .replace(/^\uFEFF/, '')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+  if (wanted === '') return null;
+  const pattern = wanted
+    .split('\n')
+    .map((line) => line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('(?:\\r\\n|\\r|\\n)');
+  const all = [...existing.matchAll(new RegExp(pattern, 'g'))];
+  const first = all[0];
+  if (first === undefined) return null;
+  return {
+    start: first.index,
+    end: first.index + first[0].length,
+    count: all.length,
+    lines: wanted.split('\n').length,
+  };
+}
+
+/** Zamienia fragment na blok aplikacji; znaczniki zawsze stoja w osobnych liniach. */
+export function replaceFragment(
+  existing: string,
+  fragment: ManagedFragment,
+  content: string,
+): string {
+  const eol = dominantEol(existing);
+  const before = existing.slice(0, fragment.start);
+  const after = existing.slice(fragment.end);
+  const atLineStart =
+    fragment.start === 0 ||
+    existing[fragment.start - 1] === '\n' ||
+    (fragment.start === 1 && existing[0] === BOM);
+  const atLineEnd = after === '' || after.startsWith('\n') || after.startsWith('\r');
+  const block = `${BLOCK_START}${eol}${withEol(blockBody(content), eol)}${eol}${BLOCK_END}`;
+  return `${before}${atLineStart ? '' : eol}${block}${atLineEnd ? '' : eol}${after}`;
+}
+
+export function applyMarkerBlock(
+  existing: string | null,
+  content: string,
+  options: { readonly skipDuplicateCheck?: boolean } = {},
+): MarkerBlockResult {
   const body = blockBody(content);
   if (existing === null || existing === '') {
     return { kind: 'created', text: `${BLOCK_START}\n${body}\n${BLOCK_END}\n` };
@@ -129,7 +195,7 @@ export function applyMarkerBlock(existing: string | null, content: string): Mark
     };
   }
 
-  if (containsManagedContent(existing, body)) {
+  if (options.skipDuplicateCheck !== true && containsManagedContent(existing, body)) {
     return {
       kind: 'conflict',
       reason:

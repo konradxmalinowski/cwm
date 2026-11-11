@@ -3,6 +3,27 @@
 Status: zaakceptowane (odpowiedź właściciela produktu na pytanie 2 z Etapu 0, 2026-10-20)
 Data: 2026-10-20
 
+> Uzupełnienie (2026-11-11):
+>
+> **Markery.** Faktyczne markery to `<!-- ai-skills-manager:start -->` i
+> `<!-- ai-skills-manager:end -->` (`BLOCK_START` i `BLOCK_END` w
+> `src/adapters/shared/marker-block.ts`), każdy sam w linii. Markery `antislop:*` z kontekstu
+> powyżej są obce: aplikacja ich nie rusza i nie zapisuje swojego bloku w ich środku.
+>
+> **Rozstrzygnięcie reguły 3.** Import bierze cały plik jako treść elementu, więc po edycji
+> elementu stara treść w pliku różni się od nowej i heurystyka "ta sama treść już jest w pliku"
+> jej nie łapie. Rozpoznanie opiera się na snapshocie źródła: jeśli element ma snapshot z tego
+> samego narzędzia i tego samego pliku, a plik (bez markerów aplikacji) zawiera tekst ze
+> snapshotu (porównanie po normalizacji końców linii), to jest to treść zarządzana bez markerów.
+> Plan nie dopisuje wtedy bloku po cichu. Ma konflikt (`PlanConflict`) z dwiema decyzjami,
+> które użytkownik podaje w `resolutions` żądania `export:plan`:
+> `replace-fragment` ("zamień ten fragment na blok aplikacji": fragment ze snapshotu zostaje
+> zastąpiony blokiem z markerami i nową treścią, reszta pliku bajt w bajt) i `append-block`
+> ("dopisz blok na końcu": dawne zachowanie, stary tekst zostaje w pliku). Zamiana jest oferowana
+> tylko wtedy, gdy fragment występuje w pliku dokładnie raz. Bez decyzji plan nie jest
+> wykonywalny. Przypadek bez snapshotu zostaje przy heurystyce i konflikcie bez decyzji
+> (użytkownik oznacza treść markerami ręcznie).
+
 ## Kontekst
 
 `~/.claude/CLAUDE.md` i `~/.codex/AGENTS.md` to pojedyncze pliki na narzędzie. Eksport instrukcji

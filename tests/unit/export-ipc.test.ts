@@ -136,6 +136,57 @@ describe('kanaly export:*', () => {
     expect(dto.applicable).toBe(true);
   });
 
+  it('resolutions: walidacja, przekazanie do eksportera i opcje konfliktu w DTO', async () => {
+    const h = await exportHarness({
+      roots: [root('r-claude', 'claude-code')],
+      build: (items) =>
+        emptyPlan({
+          conflicts: [
+            {
+              itemIds: [items[0]!.item.id],
+              relPath: 'CLAUDE.md',
+              reason: 'konflikt',
+              options: [
+                { id: 'replace-fragment', label: 'Zamień ten fragment na blok aplikacji' },
+                { id: 'append-block', label: 'Dopisz blok na końcu' },
+              ],
+            },
+          ],
+          applicable: false,
+        }),
+    });
+    const { call } = wire(h.service);
+    for (const resolutions of [
+      'x',
+      [1],
+      [{ itemId: h.itemId, relPath: 'CLAUDE.md', resolution: 'zrob-cos' }],
+      [{ itemId: '', relPath: 'CLAUDE.md', resolution: 'append-block' }],
+      [{ itemId: h.itemId, resolution: 'append-block' }],
+    ]) {
+      expect(
+        await call('export:plan', { tool: 'claude-code', itemIds: [h.itemId], resolutions }),
+      ).toMatchObject({ ok: false, error: { code: 'invalid-request' } });
+    }
+
+    const r = await call<ExportPlanDto>('export:plan', {
+      tool: 'claude-code',
+      itemIds: [h.itemId],
+      resolutions: [{ itemId: h.itemId, relPath: 'CLAUDE.md', resolution: 'append-block' }],
+    });
+    expect(h.exporter.contexts.at(-1)?.decisions).toEqual([
+      { itemId: h.itemId, relPath: 'CLAUDE.md', resolution: 'append-block' },
+    ]);
+    if (!r.ok) throw new Error('plan nie powiodl sie');
+    expect(r.value.applicable).toBe(false);
+    expect(r.value.conflicts[0]?.options?.map((o) => o.id)).toEqual([
+      'replace-fragment',
+      'append-block',
+    ]);
+
+    await call('export:plan', { tool: 'claude-code', itemIds: [h.itemId] });
+    expect(h.exporter.contexts.at(-1)?.decisions).toBeUndefined();
+  });
+
   it('toolMissing wraca w DTO jako nieaplikowalny plan bez wpisow', async () => {
     const h = await exportHarness({ roots: [root('r-claude', 'claude-code', { exists: false })] });
     h.catalog.homes = new Set();

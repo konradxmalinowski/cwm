@@ -18,7 +18,16 @@ import { readBounded } from '../fs/bounded-read';
 export type BackupBefore =
   | { readonly state: 'missing' }
   | { readonly state: 'file'; readonly bytes: Uint8Array; readonly mode: number }
-  | { readonly state: 'symlink'; readonly linkTarget: string };
+  | { readonly state: 'symlink'; readonly linkTarget: string }
+  /** Zwykly katalog zastapiony w calosci: kazdy plik, takze spoza planu. */
+  | {
+      readonly state: 'directory';
+      readonly files: readonly {
+        readonly relPath: string;
+        readonly bytes: Uint8Array;
+        readonly mode: number;
+      }[];
+    };
 
 export type BackupAfter =
   | { readonly state: 'file'; readonly bytes: Uint8Array }
@@ -47,7 +56,17 @@ export type ManifestBefore =
       readonly mode: string;
       readonly backupFile: string;
     }
-  | { readonly state: 'symlink'; readonly linkTarget: string };
+  | { readonly state: 'symlink'; readonly linkTarget: string }
+  | {
+      readonly state: 'directory';
+      readonly files: readonly {
+        readonly relPath: string;
+        readonly sha256: Sha256;
+        readonly size: number;
+        readonly mode: string;
+        readonly backupFile: string;
+      }[];
+    };
 
 export type ManifestAfter =
   | { readonly state: 'file'; readonly sha256: Sha256; readonly size: number }
@@ -83,7 +102,9 @@ const MANIFEST_LIMIT = 16 * 1024 * 1024;
 const NOTE =
   'Kopia stanu plików sprzed eksportu. Dla wpisu "file" odzyskasz plik, kopiując backupFile ' +
   '(względem tego katalogu) na path. Dla "missing" plik nie istniał: po cofnięciu należy go usunąć. ' +
-  'Dla "symlink" przywróć dowiązanie o wskazanym linkTarget.';
+  'Dla "symlink" przywróć dowiązanie o wskazanym linkTarget. ' +
+  'Dla "directory" katalog path istniał i został zastąpiony: usuń to, co jest teraz pod path, ' +
+  'i odtwórz katalog, kopiując każdy plik z listy files (backupFile na path/relPath).';
 
 export class BackupError extends Error {
   constructor(
@@ -147,6 +168,25 @@ export class FsBackupStore {
             mode: item.before.mode.toString(8).padStart(4, '0'),
             backupFile: name,
           };
+        } else if (item.before.state === 'directory') {
+          const files: Extract<ManifestBefore, { state: 'directory' }>['files'][number][] = [];
+          let n = 0;
+          for (const f of item.before.files) {
+            n++;
+            const name = `files/${String(index).padStart(4, '0')}-${String(n).padStart(3, '0')}-${safeName(f.relPath)}`;
+            await writeFileAtomic(join(dir, ...name.split('/')), f.bytes, {
+              mode: 0o600,
+              ...writeOptions,
+            });
+            files.push({
+              relPath: f.relPath,
+              sha256: sha256Bytes(f.bytes),
+              size: f.bytes.length,
+              mode: f.mode.toString(8).padStart(4, '0'),
+              backupFile: name,
+            });
+          }
+          before = { state: 'directory', files };
         } else {
           before = item.before;
         }

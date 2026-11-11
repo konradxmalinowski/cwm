@@ -7,6 +7,13 @@ ADR 0028 (kopia jest warunkiem także dla usunięcia)
 Opiera się na: ADR 0019 (cofnięcie jako zwykła operacja zapisu)
 Źródło: ARCHITECTURE 15.1, pytanie 4; ROADMAP Etap 5, kryterium 4
 
+> Uzupełnienie (2026-11-11): raportowane sieroty to dziś wyłącznie blok aplikacji w pliku
+> instrukcji globalnej, któremu nie odpowiada żadna instrukcja w zbiorze (`PlanBuilder.orphan`
+> jest wołany tylko z `planInstructions`). Osierocone skille, agenci i komendy nie są
+> wykrywane i nie trafiają do `WritePlan.orphans` ani do widoku Synchronizacja. To znane
+> ograniczenie, w backlogu. Reszta decyzji (aplikacja niczego nie usuwa poza cofnięciem
+> operacji) obowiązuje bez zmian.
+
 ## Kontekst
 
 Wymagania żądają "jawnej polityki usuwania i potwierdzenia", ale nie mówią której. Pytanie
