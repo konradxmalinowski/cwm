@@ -297,6 +297,17 @@ Kryterium akceptacji Etapu 1 punkt 5: kazda pozycja w `package.json` ma powod.
 | `better-sqlite3` | indeks metadanych, FTS5, synchroniczne API pasujace do procesu glownego (ADR 0007)                                                                              |
 | `smol-toml`      | niezalezny parser TOML do weryfikacji semantycznej edycji `config.toml` w `SegmentTomlEditor` (ADR 0011); zapisu nie robi, wiec komentarze uzytkownika nie gina |
 
+### Fonty (pliki w `src/renderer/assets/fonts/`, ida do paczki)
+
+| Krój                                        | Zrodlo i wersja                                                                                       | Licencja                             |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| Space Grotesk (500, 700; latin i latin-ext) | `@fontsource/space-grotesk` 5.3.0, pliki bez zmian; kopiowane, nie jest to zaleznosc w `package.json` | SIL OFL 1.1, `LICENSE-space-grotesk` |
+| Source Sans 3 (400, 500, 700)               | Fontsource, pliki bez zmian                                                                           | SIL OFL 1.1, `LICENSE-source-sans-3` |
+| Commit Mono (400, latin)                    | Fontsource, pliki bez zmian                                                                           | SIL OFL 1.1, `LICENSE-commit-mono`   |
+
+Teksty licencji leza obok plikow i trafia do paczki razem z nimi (`angular.json`, glob `assets`).
+Space Grotesk zastapil poprzedni kroj naglowkowy 2026-11-11 z powodu licencji (`docs/DESIGN.md`, wpis l).
+
 ### Budowanie i testy (nie ida do paczki)
 
 | Pakiet                                                          | Powod                                                                                                                                                                    |

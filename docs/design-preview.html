@@ -6,11 +6,10 @@
 <title>Universal AI Skills Manager - system projektowy, podgląd</title>
 <meta name="description" content="Podgląd systemu projektowego aplikacji Universal AI Skills Manager: typografia, paleta, komponenty, trzy ekrany i stany.">
 
-<!-- Source Sans 3 pochodzi z Google Fonts. Cabinet Grotesk (Fontshare) i Commit Mono (jsDelivr) są w @font-face poniżej. -->
+<!-- Source Sans 3 i Space Grotesk (SIL OFL 1.1, wagi 500 i 700, latin i latin-ext) pochodzą z Google Fonts. Commit Mono (jsDelivr) jest w @font-face poniżej. -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="preconnect" href="https://cdn.fontshare.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 
 <script>
 /* Motyw ustawiany przed pierwszym malowaniem, żeby nie było błysku. */
@@ -24,25 +23,10 @@
 
 <style>
 /* ==========================================================================
-   Cabinet Grotesk (Indian Type Foundry, Fontshare, licencja ITF Free Font License:
-   darmowy także komercyjnie). Pliki woff2 z cdn.fontshare.com, wagi 500 i 700.
-   Rodzina nie ma wagi 600, więc tytuły mają 700. Sprawdzone narzędziowo:
-   pełny zestaw polskich liter (ą ć ę ł ń ó ś ź ż i wersaliki) jest w obu plikach.
-   UWAGA: adresy plików Fontshare zawierają skróty i mogą się zmienić. Wtedy
-   fallback to Source Sans 3 / system-ui, a status na stronie powie to wprost.
-   Cabinet Grotesk nie ma cyfr tabelarycznych (brak tnum), więc używamy go
-   tylko do pojedynczych liczb, nigdy do kolumn.
+   Space Grotesk (SIL OFL 1.1) ładuje się z Google Fonts (link w <head>), wagi 500 i 700.
+   Aplikacja używa tych samych plików lokalnie (src/renderer/assets/fonts). Rodzina ma
+   cyfry tabelaryczne (tnum), ale role się nie zmieniają: kolumny liczą się w Source Sans 3.
    ========================================================================== */
-@font-face {
-  font-family: "Cabinet Grotesk"; font-style: normal; font-weight: 500; font-display: swap;
-  src: local("Cabinet Grotesk Medium"), local("CabinetGrotesk-Medium"),
-       url("https://cdn.fontshare.com/wf/CKQBK2QBTCDREE7L3MXZ3PPW7LDNJCWU/OTOY7FQFSFOJVZKJWKO2EHUJLOGBDN4Q/4CO2ETY7NITKLUDKMYJ75RHJSPHOJ7XT.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Cabinet Grotesk"; font-style: normal; font-weight: 700; font-display: swap;
-  src: local("Cabinet Grotesk Bold"), local("CabinetGrotesk-Bold"),
-       url("https://cdn.fontshare.com/wf/XMXWOHABYLQDJ42L65EFRYNVRY37HQCB/B2O4O6V3JMFM2WDCYQI3A47L5U4THDUL/WN5274VQ3AUBDFP74GB4EC4XYJ3EKVNE.woff2") format("woff2");
-}
 
 /* ==========================================================================
    Commit Mono
@@ -94,7 +78,7 @@
   --on-accent: #000000;    /* etykieta na wypełnieniu cobalt-300 */
   --control-border: var(--text-muted); /* granice pól: WCAG 1.4.11 wymaga 3:1, hairline ma mniej */
 
-  --font-display: "Cabinet Grotesk", "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk", "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-sans: "Source Sans 3", system-ui, -apple-system, "Segoe UI", sans-serif;
   /* Commit Mono, a gdy się nie wczyta: FALLBACK systemowy */
   --font-mono: "Commit Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -407,7 +391,7 @@ svg.m { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-widt
 }
 .app-bar { display: flex; justify-content: space-between; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--hairline); font-size: 12px; line-height: 16px; color: var(--text-muted); }
 .app-bar .app-name { font-weight: 600; color: var(--text); }
-.app-body { display: grid; grid-template-columns: 168px minmax(0, 1fr) 280px; min-height: 560px; }
+.app-body { display: grid; grid-template-columns: 192px minmax(0, 1fr) 280px; min-height: 560px; }
 .toc { background: var(--surface); border-right: 1px solid var(--hairline); padding: var(--s5) var(--s4); }
 .toc .toc-h { font-size: 12px; line-height: 16px; color: var(--text-muted); font-weight: 500; margin-bottom: var(--s3); }
 .toc ol { font: 500 18px/28px var(--font-display); }
@@ -626,7 +610,7 @@ svg.m { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-widt
    Responsywność makiet: reagują na szerokość własnej ramki, nie okna
    ========================================================================== */
 @container app (max-width: 1000px) {
-  .app-body { grid-template-columns: 168px minmax(0, 1fr); }
+  .app-body { grid-template-columns: 192px minmax(0, 1fr); }
   .panel { grid-column: 2; border-left: 0; border-top: 1px solid var(--hairline); }
 }
 @container app (max-width: 720px) {
@@ -750,8 +734,8 @@ svg.m { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-widt
   <div class="roles">
     <div class="role">
       <p class="r-k">Grotesk, mówi</p>
-      <p class="r-n">Cabinet Grotesk</p>
-      <p class="r-s">Fontshare, darmowy komercyjnie. Zdanie otwierające, tytuły widoków, spis treści, wielkie liczby. Nic więcej.</p>
+      <p class="r-n">Space Grotesk</p>
+      <p class="r-s">SIL OFL 1.1, pliki lokalne w aplikacji. Zdanie otwierające, tytuły widoków, spis treści, wielkie liczby. Nic więcej.</p>
       <div class="spec"><span class="tag">sentence 28/36 medium</span><p class="sp-sentence">Zapis zmieni 14 plików w 2 narzędziach.</p></div>
       <div class="spec"><span class="tag">number 96/96 bold</span><p class="tnum" style="display:flex;gap:24px"><span class="sp-num">14</span><span class="sp-num zero">0</span></p></div>
       <div class="spec"><span class="tag">title 20/28 bold</span><p class="sp-title">Biblioteka skilli</p></div>
@@ -784,18 +768,18 @@ model: sonnet
   <div class="rule-box">
     <b>Status fontów na żywo</b>
     <p class="fontstatus" id="fontstatus" aria-live="polite">Sprawdzam, co się wczytało...</p>
-    <p class="meta">Cabinet Grotesk ładuje się z cdn.fontshare.com (wagi 500 i 700) i ma pełny zestaw polskich liter, sprawdzony w pliku fontu; nie ma cyfr tabelarycznych, więc służy pojedynczym liczbom, nigdy kolumnom. Commit Mono nie jest w Google Fonts. Strona próbuje go wczytać z jsDelivr (@fontsource/commit-mono 5.3.0, podzbiór latin) albo z fontu zainstalowanego lokalnie. Gdy się nie uda, widzisz fallback ui-monospace i status mówi to wprost. Polskie znaki diakrytyczne zawsze spadają do fallbacku, bo podzbiór latin ich nie zawiera.</p>
+    <p class="meta">Space Grotesk ładuje się z Google Fonts (wagi 500 i 700, latin-ext z polskimi literami) i ma cyfry tabelaryczne; role się nie zmieniają, kolumny liczą się w Source Sans 3. Commit Mono nie jest w Google Fonts. Strona próbuje go wczytać z jsDelivr (@fontsource/commit-mono 5.3.0, podzbiór latin) albo z fontu zainstalowanego lokalnie. Gdy się nie uda, widzisz fallback ui-monospace i status mówi to wprost. Polskie znaki diakrytyczne zawsze spadają do fallbacku, bo podzbiór latin ich nie zawiera.</p>
   </div>
 
   <table class="scale">
     <caption class="vh">Skala typograficzna</caption>
     <thead><tr><th>Token</th><th>px / interlinia</th><th>Font</th><th>Waga</th><th>Rola</th></tr></thead>
     <tbody>
-      <tr><td>number</td><td>96 / 96</td><td>Cabinet Grotesk</td><td>700</td><td>liczby plakatu, szeroko</td></tr>
-      <tr><td>number-compact</td><td>56 / 56</td><td>Cabinet Grotesk</td><td>700</td><td>pas liczb na małym oknie</td></tr>
-      <tr><td>sentence</td><td>28 / 36</td><td>Cabinet Grotesk</td><td>500</td><td>zdanie otwierające ekran</td></tr>
-      <tr><td>title</td><td>20 / 28</td><td>Cabinet Grotesk</td><td>700</td><td>tytuły sekcji i paneli</td></tr>
-      <tr><td>toc</td><td>18 / 28</td><td>Cabinet Grotesk</td><td>500</td><td>numerowany spis treści</td></tr>
+      <tr><td>number</td><td>96 / 96</td><td>Space Grotesk</td><td>700</td><td>liczby plakatu, szeroko</td></tr>
+      <tr><td>number-compact</td><td>56 / 56</td><td>Space Grotesk</td><td>700</td><td>pas liczb na małym oknie</td></tr>
+      <tr><td>sentence</td><td>28 / 36</td><td>Space Grotesk</td><td>500</td><td>zdanie otwierające ekran</td></tr>
+      <tr><td>title</td><td>20 / 28</td><td>Space Grotesk</td><td>700</td><td>tytuły sekcji i paneli</td></tr>
+      <tr><td>toc</td><td>18 / 28</td><td>Space Grotesk</td><td>500</td><td>numerowany spis treści</td></tr>
       <tr><td>body-raised</td><td>16 / 24</td><td>Source Sans 3</td><td>400</td><td>tekst podwyższony</td></tr>
       <tr><td>body</td><td>14 / 20</td><td>Source Sans 3</td><td>400, 500</td><td>treść, etykiety, przyciski</td></tr>
       <tr><td>meta</td><td>12 / 16</td><td>Source Sans 3</td><td>400, 500</td><td>metadane, nagłówki kolumn</td></tr>
@@ -1345,7 +1329,7 @@ model: sonnet
   /* ---------- status fontów ---------- */
   (function () {
     var out = $('#fontstatus');
-    var list = [['Cabinet Grotesk', '700 16px "Cabinet Grotesk"'], ['Source Sans 3', '400 14px "Source Sans 3"'], ['Commit Mono', '400 13px "Commit Mono"']];
+    var list = [['Space Grotesk', '700 16px "Space Grotesk"'], ['Source Sans 3', '400 14px "Source Sans 3"'], ['Commit Mono', '400 13px "Commit Mono"']];
     if (!document.fonts || !document.fonts.load) { out.textContent = 'Ta przeglądarka nie udostępnia API fontów, nie sprawdzono.'; return; }
     Promise.all(list.map(function (f) {
       return document.fonts.load(f[1], 'a').then(function (r) { return r.length > 0; }, function () { return false; });

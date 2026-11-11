@@ -1,7 +1,7 @@
 # Universal AI Skills Manager - DESIGN.md
 
 Kierunek wizualny jest zamknięty. Ten dokument opisuje wersję z **2026-10-20, po zmianie
-kierunku** (czarne tło, jeden kolor, groteskowy krój wyświetlny). Poprzednia wersja
+kierunku**, z korektą kroju z **2026-11-11** (Space Grotesk zamiast poprzedniego kroju, wpis l w Decisions Log). Czarne tło, jeden kolor, groteskowy krój wyświetlny. Poprzednia wersja
 (ciepły papier, żółć i zieleń, Newsreader) jest wycofana i zachowana tylko w Decisions
 Log. Żywa wersja jest w `docs/design-preview.html`: typografia, paleta, komponenty, trzy
 ekrany i stany na realnej treści produktu. Tokeny mają w obu plikach te same nazwy.
@@ -56,7 +56,7 @@ dzisiejsza konwencja zużyła czerwień na rzeczy rutynowe (każda usunięta lin
 diffie przestała cokolwiek znaczyć. Tu kolor oznacza plik: nadpisanie pliku
 niezarządzanego (`cobalt-200`) albo usunięcie z dysku (czerwień).
 
-**Ryzyko 2: pierwszy ekran jako plakat.** Trzy gigantyczne liczby w Cabinet Grotesk po
+**Ryzyko 2: pierwszy ekran jako plakat.** Trzy gigantyczne liczby w Space Grotesk po
 lewej (zmian, nadpisań, usunięć), obok pełne zdanie, pod spodem rejestr: wiersze po 40 px
 rozdzielone liniami, przed każdym wąski margines ze znakiem korektorskim, na dole podwójna
 linia i suma jak w rachunku. Przycisk zapisu stoi przy sumie, nie w pływającym pasku, i
@@ -95,32 +95,43 @@ Nigdy odwrotnie.**
 
 | Rola | Font | Gdzie |
 |---|---|---|
-| grotesk | **Cabinet Grotesk** (Fontshare) | zdanie otwierające ekran, tytuły głównych widoków i paneli, spis treści, wielkie liczby na plakacie. Nic więcej, poza gęstym UI |
+| grotesk | **Space Grotesk** (SIL OFL 1.1) | zdanie otwierające ekran, tytuły głównych widoków i paneli, spis treści, wielkie liczby na plakacie. Nic więcej, poza gęstym UI |
 | sans | **Source Sans 3** (Google Fonts) | nawigacja robocza, etykiety, treść, przyciski, kontrolki, metadane |
 | mono | **Commit Mono** | ścieżki, diffy, frontmatter, skróty klawiszowe, wartości przed i po |
 
-Dlaczego Cabinet Grotesk: geometryczny i lekko zwężony, ma mocne cyfry w rozmiarze
-plakatowym, a na czerni czyta się jako przyrząd pomiarowy, nie jako magazyn. Tytuły i liczby
-mają wagę 700, zdanie i spis treści 500.
+Dlaczego Space Grotesk (R-06 antislopa wymaga pisemnego uzasadnienia, bo to jeden z
+„domyślnych" krojów modeli, więc wybór musi mieć powód poza modą). Powody są cztery.
+Po pierwsze licencja: SIL OFL 1.1 pozwala dołączyć plik do publicznego repozytorium i
+zachować go w paczce, czego licencja poprzedniego kroju nie dawała (wpis l).
+Po drugie polskie znaki: pełne ą ć ę ł ń ó ś ź ż w podzbiorze latin-ext, sprawdzone w
+pliku. Po trzecie rola: to grotesk o geometrycznej konstrukcji z cyframi o wyraźnych
+kształtach (jedynka z flagą, płaska dwójka), więc liczby plakatu czytają się jako
+odczyt przyrządu, a nie jako tekst. Po czwarte tryb użycia: krój występuje tylko w pięciu
+rolach (zdanie, tytuły, spis treści, liczby), nigdy w treści, więc jego rozpoznawalność nie
+robi z interfejsu szablonu; tożsamość niosą czerń, kobalt i podział „grotesk mówi, sans
+steruje". Tytuły i liczby mają wagę 700, zdanie i spis treści 500.
 
 Wąski zakres wag: **400** dla treści, **500** dla etykiet, **600** dla tytułów w sansie. W
-groteska rolę „semibold" pełni **700**, bo rodzina nie ma wagi 600 (sprawdzone: Fontshare
-oddaje 400, 500, 700, 800 i inne, bez 600). Używamy tylko 500 i 700.
+groteska używamy tylko 500 i 700 (rodzina ma też 300, 400 i 600, ale nie są wczytywane,
+żeby nie mnożyć plików; „semibold" w groteska pełni 700).
 
 `font-variant-numeric: tabular-nums` jest włączone w kolumnach: rejestr, rachunek, tabela
-biblioteki, tabela kontrastów. **Cabinet Grotesk nie ma cyfr tabelarycznych** (w tabeli
-GSUB fontu nie ma `tnum`; cyfra 1 jest wyraźnie węższa od pozostałych), więc służy wyłącznie
-pojedynczym liczbom (plakat, suma), nigdy kolumnom. Kolumny liczą się w Source Sans 3.
+biblioteki, tabela kontrastów. **Space Grotesk ma cyfry tabelaryczne (`tnum`, sprawdzone w
+tabeli GSUB pliku `space-grotesk-latin-*-normal.woff2`: zero.tf do nine.tf)**, więc
+dawna reguła „grotesk nie ma cyfr tabelarycznych" przestaje obowiązywać. Role się nie
+zmieniają: kolumny nadal liczą się w Source Sans 3, a grotesk zostaje przy pojedynczych
+liczbach. Różnica jest tylko taka, że gdyby kolumna liczb w groteska kiedyś była
+potrzebna, `tabular-nums` zadziała.
 
 ### Skala
 
 | Token | px / interlinia | Font | Waga | Rola |
 |---|---|---|---|---|
-| `number` | 96 / 96 | Cabinet Grotesk | 700 | liczby plakatu, szerokie okno |
-| `number-compact` | 56 / 56 | Cabinet Grotesk | 700 | pas liczb nad rejestrem, wąskie okno |
-| `sentence` | 28 / 36 | Cabinet Grotesk | 500 | zdanie otwierające ekran (24 / 32 w wąskim oknie) |
-| `title` | 20 / 28 | Cabinet Grotesk | 700 | tytuły sekcji i paneli |
-| `toc` | 18 / 28 | Cabinet Grotesk | 500 | numerowany spis treści (16 / 28 gdy poziomy) |
+| `number` | 96 / 96 | Space Grotesk | 700 | liczby plakatu, szerokie okno |
+| `number-compact` | 56 / 56 | Space Grotesk | 700 | pas liczb nad rejestrem, wąskie okno |
+| `sentence` | 28 / 36 | Space Grotesk | 500 | zdanie otwierające ekran (24 / 32 w wąskim oknie) |
+| `title` | 20 / 28 | Space Grotesk | 700 | tytuły sekcji i paneli |
+| `toc` | 18 / 28 | Space Grotesk | 500 | numerowany spis treści (16 / 28 gdy poziomy) |
 | `body-raised` | 16 / 24 | Source Sans 3 | 400 | tekst podwyższony |
 | `body` | 14 / 20 | Source Sans 3 | 400, 500 | treść, etykiety, przyciski |
 | `meta` | 12 / 16 | Source Sans 3 | 400, 500 | metadane, nagłówki kolumn |
@@ -132,19 +143,15 @@ bo stała szerokość znaku sprawia, że przy równych px wygląda na większy.
 
 ### Stan faktyczny fontów, sprawdzony 2026-10-20
 
-**Cabinet Grotesk: ładuje się.** Pliki woff2 (wagi 500 i 700) idą z `cdn.fontshare.com` z
-nagłówkiem `access-control-allow-origin: *`. W Chrome `document.fonts` raportuje
-`Cabinet Grotesk 500` i `Cabinet Grotesk 700` jako `loaded`. **Polskie znaki: są.** Sprawdzone
-w samym pliku (fontTools): w obu wagach są wszystkie litery ą ć ę ł ń ó ś ź ż i ich wersaliki,
-405 glifów. Nie ma natomiast strzałki `→` (U+2192), więc w specimenie strzałka stoi tylko w
-mono. Dwie rzeczy do wiedzy:
-
-- Adresy plików Fontshare zawierają skróty i mogą się zmienić. Gdyby przestały działać,
-  stos spada do Source Sans 3 i `system-ui`, a status na stronie podglądu mówi to wprost.
-  Zamiennik z pełnym zakresem polskich znaków, gdyby kiedyś był potrzebny: Space Grotesk
-  albo Manrope z Google Fonts (oba mają latin-ext). Nie jest wybrany, tylko przewidziany.
-- Licencja Fontshare (ITF Free Font License) pozwala na użycie komercyjne, ale
-  produkcyjnie plik trzeba dołączyć lokalnie, nie ładować z CDN.
+**Space Grotesk: pliki lokalne.** Wagi 500 i 700 w podzbiorach latin i latin-ext leżą w
+`src/renderer/assets/fonts/` (12 do 13 KB każdy). Źródło: paczka npm
+`@fontsource/space-grotesk` **5.3.0**, pliki bez modyfikacji, razem z pełnym tekstem
+licencji w `LICENSE-space-grotesk` (copyright: The Space Grotesk Project Authors,
+github.com/floriankarsten/space-grotesk). `angular.json` kopiuje cały katalog
+`assets`, więc licencja trafia do zbudowanej paczki. **Polskie znaki: są** (latin-ext;
+sprawdzone fontTools). Nie ma strzałki `→` (U+2192), więc w specimenie strzałka stoi tylko
+w mono. `unicode-range` w `_fonts.scss` jest wzięty z `unicode.json` paczki, więc
+przeglądarka sięga po plik latin-ext tylko dla polskich liter.
 
 **Commit Mono: ładuje się z jsDelivr**, a nie jest fallbackiem. Nie ma go w Google Fonts, więc
 podgląd używa `@font-face` z `@fontsource/commit-mono@5.3.0` (plik
@@ -159,7 +166,7 @@ podgląd używa `@font-face` z `@fontsource/commit-mono@5.3.0` (plik
   diakrytyczne w mono spadają do fallbacku. Dlatego treść diffów w podglądzie jest po
   angielsku (tak wyglądają realne definicje agentów), a mono służy ścieżkom i kluczom.
 - **Aplikacja nie może zależeć od CDN.** Jest lokalna i ma działać offline. Wersja
-  produkcyjna musi dołączyć pełny Commit Mono (z oficjalnego wydania), Cabinet Grotesk i
+  produkcyjna musi dołączyć pełny Commit Mono (z oficjalnego wydania), Space Grotesk i
   Source Sans 3 jako pliki lokalne.
 
 ## Color
@@ -359,7 +366,7 @@ Baza 4 px. Skala: 4, 8, 12, 16, 24, 32, 48, 64 (tokeny `--s1` do `--s8`). Gęsto
 
 ## Layout
 
-Trzyczęściowa rama: **spis treści** (168 px) | **obszar roboczy** (elastyczny) | **panel
+Trzyczęściowa rama: **spis treści** (192 px) | **obszar roboczy** (elastyczny) | **panel
 szczegółu** (280 px). Wyrównanie do lewej, asymetria, **nic nie jest wyśrodkowane**.
 
 Rama reaguje na szerokość **własnego kontenera** (`container-type: inline-size`), nie
@@ -444,7 +451,7 @@ klawiatura, brak gradientów, wyrównanie do lewej.
 | 5 | Powierzchnie z tonem (`#0A0A0A`, `#141414`), bo bez gradientów i na jednolitej czerni nie ma z czego zbudować głębi | konsultacja |
 | 6 | Rampa kobaltu `cobalt-100` do `cobalt-600` i jej wersja dla jasnego motywu | konsultacja |
 | 7 | Nowa skala semantyczna: intensywność rośnie z wagą konsekwencji. `cobalt-300` akcja, `cobalt-200` nadpisanie (plus słowo, waga, pasek, tło), czerwień nieodwracalne, sukces bez koloru | konsultacja |
-| 8 | Cabinet Grotesk (Fontshare) zamiast Newsreadera, do zdania, tytułów, spisu treści i liczb. Podział ról: grotesk mówi, sans steruje, mono cytuje plik | konsultacja |
+| 8 | (wycofane 2026-11-11, patrz wpis l) Cabinet Grotesk (Fontshare) zamiast Newsreadera, do zdania, tytułów, spisu treści i liczb. Podział ról: grotesk mówi, sans steruje, mono cytuje plik | konsultacja |
 | 9 | Fokus w `cobalt-300` ze szczeliną w kolorze tła (zamiast pierścienia „w kolorze papieru") | konsultacja |
 
 ### Korekta reguły czerwieni, 2026-10-20 (obowiązuje, zastępuje brzmienie z wpisów 3, 7 i 21)
@@ -506,10 +513,29 @@ Poprawione brzmienia (zachowane w historii, nie usunięte):
 | e | Granice pól `text-muted`, nie `hairline` | `hairline` ma za mały kontrast dla WCAG 1.4.11 |
 | f | Promień 2 px na kontrolkach | kierunek przyrządu, bez zaokrągleń typowych dla kategorii |
 | g | Mono 13 px przy sansie 14 px | optyczne wyrównanie, stała szerokość znaku |
-| h | Tytuły w groteska mają wagę 700 | Cabinet Grotesk nie ma wagi 600 |
-| i | Cabinet Grotesk tylko do pojedynczych liczb | brak cyfr tabelarycznych |
+| h | (zastąpione wpisem l) Tytuły w groteska mają wagę 700 | Cabinet Grotesk nie ma wagi 600 |
+| i | (zastąpione wpisem m) Cabinet Grotesk tylko do pojedynczych liczb | brak cyfr tabelarycznych |
 | j | Zaznaczone pole wyboru wypełnione `cobalt-300` | zaznaczenie to `cobalt-300` wg nowej skali; mały element, nie duża powierzchnia |
 | k | Pozycje spisu treści bez ekranu w podglądzie (Import, Historia) są tekstem, nie linkami | brak martwych kontrolek |
+
+### Korekta kroju, 2026-11-11 (obowiązuje, zastępuje wpisy 8, h i i)
+| # | Decyzja | Powód |
+|---|---|---|
+| l | Space Grotesk (SIL OFL 1.1, `@fontsource/space-grotesk` 5.3.0) zamiast Cabinet Grotesk. Te same role, wagi 500 i 700 | licencyjny, decyzja właściciela z 2026-11-11, patrz niżej |
+| m | Reguła „grotesk nie ma cyfr tabelarycznych" przestaje obowiązywać. Role bez zmian: kolumny liczą się w Source Sans 3 | Space Grotesk ma `tnum` |
+| n | Spis treści 192 px zamiast 168 px | „5. Synchronizacja" w Space Grotesk 18 px jest szersze niż pole 136 px i dotykało krawędzi panelu; krój jest szerszy niż Cabinet Grotesk |
+
+**Powód licencyjny (wpis l).** Cabinet Grotesk jest objęty ITF Free Font License 2.0
+(Indian Type Foundry, Fontshare). Pozwala osadzić font w aplikacji, ale według odczytu
+właściciela zabrania udostępniania plików fontu przez repozytorium oraz jakiejkolwiek
+modyfikacji (subsetting, konwersja formatu). Pliki `cabinet-grotesk-500.woff2` i `-700.woff2`
+leżały w publicznym repozytorium i miały inny rozmiar niż oficjalne, więc łamały oba zakazy.
+Zewnętrzne streszczenie licencji (licenseorg.com) mówi krótko: „Fontshare fonts cannot be
+redistributed - you must direct others to download from fontshare.com". **Dosłowny cytat
+brzmienia z licencji: do uzupełnienia przez właściciela.** Strona fontshare.com/licenses/itf-ffl
+jest aplikacją JavaScript, której tekst nie dał się pobrać automatycznie, a nie zapisujemy
+w dokumencie cytatu, którego nie widzieliśmy. Historii gita nie przepisujemy; pliki są
+usunięte z drzewa roboczego od tego commita.
 
 ## Pochodzenie kierunku
 
