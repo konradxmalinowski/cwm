@@ -139,7 +139,7 @@ export async function planInstructions(
     }
   }
 
-  if (/<!--[ \t]*ai-skills-manager:(start|end)[ \t]*-->/.test(body)) {
+  if (/<!--[ \t]*(?:cwm|ai-skills-manager):(start|end)[ \t]*-->/.test(body)) {
     b.refuse(
       loaded.item,
       'Treść instrukcji zawiera znaczniki aplikacji. Wstawienie bloku w blok uszkodziłoby plik.',
@@ -203,7 +203,11 @@ export async function planInstructions(
     warnings:
       result.kind === 'appended'
         ? ['Plik nie miał znaczników aplikacji, więc blok zostanie dopisany na końcu.']
-        : [],
+        : result.kind === 'migrated'
+          ? [
+              'Blok ma stare znaczniki ai-skills-manager. Zostaną zastąpione znacznikami cwm, a treść bloku zapisana na nowo.',
+            ]
+          : [],
   });
 }
 

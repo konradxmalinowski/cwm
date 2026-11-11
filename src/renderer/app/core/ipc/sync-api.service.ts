@@ -11,7 +11,7 @@ import type {
 import type { Result } from '../../../../shared/ipc/library-contract';
 import { callBridge } from './ipc-call';
 
-/** Typowane metody nad `window.uasm.sync`. Brak handlera po stronie main wraca jako `Result` z bledem. */
+/** Typowane metody nad `window.cwm.sync`. Brak handlera po stronie main wraca jako `Result` z bledem. */
 @Injectable({ providedIn: 'root' })
 export class SyncApiService {
   status(request: SyncStatusRequest): Promise<Result<SyncStatusDto>> {

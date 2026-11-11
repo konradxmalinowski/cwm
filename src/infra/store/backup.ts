@@ -85,7 +85,8 @@ export interface ManifestEntry {
 }
 
 export interface BackupManifest {
-  readonly format: 'uasm-backup';
+  /** Zapis zawsze `cwm-backup`; kopie z v0.1.0 maja `uasm-backup` i zostaja czytelne (ADR 0035). */
+  readonly format: 'cwm-backup' | 'uasm-backup';
   readonly version: 1;
   readonly backupId: string;
   readonly createdAt: Timestamp;
@@ -211,7 +212,7 @@ export class FsBackupStore {
       }
 
       const manifest: BackupManifest = {
-        format: 'uasm-backup',
+        format: 'cwm-backup',
         version: 1,
         backupId,
         createdAt: now.toISOString(),

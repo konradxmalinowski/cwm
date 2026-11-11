@@ -1,5 +1,6 @@
 import { app } from 'electron';
 
+import type { DataMigrationInfo } from '../../../core/model/data-migration';
 import type { DiagnosticsReport, RuntimeInfo } from '../../../core/model/diagnostics';
 import type { IndexStartupInfo } from '../../../core/model/index-health';
 import { systemClock } from '../../../core/ports/clock';
@@ -29,6 +30,7 @@ export interface IndexState {
 }
 
 export interface DiagnosticsHandlerOptions {
+  readonly dataMigration?: DataMigrationInfo;
   readonly rebuild?: IndexRebuildService;
   /** Konczy sie, gdy start wypelnil indeks z plikow; raport nie pokazuje wtedy polowy odbudowy. */
   readonly startupSettled?: () => Promise<void>;
@@ -49,6 +51,7 @@ export function registerDiagnosticsHandler(
       clock: systemClock,
       appIcon: 'provided',
       stage: STAGE,
+      ...(options.dataMigration === undefined ? {} : { dataMigration: options.dataMigration }),
     });
   });
   const { rebuild } = options;

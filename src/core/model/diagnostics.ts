@@ -1,3 +1,4 @@
+import type { DataMigrationInfo } from './data-migration';
 import type { IndexStartupInfo } from './index-health';
 
 export interface DatabaseProbeOk {
@@ -46,4 +47,6 @@ export interface DiagnosticsReport {
    */
   readonly appIcon: 'placeholder' | 'provided';
   readonly stage: string;
+  /** Przeniesienie danych z v0.1.0 przy starcie (ADR 0035); brak pola znaczy, ze go nie bylo. */
+  readonly dataMigration?: DataMigrationInfo;
 }
