@@ -291,6 +291,7 @@ describe('pola zatwierdzenia skilla i komendy (SEC-04)', () => {
       mcp: [],
       settings: [],
       commands: [],
+      files: [],
     },
   };
 
