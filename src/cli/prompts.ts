@@ -42,3 +42,13 @@ export async function promptSelect<T extends string>(
   }
   return value;
 }
+
+export async function promptConfirm(message: string): Promise<boolean> {
+  const p = await clack();
+  const value = await p.confirm({ message, initialValue: false });
+  if (p.isCancel(value)) {
+    p.cancel('Przerwano.');
+    throw cancelled();
+  }
+  return value;
+}

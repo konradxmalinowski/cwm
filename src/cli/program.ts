@@ -5,6 +5,7 @@ import { Command } from 'commander';
 
 import { registerCompany } from './commands/company';
 import { registerDoctor } from './commands/doctor';
+import { registerImport } from './commands/import';
 import { registerInit } from './commands/init';
 import { registerProject } from './commands/project';
 import { registerResolve } from './commands/resolve';
@@ -38,6 +39,7 @@ export function buildProgram(): Command {
   registerProject(program);
   registerResource(program);
   registerResolve(program);
+  registerImport(program);
   registerDoctor(program);
   return program;
 }

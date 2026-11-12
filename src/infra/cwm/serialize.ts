@@ -10,10 +10,15 @@ import {
 import type { ToolId } from '../../core/model/item';
 
 /** Za kazdym razem nowy obiekt: wspolny obiekt YAML zapisalby jako alias (&a1/*a1), a aliasy sa w manifestach zabronione. */
-const emptyAssets = (): { skills: never[]; agents: never[]; workflows: never[] } => ({
+const emptyAssets = (): Record<
+  'skills' | 'agents' | 'workflows' | 'commands' | 'settings',
+  never[]
+> => ({
   skills: [],
   agents: [],
   workflows: [],
+  commands: [],
+  settings: [],
 });
 
 export function toYaml(document: unknown): string {
@@ -26,8 +31,8 @@ export function defaultGlobalConfig(engine: ToolId = 'claude-code'): GlobalConfi
     kind: 'GlobalConfig',
     defaults: { engine, projectMode: 'clean', workflowSelection: 'automatic' },
     resources: {
-      mandatory: { skills: [], agents: [] },
-      optional: { skills: [], agents: [] },
+      mandatory: { skills: [], agents: [], commands: [], settings: [] },
+      optional: { skills: [], agents: [], commands: [], settings: [] },
     },
     runtime: {
       separateCompanyConfigs: true,
@@ -47,7 +52,7 @@ export function newCompanyDocument(id: string, name: string, instructionsFile?: 
     plugins: { enable: [], forbid: [] },
     mcp: { enable: [] },
     ...(instructionsFile === undefined ? {} : { instructions: { file: instructionsFile } }),
-    exports: { skills: [], agents: [], workflows: [], plugins: [], mcp: [] },
+    exports: { ...emptyAssets(), plugins: [], mcp: [] },
   } satisfies Record<string, unknown> & { kind: CompanyManifest['kind'] };
 }
 
@@ -69,7 +74,7 @@ export function newProjectDocument(input: {
       engine: input.engine,
       resources: {
         enable: emptyAssets(),
-        disableOptional: { skills: [], agents: [] },
+        disableOptional: emptyAssets(),
       },
       plugins: { enable: [], disable: [] },
       mcp: { enable: [], disable: [] },
