@@ -20,6 +20,7 @@ Czytaj w tej kolejności, zanim zaczniesz jakąkolwiek pracę:
 - `docs/ARCHITECTURE.md` - architektura hexagonalna, cztery warstwy, granice modułów,
   model kanoniczny, kontrakt adapterów, model procesów, granica IPC, model bezpieczeństwa.
 - `docs/ROADMAP.md` - struktura katalogów, plan etapów z kryteriami akceptacji, ryzyka.
+- `docs/CLI.md` - polecenie `cwm`: komendy, układ `~/.cwm`, przykładowe manifesty, kody wyjścia.
 - `docs/adr/` - rekordy decyzji architektonicznych. Zanim zaproponujesz zmianę technologii
   albo podejścia, sprawdź, czy nie ma już ADR, który to rozstrzyga.
 - `CHANGELOG.md` - zmiany użytkownika per wydanie (Keep a Changelog, SemVer). Każda zmiana

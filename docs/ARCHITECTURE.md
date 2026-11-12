@@ -202,9 +202,21 @@ zamienia tekst YAML na dane (`parseManifestYaml`, biblioteka `yaml`, bez aliasó
 znaczników, z limitem rozmiaru), a walidator z `core` dostaje już `unknown`. Reguła zależności
 z 3.2 obowiązuje bez zmian: `core/cwm` nie importuje `yaml`.
 
-Dane CWM mają leżeć w `~/.cwm`. Stan na 2026-11-11 (gałąź `feat/cwm-core`, niescalona): model i
-resolver są w kodzie, ale nic ich nie wywołuje, nie ma odczytu `~/.cwm`, CLI, adaptera runtime ani
-lockfile. Zachowanie Claude Code, na którym ma stanąć adapter runtime, jest w ADR 0036.
+Dane CWM leżą w `~/.cwm` (`CWM_HOME` nadpisuje katalog). `src/infra/cwm` czyta je i zapisuje:
+`read.ts` (odczyt z limitem bajtów przed dekodowaniem, odmowa dowiązań wychodzących poza katalog
+danych), `registry.ts` (`FileResourceRegistry`, implementacja portu `ResourceRegistry`),
+`workspace.ts` (firmy, projekty, indeks projektów) i `writer.ts` (jedyny zapis: atomowy, tylko
+`~/.cwm` i `<projekt>/.cwm`, nigdy `.claude/`, `CLAUDE.md`, `.mcp.json`).
+
+`src/cli` jest drugim korzeniem kompozycji obok `src/main` (ADR 0038): polecenie `cwm`
+(`commander`, pytania przez `@clack/prompts`) działa bez Electrona. Widzi `core` i `infra`; lint
+(`import/no-restricted-paths`) zabrania importu między `cli` a `main`, `renderer` i `preload` oraz
+importu `cli` z `core`, `adapters` i `infra`. Opis poleceń: `docs/CLI.md`.
+
+Stan na 2026-11-12 (gałąź `feat/cwm-cli`, niescalona): CLI potrafi założyć dane, wypisać zasoby,
+złożyć konfigurację projektu (`resolve`) i sprawdzić manifesty (`doctor`). Nie ma jeszcze
+`start`, `sync`, `diff`, `run`, adaptera runtime ani lockfile, a CLI nie zapisuje do konfiguracji
+silnika. Zachowanie Claude Code, na którym ma stanąć adapter runtime, jest w ADR 0036.
 
 ### 3.3 Diagram komponentów
 
