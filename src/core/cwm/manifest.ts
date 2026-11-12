@@ -28,6 +28,16 @@ export interface GlobalConfig {
   };
 }
 
+/** Opcje uruchamiania silnika dla firmy (`cwm start`). Rozszerzenie spoza specyfikacji. */
+export interface CompanyRuntime {
+  /** Klucze izolacji od zasobow konta claude.ai w pliku `--settings`. Domyslnie true. */
+  readonly isolation: boolean;
+  /** Bezwzgledna sciezka pliku `claude`; null znaczy szukanie w `PATH`. */
+  readonly claudePath: string | null;
+  /** Nazwy zmiennych dziedziczonych mimo wzorca sekretu lub rodziny `ANTHROPIC_*`/`CLAUDE_*`. */
+  readonly envPassthrough: readonly string[];
+}
+
 export interface CompanyManifest {
   readonly apiVersion: typeof API_VERSION;
   readonly kind: 'Company';
@@ -45,6 +55,7 @@ export interface CompanyManifest {
   readonly instructions: { readonly file: string } | null;
   /** Rozszerzenie wlasciciela: zasoby dostepne do importu przez projekty innych firm. */
   readonly exports: ResourceSet;
+  readonly runtime: CompanyRuntime;
 }
 
 /** Rozszerzenie wlasciciela. `from` to id firmy zrodlowej. */

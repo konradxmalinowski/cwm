@@ -81,6 +81,21 @@ export function hasInlineCommands(text: string): boolean {
   return text.includes('!`') || /^\s*(?:`{3,}|~{3,})!/m.test(text);
 }
 
+/**
+ * Wstawki wykonywane przy wczytaniu, w calosci i w kolejnosci wystapien: `!` z poleceniem w
+ * odwrotnych apostrofach oraz bloki ogrodzone ```! (SEC-04). Ekran zatwierdzania pokazuje je bez skracania.
+ */
+export function extractInlineCommands(text: string): string[] {
+  const out: string[] = [];
+  for (const match of text.matchAll(/(?:^|[^`])!`([^`\n]+)`/g)) {
+    if (match[1] !== undefined) out.push(match[1]);
+  }
+  for (const match of text.matchAll(/^[ \t]*(`{3,}|~{3,})![^\n]*\n([\s\S]*?)\n[ \t]*\1/gm)) {
+    if (match[2] !== undefined) out.push(match[2]);
+  }
+  return out;
+}
+
 /** Klucz bez rozroznienia wielkosci liter i bez `_` oraz `-`: `Allowed_Tools` to `allowedtools`. */
 function normalizeKey(key: string): string {
   return key.toLowerCase().replace(/[_-]/g, '');
@@ -97,6 +112,10 @@ export interface ContentAnalysis {
   readonly tools: readonly string[];
   readonly model: string | null;
   readonly flags: ContentFlags;
+  /** Pelna wartosc `allowed-tools` (skill, komenda) jako lista; dla agenta pusta. */
+  readonly allowedToolsValue: readonly string[];
+  /** Wstawki `!` w calosci (SEC-04). */
+  readonly inlineSnippets: readonly string[];
   /** Klucze spoza listy dozwolonych: trafiaja do raportu, nie do zasobu. */
   readonly unknownKeys: readonly string[];
   /**
@@ -135,6 +154,12 @@ function splitTools(value: string): string[] {
   return parts.filter((part) => part !== '');
 }
 
+function toolList(value: unknown): string[] {
+  if (typeof value === 'string') return splitTools(value);
+  if (!Array.isArray(value)) return [];
+  return (value as unknown[]).flatMap((item) => (typeof item === 'string' ? splitTools(item) : []));
+}
+
 /**
  * Analiza zdekodowanego frontmattera (`null`, gdy pliku bez niego) i calej tresci pliku. Klucze
  * `hooks`, `mcpServers` i `permissionMode` oraz klucze prototypu sa bledem. Wynik niesie flagi
@@ -157,6 +182,8 @@ export function analyzeContent(
       tools: [],
       model: null,
       flags: flagsOnly(false),
+      allowedToolsValue: [],
+      inlineSnippets: extractInlineCommands(rawText),
       unknownKeys: [],
       kept: nullObject<unknown>(),
     });
@@ -209,6 +236,8 @@ export function analyzeContent(
     tools,
     model: text(map['model']),
     flags: flagsOnly(allowedTools),
+    allowedToolsValue: kind === 'agent' ? [] : toolList(map['allowed-tools']),
+    inlineSnippets: extractInlineCommands(rawText),
     unknownKeys: keys.filter((key) => !allowed.includes(key)).sort(),
   });
 }
