@@ -329,6 +329,7 @@ function build(
       mcp: resolved('mcp'),
       settings: resolved('settings'),
       commands: resolved('command'),
+      files: resolved('files'),
     },
     settings: settingsMerge.merged,
     validation: { conflicts: [], missingDependencies: [] },

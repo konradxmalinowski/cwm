@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 
+import { foldName } from '../../core/cwm';
 import { lstatOrNull } from '../fs/stat';
 import { errnoCode } from '../fs/store-error';
 
@@ -8,7 +9,7 @@ import { errnoCode } from '../fs/store-error';
 const PROTECTED_NAMES = new Set(['.claude', 'claude.md', '.mcp.json']);
 
 export function isProtectedName(segment: string): boolean {
-  return PROTECTED_NAMES.has(segment.toLowerCase());
+  return PROTECTED_NAMES.has(foldName(segment));
 }
 
 /** Pierwszy segment sciezki rowny (bez wzgledu na wielkosc liter) chronionej nazwie albo null. */

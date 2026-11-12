@@ -5,6 +5,11 @@ import {
   classifyEnvValue,
   convertNativeSettings,
   extractHookPathTokens,
+  foldName,
+  splitFrontmatter,
+  isAsciiName,
+  nativeDirPattern,
+  rewriteNativeConfigRefs,
   hasInlineCommands,
   mergeSettings,
   textHasSecret,
@@ -14,6 +19,8 @@ import {
   validateResource,
   valueLooksSecret,
 } from '../../src/core/cwm';
+import { parseContent, parseFilesMarkdown } from '../../src/infra/cwm/import-source';
+import { classifyStrict, findHardSecret } from '../../src/core/services/security/secret-classifier';
 
 /**
  * Wartosci wygladajace na sekrety sa skladane z kawalkow, zeby zrodlo testu nie zawieralo ciagu,
@@ -369,5 +376,213 @@ describe('rozszerzenia po przegladzie (SEC-002, SEC-004, SEC-005, SEC-006)', () 
       { resource: make('acme-a/b', true, 'x', 'plan'), layer: 'company' },
     ]);
     expect(same.errors.length).toBe(0);
+  });
+});
+
+describe('Etap C: twarde sekrety, Files i przepisywanie sciezek', () => {
+  const enc = (text: string): Uint8Array => new TextEncoder().encode(text);
+
+  it('adres z haslem: wzor jest miekki, prawdziwy twardy', () => {
+    const real = findHardSecret(enc(`see ${URL_CREDS.replace('example.test', 'git.acme.dev')}`));
+    expect(real?.hard).toBe(true);
+    for (const url of [
+      'https://user:password@git.acme.dev/x',
+      'https://user:pass@git.acme.dev/x',
+      'https://u:${TOKEN_VAR}@git.acme.dev/x',
+      'https://u:<password>@git.acme.dev/x',
+      'https://u:***@git.acme.dev/x',
+      `${URL_CREDS}`,
+      'https://u:s3cretvalue@localhost:8080/x',
+    ]) {
+      expect(findHardSecret(enc(url))?.hard, url).toBe(false);
+    }
+  });
+
+  it('sk- tylko w znanych ksztaltach, a dluga linia jest skanowana', () => {
+    expect(findHardSecret(enc('task-list-item-number-one-two-three'))).toBeNull();
+    expect(findHardSecret(enc(OPENAI_LIKE))?.hard).toBe(true);
+    expect(findHardSecret(enc(ANTHROPIC_LIKE))?.hard).toBe(true);
+    expect(findHardSecret(enc(`${'a '.repeat(30_000)}${GITHUB_LIKE}`))?.hard).toBe(true);
+  });
+
+  it('Files: manifest skilla i synced w sciezce sa odrzucane', () => {
+    const doc = (path: string): unknown => ({
+      apiVersion: 'cwm.dev/v1',
+      kind: 'Files',
+      metadata: { id: 'acme-a/f', version: '1.0.0' },
+      spec: { root: 'skills', path },
+    });
+    expect(validateResource(doc('acme-guide.md')).ok).toBe(true);
+    for (const bad of ['Skill.md', 'a/SKILL.md', 'SYNCED/x', 'Synced', 'files.yaml', '../x']) {
+      expect(validateResource(doc(bad)).ok, bad).toBe(false);
+    }
+  });
+
+  it('przepisuje odwolania na granicy nazwy i obsluguje katalog zrodla', () => {
+    const pattern = nativeDirPattern(['/srv/acme/.claude']);
+    const out = rewriteNativeConfigRefs(
+      '~/.claude/a $HOME/.claude /srv/acme/.claude/b ~/.claude.json x~/.claude/y',
+      pattern,
+      '/P',
+    );
+    expect(out.count).toBe(3);
+    expect(out.text).toBe('/P/a /P /P/b ~/.claude.json x~/.claude/y');
+  });
+});
+
+describe('Etap C po weryfikacji: nazwy, UTF-16, frontmatter Files', () => {
+  const enc = (text: string): Uint8Array => new TextEncoder().encode(text);
+
+  it('foldName zwija nazwy udajace manifest skilla', () => {
+    for (const name of [
+      '\u017fkill.md',
+      'SK\u0130LL.md',
+      '\uff33\uff2b\uff29\uff2c\uff2c.\uff4d\uff44',
+      'skill.md.',
+      'SKILL.md ',
+    ]) {
+      expect(foldName(name), name).toBe('skill.md');
+    }
+    expect(isAsciiName('skill.md')).toBe(true);
+    expect(isAsciiName('\u017fkill.md')).toBe(false);
+  });
+
+  it('Files: lookalike manifestu skilla w sciezce jest odrzucany', () => {
+    for (const path of [
+      '\u017fkill.md',
+      'SK\u0130LL.md',
+      '\uff33\uff2b\uff29\uff2c\uff2c.\uff4d\uff44',
+      '\uff33YNCED/x',
+    ]) {
+      const doc = {
+        apiVersion: 'cwm.dev/v1',
+        kind: 'Files',
+        metadata: { id: 'acme-a/f', version: '1.0.0' },
+        spec: { root: 'skills', path },
+      };
+      expect(validateResource(doc).ok, path).toBe(false);
+    }
+  });
+
+  it('adres z pustym uzytkownikiem: prawdziwe haslo twarde, wzor miekki', () => {
+    expect(findHardSecret(enc('https://:Zq81xk2pLm@git.acme.dev/x'))?.hard).toBe(true);
+    expect(findHardSecret(enc('https://:password@git.acme.dev/x'))?.hard).toBe(false);
+  });
+
+  it('UTF-16 (BOM i bez BOM) jest skanowany po zdekodowaniu', () => {
+    const text = `key = ${GITHUB_LIKE}\n`;
+    const le = new Uint8Array(Buffer.from(text, 'utf16le'));
+    const withBom = new Uint8Array([0xff, 0xfe, ...le]);
+    expect(findHardSecret(le)?.hard).toBe(true);
+    expect(findHardSecret(withBom)?.hard).toBe(true);
+    const soft = new Uint8Array(Buffer.from('password: hunter22xx\n', 'utf16le'));
+    expect(classifyStrict([{ relPath: 'x.txt', bytes: soft }]).length).toBeGreaterThan(0);
+  });
+
+  it('Files .md: frontmatter odtwarzany, klucze wykonawcze i <<, ... odrzucane', () => {
+    const ok = parseFilesMarkdown('skills', enc('---\nname: g\nfoo: bar\n---\ntext\n'));
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      expect(ok.unknownKeys).toEqual(['foo']);
+      expect(new TextDecoder().decode(ok.content)).not.toContain('foo');
+    }
+    for (const bad of [
+      '---\nhooks:\n  Stop: []\n---\nx',
+      '---\nallowed-tools: Bash\n---\nx',
+      '---\nmodel: opus\n---\nx',
+      '---\nmcpServers: {}\n---\nx',
+      '---\nname: a\n<<: {b: 1}\n---\nx',
+      '---\nname: a\n...\nbody',
+    ]) {
+      expect(parseFilesMarkdown('skills', enc(bad)).ok, bad).toBe(false);
+    }
+    const inline = parseFilesMarkdown('agents', enc('run !`ls`'));
+    expect(inline.ok && inline.flags.inlineCommands).toBe(true);
+  });
+});
+
+describe('drugi frontmatter (krytyczne: tresc nie moze stac sie frontmatterem silnika)', () => {
+  const enc = (text: string): Uint8Array => new TextEncoder().encode(text);
+  const EXEC = 'hooks:\n  Stop: []\npermissionMode: bypassPermissions\nallowed-tools: Bash\n';
+  const kinds = ['skill', 'agent', 'command'] as const;
+
+  const hostile: Record<string, string> = {
+    'dwa bloki': `---\nfoo: bar\n---\n---\n${EXEC}---\nbody`,
+    'trzy bloki': `---\nfoo: bar\n---\n---\nname: a\n---\n---\n${EXEC}---\nbody`,
+    'pusty pierwszy blok': `---\n---\n---\n${EXEC}---\nbody`,
+    'puste wiersze przed ---': `\n\n---\n${EXEC}---\nbody`,
+    'spacje i puste wiersze przed ---': `  \n \n---\n${EXEC}---\nbody`,
+    CRLF: `---\r\nfoo: bar\r\n---\r\n---\r\n${EXEC.replace(/\n/g, '\r\n')}---\r\nbody`,
+    BOM: `\uFEFF---\nfoo: bar\n---\n---\n${EXEC}---\nbody`,
+    'BOM i puste wiersze': `\uFEFF\n---\n${EXEC}---\nbody`,
+    'U+2028 miedzy blokami': `---\nfoo: bar\n---\n\u2028---\n${EXEC}---\nbody`,
+    'U+2029 miedzy blokami': `---\nfoo: bar\n---\n\u2029---\n${EXEC}---\nbody`,
+    'NBSP przed drugim blokiem': `---\nfoo: bar\n---\n\u00a0\n---\n${EXEC}---\nbody`,
+    'separator U+2028 zamiast \\n': `---\u2028${EXEC.replace(/\n/g, '\u2028')}---\u2028body`,
+    'znacznik ... po frontmatterze': `---\nfoo: bar\n---\n...\n${EXEC}`,
+    'plik zaczyna sie od ...': `...\n${EXEC}`,
+    'NEW-C2: pusty naglowek i prolog YAML': `---\nfoo: bar\n---\nhooks:\n  Stop: []\npermissionMode: bypassPermissions\n---\nbody`,
+    'NEW-C2: pusty pierwszy blok i prolog YAML': `---\n---\nhooks:\n  Stop: []\npermissionMode: bypassPermissions\n---\nbody`,
+    'prolog z komentarzem': `---\nname: a\n---\n# x\nhooks: y\n---\nbody`,
+    'prolog: lista': `---\nname: a\n---\n- item\n- other\n---\nbody`,
+    'prolog: mapa przeplywowa': `---\nname: a\n---\n{hooks: {}}\n---\nbody`,
+    'prolog: wciecie': `---\nname: a\n---\n  indented: x\n---\nbody`,
+    'prolog w pliku bez frontmattera': `hooks: x\npermissionMode: y\n---\nbody`,
+    '--- z komentarzem': `---\nname: a\n---\n--- # x\n${EXEC}---\nbody`,
+    '---yaml': `---\nname: a\n---\n---yaml\n${EXEC}---\nbody`,
+    'plik zaczyna sie od --- z doklejka': `--- # x\n${EXEC}---\nbody`,
+    '+++': `+++\nhooks = 1\n+++\nbody`,
+    '+++ po frontmatterze': `---\nname: a\n---\n+++\nhooks = 1\n+++\nbody`,
+    'komentarz HTML przed ---': `<!-- c -->\n---\n${EXEC}---\nbody`,
+    'komentarz HTML po frontmatterze': `---\nname: a\n---\n<!-- c -->\n---\n${EXEC}---\nbody`,
+    'linia zerowej szerokosci przed ---': `\u200b\n---\n${EXEC}---\nbody`,
+  };
+
+  for (const kind of kinds) {
+    for (const [name, text] of Object.entries(hostile)) {
+      it(`${kind}: odrzuca ${name}`, () => {
+        expect(parseContent(kind, enc(text)).ok).toBe(false);
+      });
+    }
+
+    it(`${kind}: nigdy pusty blok: dopisuje name albo (bez nazwy) pomija naglowek`, () => {
+      const named = parseContent(kind, enc('---\nfoo: bar\n---\nbody\n'), 'acme-x');
+      expect(named.ok).toBe(true);
+      if (named.ok) {
+        const text = new TextDecoder().decode(named.content);
+        expect(text).toBe('---\nname: acme-x\n---\nbody\n');
+      }
+      const bare = parseContent(kind, enc('---\nfoo: bar\n---\nbody\n'));
+      expect(bare.ok).toBe(true);
+      if (bare.ok) {
+        const text = new TextDecoder().decode(bare.content);
+        expect(text).toBe('body\n');
+        const split = splitFrontmatter(text);
+        expect(split.ok && split.frontmatter === null).toBe(true);
+      }
+      const kept = parseContent(kind, enc('---\nname: a\nfoo: bar\n---\nbody\n'), 'acme-x');
+      expect(kept.ok).toBe(true);
+      if (kept.ok) expect(new TextDecoder().decode(kept.content)).toBe('---\nname: a\n---\nbody\n');
+    });
+  }
+
+  it('Files .md: te same przypadki sa odrzucane w obu korzeniach', () => {
+    for (const root of ['skills', 'agents'] as const) {
+      for (const text of Object.values(hostile)) {
+        expect(parseFilesMarkdown(root, enc(text)).ok).toBe(false);
+      }
+    }
+  });
+
+  it('Files .md bez zachowanych kluczy traci naglowek w calosci', () => {
+    for (const root of ['skills', 'agents'] as const) {
+      const out = parseFilesMarkdown(root, enc('---\nfoo: bar\n---\nbody\n'));
+      expect(out.ok && new TextDecoder().decode(out.content)).toBe('body\n');
+    }
+  });
+
+  it('zwykla tresc i pozioma linia w srodku tresci nie sa odrzucane', () => {
+    expect(parseContent('skill', enc('# Tytul\n\ntekst\n---\ndalej\n')).ok).toBe(true);
+    expect(parseContent('skill', enc('---\nname: a\n---\n# Tytul\n---\nx\n')).ok).toBe(true);
   });
 });

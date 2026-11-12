@@ -25,7 +25,7 @@ const ALLOWED_KEYS: Record<ContentKind, readonly string[]> = {
     'when_to_use',
     'version',
   ],
-  agent: ['name', 'description', 'tools', 'model', 'color'],
+  agent: ['name', 'description', 'tools', 'model', 'color', 'memory'],
   command: [
     'name',
     'description',
@@ -35,6 +35,9 @@ const ALLOWED_KEYS: Record<ContentKind, readonly string[]> = {
     'disable-model-invocation',
   ],
 };
+
+/** Wartosci klucza `memory` agenta (pamiec trwala silnika): tylko te trafiaja do zasobu. */
+export const AGENT_MEMORY_VALUES = ['user', 'project', 'local'] as const;
 
 export type SplitResult =
   | { readonly ok: true; readonly frontmatter: string | null; readonly body: string }
@@ -74,6 +77,74 @@ export function splitFrontmatter(raw: string): SplitResult {
     position = next;
   }
   return { ok: false, message: 'Frontmatter nie jest zamkniety linia ---.' };
+}
+
+const LINE_SEPARATORS = /\r\n|[\r\n\u2028\u2029]/;
+const LEADING_BLANK = /^[\s\uFEFF\u00A0\u2028\u2029\u200B-\u200D\u2060]+/;
+const PRELUDE_WINDOW = 64 * 1024;
+/** Linia wygladajaca na YAML: `klucz: wartosc`, `- element`, wciecie, mapa/lista przeplywowa. */
+const YAMLISH = /^(?:["']?[\w ./-]+["']?\s*:(?:\s|$)|-(?:\s|$)|[{[]|\s+\S)/;
+
+/** Obcina biale znaki, znaki zerowej szerokosci i komentarze HTML sprzed pierwszej tresci. */
+function stripLead(text: string): string {
+  let current = text;
+  for (;;) {
+    const next = current.replace(LEADING_BLANK, '');
+    if (!next.startsWith('<!--')) return next;
+    const end = next.indexOf('-->');
+    if (end < 0) return next;
+    current = next.slice(end + 3);
+  }
+}
+
+const DELIMITER_MESSAGE =
+  'tresc zaczyna sie od linii --- albo ... (mozliwy drugi frontmatter silnika)';
+
+/** Wspolne reguly dla tresci, ktora parser CWM uznaje za body (po frontmatterze albo caly plik). */
+function bodyFrameProblem(body: string): string | null {
+  const stripped = stripLead(body);
+  const first = (stripped.split(LINE_SEPARATORS, 1)[0] ?? '').trim();
+  if (first === '---' || first === '...') return DELIMITER_MESSAGE;
+  if (stripped.startsWith('---') || stripped.startsWith('+++')) {
+    return 'pierwsza linia tresci zaczyna sie od --- albo +++, ale nie jest dokladnie ---';
+  }
+  // Prolog w ksztalcie YAML zakonczony linia ogranicznika: parser konczacy blok na `---` zobaczylby go
+  // jako frontmatter, mimo ze CWM go nie analizowal.
+  let yamlLines = 0;
+  for (const line of stripped.slice(0, PRELUDE_WINDOW).split(LINE_SEPARATORS)) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    if (trimmed === '---' || trimmed === '...') {
+      return yamlLines > 0
+        ? 'tresc zaczyna sie od prologu w ksztalcie YAML zakonczonego ---'
+        : null;
+    }
+    if (!YAMLISH.test(line)) return null;
+    yamlLines += 1;
+  }
+  return null;
+}
+
+/**
+ * Drugi frontmatter (IMP-04, IMP-05): po odtworzeniu pierwszego bloku silnik moglby uznac za
+ * frontmatter blok z tresci, ktorego CWM nie analizowal (`hooks`, `permissionMode`, `allowed-tools`).
+ * Powod odrzucenia, gdy tresc (po frontmatterze albo caly plik bez frontmattera wg parsera CWM), po
+ * obcieciu bialych znakow, BOM, NBSP, U+2028/2029, znakow zerowej szerokosci i komentarzy HTML:
+ * zaczyna sie od linii `---` albo `...`, od linii zaczynajacej sie `---` lub `+++` (ale nie
+ * dokladnie `---`), albo od prologu w ksztalcie YAML zakonczonego linia ogranicznika (w pierwszych
+ * 64 KiB). Plik bez frontmattera, ktory zaczyna sie od bialych znakow i `---`, jest niewidoczny dla CWM.
+ */
+export function frontmatterFrameProblem(rawText: string, split: SplitResult): string | null {
+  if (!split.ok) return null;
+  const text = rawText.charCodeAt(0) === 0xfeff ? rawText.slice(1) : rawText;
+  if (split.frontmatter === null) {
+    const problem = bodyFrameProblem(text);
+    if (problem === null) return null;
+    return stripLead(text) === text
+      ? `${problem} (niewidoczne dla parsera CWM)`
+      : `${problem} (po bialych znakach lub komentarzu: frontmatter niewidoczny dla CWM)`;
+  }
+  return bodyFrameProblem(split.body);
 }
 
 /** Wstawka polecenia wykonywana przy wczytaniu: `!` z poleceniem w odwrotnych apostrofach albo blok ```!. */
@@ -229,6 +300,15 @@ export function analyzeContent(
   const allowed = ALLOWED_KEYS[kind];
   const kept = nullObject<unknown>();
   for (const key of allowed) if (Object.hasOwn(map, key)) kept[key] = map[key];
+  const droppedKeys = new Set(keys.filter((key) => !allowed.includes(key)));
+  if (
+    kind === 'agent' &&
+    Object.hasOwn(kept, 'memory') &&
+    !(AGENT_MEMORY_VALUES as readonly unknown[]).includes(kept['memory'])
+  ) {
+    delete kept['memory'];
+    droppedKeys.add('memory');
+  }
   return ok({
     kept,
     name: text(map['name']),
@@ -238,6 +318,6 @@ export function analyzeContent(
     flags: flagsOnly(allowedTools),
     allowedToolsValue: kind === 'agent' ? [] : toolList(map['allowed-tools']),
     inlineSnippets: extractInlineCommands(rawText),
-    unknownKeys: keys.filter((key) => !allowed.includes(key)).sort(),
+    unknownKeys: [...droppedKeys].sort(),
   });
 }

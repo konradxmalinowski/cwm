@@ -10,9 +10,11 @@ import {
   listCompanyIds,
   scanClaudeSource,
   targetNamespace,
+  withIncluded,
   WriteDeniedError,
   type ImportPlan,
   type ImportTarget,
+  type PlanFlagged,
   type PlanItem,
   type ReportItem,
 } from '../../infra/cwm';
@@ -28,7 +30,7 @@ import {
   warn,
   type Context,
 } from '../context';
-import { promptConfirm, promptSelect } from '../prompts';
+import { promptConfirm, promptMultiSelect, promptSelect } from '../prompts';
 import { requireInitialized } from './shared';
 
 interface ImportOptions {
@@ -36,6 +38,7 @@ interface ImportOptions {
   readonly company?: string;
   readonly global?: boolean;
   readonly dryRun?: boolean;
+  readonly includeFlagged?: readonly string[];
 }
 
 const STATUS_LABEL = { new: 'nowy', changed: 'zmieniony', unchanged: 'bez zmian' } as const;
@@ -80,6 +83,34 @@ async function chooseTarget(ctx: Context, options: ImportOptions): Promise<Impor
   return { scope: 'company', company: await promptSelect('Firma', ids) };
 }
 
+/** `--include-flagged` wskazuje plik z planu; nieznany albo twardy sekret to blad uzycia. */
+function checkIncluded(
+  requested: readonly string[],
+  flagged: readonly { readonly path: string; readonly hard: boolean; readonly reason: string }[],
+): ReadonlySet<string> {
+  const byPath = new Map(flagged.map((f) => [f.path, f]));
+  for (const path of requested) {
+    const entry = byPath.get(path);
+    if (entry === undefined) {
+      throw usageError(
+        `--include-flagged: "${path}" nie jest oznaczonym plikiem w tym planie (sciezka wzgledem --from, zobacz --dry-run).`,
+      );
+    }
+    if (entry.hard) {
+      throw usageError(
+        `--include-flagged: "${path}" jest twardym sekretem (${entry.reason}) i nie moze byc dolaczony.`,
+      );
+    }
+  }
+  return new Set(requested);
+}
+
+function flaggedLine(entry: PlanFlagged): string {
+  const where = entry.line === null ? '' : ` (wiersz ${entry.line})`;
+  const state = entry.hard ? 'zawsze pominiety' : entry.included ? 'dolaczony' : 'pominiety';
+  return `${entry.path}${where}: ${entry.reason} [${state}]`;
+}
+
 function remarks(item: PlanItem): string {
   const parts: string[] = [];
   if (item.status === 'changed' && item.changes.length > 0) {
@@ -111,6 +142,18 @@ function renderPlan(plan: ImportPlan, from: string): void {
       print(`  ${item.id}: ${item.source} sha256:${item.sha256}`);
     }
   }
+  if (plan.flagged.length > 0) {
+    const open = plan.flagged.filter((f) => !f.hard && !f.included).length;
+    print('');
+    print(
+      `Oznaczone pliki (mozliwy sekret, ${plan.flagged.length}; do przegladu ${open}, twardych ${plan.flagged.filter((f) => f.hard).length}):`,
+    );
+    for (const entry of plan.flagged.slice(0, REPORT_LIMIT)) print(`  ${flaggedLine(entry)}`);
+    if (plan.flagged.length > REPORT_LIMIT) {
+      print(`  ... i ${plan.flagged.length - REPORT_LIMIT} wiecej (uzyj --json)`);
+    }
+    if (open > 0) print('  Dolaczenie: --include-flagged <sciezka> albo wybor na terminalu.');
+  }
   const report: ReportItem[] = [...plan.items.flatMap((item) => item.notes), ...plan.skipped];
   if (report.length > 0) {
     print('');
@@ -137,6 +180,7 @@ function planJson(plan: ImportPlan, from: string) {
       sha256: item.sha256,
     })),
     skipped: plan.skipped,
+    flagged: plan.flagged,
   };
 }
 
@@ -146,8 +190,22 @@ async function importClaude(ctx: Context, options: ImportOptions): Promise<void>
 
   const scan = await scanClaudeSource(options.from, { cwmHome: ctx.layout.home });
   if (!scan.ok) throw failure(scan.message);
-  const plan = await buildImportPlan(ctx.layout, target, scan.candidates, scan.skipped);
-  const pending = plan.items.filter((item) => item.status !== 'unchanged');
+  const build = (included: ReadonlySet<string>): Promise<ImportPlan> =>
+    buildImportPlan(
+      ctx.layout,
+      target,
+      scan.candidates.map((candidate) => withIncluded(candidate, included)),
+      scan.skipped,
+    );
+  const requested = options.includeFlagged ?? [];
+  let included = checkIncluded(
+    requested,
+    scan.candidates.flatMap((candidate) =>
+      candidate.flagged.map((f) => ({ path: f.path, hard: f.hard, reason: f.reason })),
+    ),
+  );
+  let plan = await build(included);
+  let pending = plan.items.filter((item) => item.status !== 'unchanged');
 
   if (options.dryRun === true) {
     if (ctx.json)
@@ -180,6 +238,22 @@ async function importClaude(ctx: Context, options: ImportOptions): Promise<void>
     return printJson({ ok: true, dryRun: false, written: false, ...planJson(plan, scan.from) });
   }
   renderPlan(plan, scan.from);
+
+  const choices = plan.flagged.filter((f) => !f.hard && !f.included);
+  if (choices.length > 0) {
+    print('');
+    const picked = await promptMultiSelect(
+      'Ktore oznaczone pliki dolaczyc do importu? (domyslnie zaden)',
+      choices.map((f) => ({ value: f.path, label: flaggedLine(f) })),
+    );
+    if (picked.length > 0) {
+      included = new Set([...included, ...picked]);
+      plan = await build(included);
+      pending = plan.items.filter((item) => item.status !== 'unchanged');
+      print('\nPlan po dolaczeniu wybranych plikow:');
+      renderPlan(plan, scan.from);
+    }
+  }
   if (pending.length === 0) return print('\nBrak zmian do zapisania.');
 
   const written = pending.filter((item) => item.status === 'new').length;
@@ -213,7 +287,7 @@ export function registerImport(program: Command): void {
   importCommand
     .command('claude')
     .description(
-      'Importuje skille, agentow, komendy i settings.json z katalogu Claude Code; nic nie jest uruchamiane',
+      'Importuje skille, agentow, komendy, wspolne pliki i settings.json z katalogu Claude Code; nic nie jest uruchamiane',
     )
     .option(
       '--from <katalog>',
@@ -223,6 +297,12 @@ export function registerImport(program: Command): void {
     .option(
       '--global',
       'zapisz w rejestrze wspolnym (id global/<nazwa>), widocznym dla wszystkich firm',
+    )
+    .option(
+      '--include-flagged <sciezka>',
+      'dolacz plik oznaczony jako mozliwy sekret (sciezka wzgledem --from, powtarzalne); twardych sekretow nie da sie dolaczyc',
+      (value: string, previous: string[]) => [...previous, value],
+      [],
     )
     .option('--dry-run', 'pokaz plan i raport, nic nie zapisuj')
     .action(async (options: ImportOptions, command: Command) =>

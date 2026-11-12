@@ -54,10 +54,21 @@ export interface PlanItem {
   readonly sha256: string;
 }
 
+/** Oznaczony plik w planie: powod i wiersz, bez tresci. `path` jest wzgledne wobec --from. */
+export interface PlanFlagged {
+  readonly label: string;
+  readonly path: string;
+  readonly reason: string;
+  readonly line: number | null;
+  readonly hard: boolean;
+  readonly included: boolean;
+}
+
 export interface ImportPlan {
   readonly target: ImportTarget;
   readonly items: readonly PlanItem[];
   readonly skipped: readonly ReportItem[];
+  readonly flagged: readonly PlanFlagged[];
 }
 
 const MANIFEST_KIND: Record<ImportKind, string> = {
@@ -65,6 +76,7 @@ const MANIFEST_KIND: Record<ImportKind, string> = {
   agent: 'Agent',
   command: 'Command',
   settings: 'Settings',
+  files: 'Files',
 };
 const MAX_EXISTING_FILES = IMPORT_LIMITS.skillFiles + 100;
 
@@ -87,11 +99,12 @@ function manifestDocument(candidate: Candidate, id: string): unknown {
   const metadata = { id, version: IMPORTED_VERSION };
   const base = { apiVersion: API_VERSION, kind: MANIFEST_KIND[candidate.kind], metadata };
   const contentFlags = { ...candidate.flags };
+  const native = candidate.nativeDir === undefined ? {} : { nativeDir: candidate.nativeDir };
   switch (candidate.kind) {
     case 'skill':
-      return { ...base, spec: { source: candidate.source, contentFlags } };
+      return { ...base, spec: { source: candidate.source, contentFlags, ...native } };
     case 'command':
-      return { ...base, spec: { source: candidate.source, contentFlags } };
+      return { ...base, spec: { source: candidate.source, contentFlags, ...native } };
     case 'agent':
       return {
         ...base,
@@ -100,10 +113,16 @@ function manifestDocument(candidate: Candidate, id: string): unknown {
           ...(candidate.tools.length > 0 ? { tools: [...candidate.tools] } : {}),
           ...(candidate.model === null ? {} : { model: candidate.model }),
           contentFlags,
+          ...native,
         },
       };
     case 'settings':
       return { ...base, spec: candidate.spec ?? {} };
+    case 'files':
+      return {
+        ...base,
+        spec: { root: candidate.filesSpec?.root, path: candidate.filesSpec?.path, ...native },
+      };
   }
 }
 
@@ -238,6 +257,8 @@ export async function buildImportPlan(
   }
 
   const items: PlanItem[] = [];
+  /** Oznaczone pliki pokazujemy tylko dla zasobow, ktore nie wypadly z planu z innego powodu. */
+  const reviewable = new Set<string>();
   for (const group of groups.values()) {
     const first = group[0];
     if (first === undefined) continue;
@@ -249,6 +270,15 @@ export async function buildImportPlan(
           reason: `kolizja nazw po normalizacji do "${first.name}" (${names}); zadna z nich nie jest importowana`,
         });
       }
+      continue;
+    }
+    if (first.kind !== 'settings' && first.files.length === 0) {
+      reviewable.add(first.label);
+      skipped.push({
+        item: first.label,
+        reason:
+          'brak plikow do skopiowania (pominiete albo oznaczone jako mozliwy sekret: dolacz je albo pomin)',
+      });
       continue;
     }
     const id = `${namespace}/${first.name}`;
@@ -288,6 +318,7 @@ export async function buildImportPlan(
         });
       }
     }
+    reviewable.add(first.label);
     items.push({
       kind: first.kind,
       id,
@@ -305,7 +336,19 @@ export async function buildImportPlan(
   items.sort((a, b) =>
     a.kind + a.id < b.kind + b.id ? -1 : a.kind + a.id > b.kind + b.id ? 1 : 0,
   );
-  return { target, items, skipped };
+  const flagged = candidates
+    .filter((candidate) => reviewable.has(candidate.label))
+    .flatMap((candidate) =>
+      candidate.flagged.map((f): PlanFlagged => ({
+        label: candidate.label,
+        path: f.path,
+        reason: f.reason,
+        line: f.line,
+        hard: f.hard,
+        included: f.included,
+      })),
+    );
+  return { target, items, skipped, flagged };
 }
 
 export interface ApplyResult {

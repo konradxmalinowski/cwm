@@ -35,6 +35,7 @@ export interface EffectiveConfiguration {
     readonly mcp: readonly string[];
     readonly settings: readonly string[];
     readonly commands: readonly string[];
+    readonly files: readonly string[];
   };
   /** Ustawienia scalone ze wszystkich zasobow `Settings` (hooki, uprawnienia, env). */
   readonly settings: MergedSettings;

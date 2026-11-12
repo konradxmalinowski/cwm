@@ -273,6 +273,7 @@ function renderDryRun(
       sessionConflicts: conflicts,
       warnings: report.warnings,
       notes: plan.notes,
+      rewrittenReferences: plan.summary.rewrittenReferences,
       blockers: report.blockers,
     });
     return;

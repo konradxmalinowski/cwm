@@ -2,6 +2,7 @@
 
 Status: zaakceptowane w zakresie decyzji właściciela (2026-11-12); właściciel potwierdził izolację od konta claude.ai domyślnie włączoną (opt-out `runtime.isolation: false`) i usuwanie `SSH_AUTH_SOCK` domyślnie (powrót przez `runtime.env.passthrough`); pozostałe punkty z sekcji „Do potwierdzenia przez właściciela” czekają
 Data: 2026-11-12
+Uzupełnienie: [ADR 0041](0041-import-prawdziwej-konfiguracji-pliki-wspolne-i-odwolania.md) dodaje rodzaj `Files` do profilu i przepisywanie odwołań do natywnego katalogu w kopiach zasobów
 Dotyczy: ADR 0012 (WriteGate), ADR 0020 (brak automatycznej synchronizacji MCP), ADR 0036 (zachowanie Claude Code), ADR 0037 (model zasobów), ADR 0038 (fundament CLI), ADR 0039 (Settings, Command, import)
 Źródło: plan etapów, model zagrożeń (sekcje 2, 3, 4, 5, 7, 9) i wyniki weryfikacji silnika V-01 do V-08 z 2026-11-12 (pliki w `plans/`, lokalne, poza repozytorium); kod w `src/core/cwm/{approval,canonical-json,child-env,cleanup-paths,engine-argv,runtime-config}.ts`, `src/infra/cwm/{approvals,engine-process,runtime-*}.ts`, `src/cli/commands/{start,approvals}.ts`; opis użytkowy w `docs/CLI.md`
 
@@ -202,3 +203,6 @@ wysłany do samego procesu CWM. `SIGINT` wysłany tylko do procesu CWM (bez grup
   zatrzymuje silnika, bo CWM go nie przekazuje; silnik działa dalej, a CWM czeka na jego koniec.
 - Wyścig o plik strażniczy `.lock.guard` jest znany i zapisany (akapit wyżej o strażniku starszym
   niż 10 s): okno rzędu milisekund, bez dalszego zabezpieczenia w tym kroku.
+- Treść skilla, agenta, komendy lub pliku `.md` w `Files`, która po pierwszym frontmatterze zaczyna
+  się od `---` albo `...`, jest odrzucana (drugi blok frontmattera trafiłby do silnika bez analizy).
+  Wynik odtworzenia nigdy nie ma pustego bloku frontmattera i jest sprawdzany ponownie (ADR 0041).

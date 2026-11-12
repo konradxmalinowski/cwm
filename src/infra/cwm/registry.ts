@@ -30,13 +30,14 @@ import {
   type Problem,
 } from './read';
 
-/** Rodzaje zasobow z katalogu firmy (`companies/<firma>/{skills,agents,workflows,commands,settings}`). */
+/** Rodzaje zasobow z katalogu firmy (`companies/<firma>/{skills,agents,workflows,commands,settings,files}`). */
 const COMPANY_KINDS: readonly ResourceKind[] = [
   'skill',
   'agent',
   'workflow',
   'command',
   'settings',
+  'files',
 ];
 /** Gorny limit plikow przy skanie; resolver i tak tnie konfiguracje na `MAX_RESOURCES`. */
 const MAX_SCANNED_FILES = MAX_RESOURCES * 4;

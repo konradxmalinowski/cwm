@@ -333,7 +333,14 @@ export const STRICT_LINE_RULE =
   /(?:password|passwd|secret|api[_-]?key|token|aws_secret_access_key)\s*[:=]\s*\S{4,}/i;
 
 /** Jak `classifySecrets`, plus regula `STRICT_LINE_RULE` takze dla plikow binarnych (wzorzec ASCII w bajtach). */
-export function classifyStrict(files: readonly SecretScanFile[]): SecretHit[] {
+export function classifyStrict(input: readonly SecretScanFile[]): SecretHit[] {
+  // Plik UTF-16 jest skanowany takze po zdekodowaniu (inaczej bajty zerowe chowaja tekst).
+  const files = input.flatMap((file) => {
+    const wide = utf16Text(file.bytes);
+    return wide === null
+      ? [file]
+      : [file, { relPath: file.relPath, bytes: new TextEncoder().encode(wide) }];
+  });
   const hits = classifySecrets(files);
   for (const file of files) {
     const binary = looksBinary(file.bytes);
@@ -360,4 +367,115 @@ export function classifyStrict(files: readonly SecretScanFile[]): SecretHit[] {
     }
   }
   return dedupe(hits);
+}
+
+/**
+ * Poziom wysokiej pewnosci dla importu (cwm import): sekrety, ktorych nie da sie dolaczyc nawet po
+ * przegladzie. Trafienie niesie powod i numer wiersza, nigdy wartosc. `hard: false` to adres z
+ * danymi logowania wygladajacy na wzor (user:password, ${VAR}, host example/localhost): plik jest
+ * oznaczony, ale uzytkownik moze go dolaczyc.
+ */
+export interface HardSecretHit {
+  readonly reason: string;
+  readonly line: number | null;
+  readonly hard: boolean;
+}
+
+const HARD_RULES: readonly { readonly pattern: RegExp; readonly reason: string }[] = [
+  { pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/, reason: 'blok klucza prywatnego' },
+  { pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/, reason: 'identyfikator klucza AWS' },
+  { pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}/, reason: 'klucz API sk-ant-' },
+  { pattern: /\bsk-proj-[A-Za-z0-9_-]{20,}/, reason: 'klucz API sk-proj-' },
+  { pattern: /\bsk-[A-Za-z0-9]{20,}/, reason: 'klucz API sk-' },
+  { pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}/, reason: 'token GitHub' },
+  { pattern: /\bgithub_pat_[A-Za-z0-9_]{40,}/, reason: 'osobisty token GitHub' },
+  { pattern: /\bglpat-[A-Za-z0-9_-]{20,}/, reason: 'token GitLab' },
+  { pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}/, reason: 'token Slack' },
+  {
+    pattern: /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
+    reason: 'token JWT',
+  },
+];
+
+const URL_USERINFO = /:\/\/([^/@\s:]*):([^/@\s]+)@([^/\s:?#]*)/g;
+const PLACEHOLDER_PASSWORD =
+  /^(?:password|passwd|pass|pwd|secret|changeme|your[-_a-z]*|x+|\*+|\$\{[^}]*\}|\$[A-Za-z_]\w*|<[^>]*>|\{\{[^}]*\}\}|%[^%]*%)$/i;
+const PLACEHOLDER_HOST =
+  /^(?:localhost|127\.0\.0\.1|\[::1\]|(?:[^.]+\.)*example(?:\.[a-z]+)?|.*\.(?:test|invalid|localhost|example))$/i;
+
+function urlHit(line: string): 'real' | 'placeholder' | null {
+  let found: 'real' | 'placeholder' | null = null;
+  for (const match of line.matchAll(URL_USERINFO)) {
+    const password = match[2] ?? '';
+    const host = match[3] ?? '';
+    if (PLACEHOLDER_PASSWORD.test(password) || PLACEHOLDER_HOST.test(host)) found ??= 'placeholder';
+    else return 'real';
+  }
+  return found;
+}
+
+/** Dluga linia jest skanowana oknami z nakladka, a nie pomijana (ukrycie sekretu w jednej linii). */
+const HARD_WINDOW = 20_000;
+const HARD_OVERLAP = 512;
+
+function* windows(line: string): Generator<string> {
+  if (line.length <= HARD_WINDOW) {
+    yield line;
+    return;
+  }
+  for (let start = 0; start < line.length; start += HARD_WINDOW - HARD_OVERLAP) {
+    yield line.slice(start, start + HARD_WINDOW);
+  }
+}
+
+/** Tekst UTF-16 (BOM albo naprzemienne bajty zerowe) jako tekst; null, gdy plik na to nie wyglada. */
+export function utf16Text(bytes: Uint8Array): string | null {
+  if (bytes.length < 4) return null;
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes);
+  const sample = Math.min(bytes.length, 512) & ~1;
+  let evenNul = 0;
+  let oddNul = 0;
+  for (let i = 0; i < sample; i += 2) {
+    if (bytes[i] === 0) evenNul += 1;
+    if (bytes[i + 1] === 0) oddNul += 1;
+  }
+  const pairs = sample / 2;
+  if (oddNul > pairs * 0.4 && evenNul < pairs * 0.1)
+    return new TextDecoder('utf-16le').decode(bytes);
+  if (evenNul > pairs * 0.4 && oddNul < pairs * 0.1)
+    return new TextDecoder('utf-16be').decode(bytes);
+  return null;
+}
+
+function scanHard(text: string, binary: boolean): HardSecretHit | null {
+  const lines = binary ? [text] : text.split(/\r?\n/);
+  let soft: HardSecretHit | null = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? '';
+    const lineNo = binary ? null : i + 1;
+    for (const chunk of windows(line)) {
+      for (const rule of HARD_RULES) {
+        if (rule.pattern.test(chunk)) return { reason: rule.reason, line: lineNo, hard: true };
+      }
+      const url = urlHit(chunk);
+      if (url === 'real') return { reason: 'adres z danymi logowania', line: lineNo, hard: true };
+      if (url === 'placeholder') {
+        soft ??= { reason: 'adres z danymi logowania (wzor)', line: lineNo, hard: false };
+      }
+    }
+  }
+  return soft;
+}
+
+export function findHardSecret(bytes: Uint8Array): HardSecretHit | null {
+  const wide = utf16Text(bytes);
+  if (wide !== null) {
+    const hit = scanHard(wide, false);
+    if (hit?.hard === true) return hit;
+    const rest = scanHard(new TextDecoder('latin1').decode(bytes), true);
+    return rest?.hard === true ? rest : (hit ?? rest);
+  }
+  const binary = looksBinary(bytes);
+  return scanHard(new TextDecoder(binary ? 'latin1' : 'utf-8').decode(bytes), binary);
 }

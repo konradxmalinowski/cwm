@@ -10,6 +10,7 @@ export const MANIFEST_KINDS = {
   MCP: 'mcp',
   Settings: 'settings',
   Command: 'command',
+  Files: 'files',
 } as const satisfies Record<string, ResourceKind>;
 
 /**
@@ -32,6 +33,29 @@ export interface Skill {
   readonly engines: readonly ToolId[];
   readonly dependencies: ResourceSet;
   readonly contentFlags?: ContentFlags;
+  /** Katalog natywny, z ktorego zasob zaimportowano (`realpath(--from)`): `cwm start` przepisuje odwolania do niego. */
+  readonly nativeDir?: string;
+}
+
+/** Katalogi profilu, pod ktorymi mozna umiescic wspolne pliki (rodzaj `Files`). */
+export const FILES_ROOTS = ['skills', 'agents'] as const;
+export type FilesRoot = (typeof FILES_ROOTS)[number];
+
+/**
+ * Wspolny material, ktory agenci i skille czytaja po sciezce: pliki `.md` wprost w `skills/`, katalogi
+ * `skills/<x>` bez `SKILL.md`, podkatalogi `agents/<x>`. Tresc lezy w katalogu zasobu pod ta sama
+ * sciezka wzgledna co w profilu (`<katalog zasobu>/<path>/...`), a `path` jest jej wspolnym przedrostkiem.
+ * To dane, nie polecenia: zasob nie ma pol wykonawczych i nie jest zatwierdzany, chyba ze lezy
+ * w `agents/` i ma frontmatter agenta z polami wykonawczymi (silnik czyta `agents/` rekurencyjnie).
+ */
+export interface FilesResource {
+  readonly kind: 'files';
+  readonly id: string;
+  readonly version: string;
+  readonly root: FilesRoot;
+  readonly path: string;
+  /** Katalog natywny, z ktorego zasob zaimportowano (`realpath(--from)`): `cwm start` przepisuje odwolania do niego. */
+  readonly nativeDir?: string;
 }
 
 /** Plik `.md` z `commands/`. Jak Skill, ale bez zaleznosci i bez ograniczen silnika. */
@@ -41,6 +65,8 @@ export interface Command {
   readonly version: string;
   readonly source: string;
   readonly contentFlags?: ContentFlags;
+  /** Katalog natywny, z ktorego zasob zaimportowano (`realpath(--from)`): `cwm start` przepisuje odwolania do niego. */
+  readonly nativeDir?: string;
 }
 
 export interface Agent {
@@ -57,6 +83,8 @@ export interface Agent {
   readonly tools: readonly string[];
   readonly model: string;
   readonly contentFlags?: ContentFlags;
+  /** Katalog natywny, z ktorego zasob zaimportowano (`realpath(--from)`): `cwm start` przepisuje odwolania do niego. */
+  readonly nativeDir?: string;
 }
 
 export interface WorkflowRouting {
@@ -142,6 +170,22 @@ export interface SettingsPermissions {
 /** Zmienna `Settings.env`: odwolanie do zmiennej srodowiska uzytkownika albo wartosc niebedaca sekretem. */
 export type SettingsEnvEntry = { readonly envRef: string } | { readonly value: string };
 
+/** Teksty doklejane przez silnik do commitow i opisow PR. Sprawdzane pod katem sekretow jak reguly. */
+export interface SettingsAttribution {
+  readonly commit?: string;
+  readonly pr?: string;
+}
+
+/** Ustawienia preferencji silnika bez wplywu na wykonanie kodu (typy sprawdzane przy walidacji). */
+export interface SettingsPreferences {
+  readonly theme?: string;
+  readonly tui?: string;
+  readonly voice?: { readonly enabled?: boolean; readonly mode?: string };
+  readonly voiceEnabled?: boolean;
+  readonly preferredNotifChannel?: string;
+  readonly enableWorkflows?: boolean;
+}
+
 /** Hooki, uprawnienia i zmienne srodowiska silnika. Mapy sa obiektami bez prototypu (IMP-04). */
 export interface Settings {
   readonly kind: 'settings';
@@ -152,6 +196,8 @@ export interface Settings {
   readonly env: Readonly<Record<string, SettingsEnvEntry>>;
   /** True: do pliku `--settings` (wyzszy priorytet niz projekt), false: do `settings.json` profilu. */
   readonly enforce: boolean;
+  readonly attribution?: SettingsAttribution;
+  readonly preferences?: SettingsPreferences;
 }
 
 /**
@@ -181,6 +227,8 @@ export const EXECUTION_RELEVANT_FIELDS = {
     'enforce',
     'hooks.paths.sha256',
   ],
+  /** Tylko pliki z `agents/` z frontmatterem agenta, ktory ma pola wykonawcze (`tools`, wstawki `!`). */
+  files: ['tools', 'allowed-tools', 'source.sha256'],
   /** Tylko zasoby z `contentFlags`; skrot tresci pliku zrodlowego wchodzi razem z tymi polami. */
   skill: ['tools', 'allowed-tools', 'model', 'source.sha256'],
   agent: ['tools', 'allowed-tools', 'model', 'source.sha256'],
@@ -188,7 +236,8 @@ export const EXECUTION_RELEVANT_FIELDS = {
   project: ['path.realpath', 'company'],
 } as const;
 
-export type Resource = Skill | Agent | Workflow | Plugin | McpServer | Settings | Command;
+export type Resource =
+  Skill | Agent | Workflow | Plugin | McpServer | Settings | Command | FilesResource;
 
 /** `id@wersja`, a dla MCP bez wersji samo `id` (sekcja 10 specyfikacji). */
 export function formatResource(resource: Resource): string {
@@ -208,6 +257,7 @@ export function dependenciesOf(resource: Resource): readonly ResourceRef[] {
         ...refs('workflow', d.workflows),
         ...refs('plugin', d.plugins),
         ...refs('mcp', d.mcp),
+        ...refs('files', d.files),
       ];
     }
     case 'agent':
@@ -218,6 +268,7 @@ export function dependenciesOf(resource: Resource): readonly ResourceRef[] {
     case 'mcp':
     case 'settings':
     case 'command':
+    case 'files':
       return [];
   }
 }

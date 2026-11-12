@@ -18,11 +18,20 @@ import type {
   HookCommand,
   HookGroup,
   Settings,
+  SettingsAttribution,
   SettingsEnvEntry,
   SettingsPermissions,
+  SettingsPreferences,
 } from './resource';
 
-export const SETTINGS_SPEC_FIELDS = ['hooks', 'permissions', 'env', 'enforce'] as const;
+export const SETTINGS_SPEC_FIELDS = [
+  'hooks',
+  'permissions',
+  'env',
+  'enforce',
+  'attribution',
+  'preferences',
+] as const;
 
 /**
  * Klucze natywnego `settings.json`, ktore uruchamiaja polecenia albo zmieniaja zrodla pluginow
@@ -37,6 +46,7 @@ export const SETTINGS_REJECTED_KEYS = [
   'awsAuthRefresh',
   'awsCredentialExport',
   'fileSuggestion',
+  'skipDangerousModePermissionPrompt',
 ] as const;
 
 /** Wartosci `permissions.defaultMode` znane silnikowi (`claude --help`, 2.1.322, plus `default`). */
@@ -49,6 +59,30 @@ export const PERMISSION_MODES = [
   'manual',
   'plan',
 ] as const;
+
+/**
+ * Klucze natywnego `settings.json` przyjmowane jako preferencje (nie wykonuja kodu). Teksty to
+ * krotkie nazwy trybow, `voice` ma tylko `enabled` i `mode`.
+ */
+export const PREFERENCE_TEXT_KEYS = ['theme', 'tui', 'preferredNotifChannel'] as const;
+export const PREFERENCE_FLAG_KEYS = ['voiceEnabled', 'enableWorkflows'] as const;
+export const PREFERENCE_KEYS = [...PREFERENCE_TEXT_KEYS, ...PREFERENCE_FLAG_KEYS, 'voice'] as const;
+export const VOICE_KEYS = ['enabled', 'mode'] as const;
+export const ATTRIBUTION_KEYS = ['commit', 'pr'] as const;
+export const PREFERENCE_TEXT = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+export const MAX_ATTRIBUTION_LENGTH = 2048;
+const ATTRIBUTION_CONTROL = /[^\P{Cc}\n\t]|[\p{Cf}\p{Zl}\p{Zp}]/u;
+
+/** Tekst attribution: do 2048 znakow, nowa linia i tabulator dozwolone, bez sekretu. Pusty tekst wylacza dopisek. */
+export function attributionProblem(text: string): string | null {
+  if (text.length > MAX_ATTRIBUTION_LENGTH) {
+    return `Tekst moze miec najwyzej ${MAX_ATTRIBUTION_LENGTH} znakow.`;
+  }
+  if (ATTRIBUTION_CONTROL.test(text)) return 'Tekst zawiera znaki sterujace lub formatujace.';
+  if (textHasSecret(text))
+    return 'Tekst wyglada na zawierajacy sekret (wartosc nie jest cytowana).';
+  return null;
+}
 
 export const MAX_HOOK_COMMAND_LENGTH = 4096;
 export const MIN_HOOK_TIMEOUT = 1;
@@ -63,7 +97,7 @@ export function rejectSettingsKeys(c: Checker, spec: PlainObject, base: string):
     if (Object.hasOwn(spec, key)) {
       c.add(
         childPath(base, key),
-        'Ten klucz uruchamia polecenia albo zmienia zrodla pluginow i jest zabroniony w Settings.',
+        'Ten klucz uruchamia polecenia, zmienia zrodla pluginow albo wylacza ostrzezenie bezpieczenstwa i jest zabroniony w Settings.',
       );
     }
   }
@@ -279,8 +313,75 @@ function readEnv(c: Checker, value: unknown): Record<string, SettingsEnvEntry> {
   return env;
 }
 
+function readAttribution(c: Checker, value: unknown): SettingsAttribution | null {
+  if (value === undefined) return null;
+  const obj = c.object(value, 'spec.attribution', ATTRIBUTION_KEYS);
+  if (!obj) return null;
+  const out: { commit?: string; pr?: string } = {};
+  for (const key of ATTRIBUTION_KEYS) {
+    const raw = field(obj, key);
+    if (raw === undefined) continue;
+    const path = childPath('spec.attribution', key);
+    if (typeof raw !== 'string') c.add(path, 'Oczekiwano tekstu.');
+    else {
+      const problem = attributionProblem(raw);
+      if (problem === null) out[key] = raw;
+      else c.add(path, problem);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function preferenceText(c: Checker, value: unknown, path: string): string | null {
+  return c.string(value, path, PREFERENCE_TEXT, 'krotka nazwa (litery, cyfry, _ . : -)');
+}
+
+function readVoice(c: Checker, value: unknown): { enabled?: boolean; mode?: string } | null {
+  const obj = c.object(value, 'spec.preferences.voice', VOICE_KEYS);
+  if (!obj) return null;
+  const out: { enabled?: boolean; mode?: string } = {};
+  const enabled = field(obj, 'enabled');
+  if (enabled !== undefined) {
+    const flag = c.boolean(enabled, 'spec.preferences.voice.enabled');
+    if (flag !== null) out.enabled = flag;
+  }
+  const mode = field(obj, 'mode');
+  if (mode !== undefined) {
+    const text = preferenceText(c, mode, 'spec.preferences.voice.mode');
+    if (text !== null) out.mode = text;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function readPreferences(c: Checker, value: unknown): SettingsPreferences | null {
+  if (value === undefined) return null;
+  const obj = c.object(value, 'spec.preferences', PREFERENCE_KEYS);
+  if (!obj) return null;
+  const out: Record<string, unknown> = {};
+  for (const key of PREFERENCE_TEXT_KEYS) {
+    const raw = field(obj, key);
+    if (raw === undefined) continue;
+    const text = preferenceText(c, raw, childPath('spec.preferences', key));
+    if (text !== null) out[key] = text;
+  }
+  for (const key of PREFERENCE_FLAG_KEYS) {
+    const raw = field(obj, key);
+    if (raw === undefined) continue;
+    const flag = c.boolean(raw, childPath('spec.preferences', key));
+    if (flag !== null) out[key] = flag;
+  }
+  const voiceValue = field(obj, 'voice');
+  if (voiceValue !== undefined) {
+    const voice = readVoice(c, voiceValue);
+    if (voice !== null) out['voice'] = voice;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 export function readSettings(c: Checker, spec: PlainObject, id: string, version: string): Settings {
   const enforceValue = field(spec, 'enforce');
+  const attribution = readAttribution(c, field(spec, 'attribution'));
+  const preferences = readPreferences(c, field(spec, 'preferences'));
   return {
     kind: 'settings',
     id,
@@ -290,5 +391,7 @@ export function readSettings(c: Checker, spec: PlainObject, id: string, version:
     env: readEnv(c, field(spec, 'env')),
     enforce:
       enforceValue === undefined ? false : (c.boolean(enforceValue, 'spec.enforce') ?? false),
+    ...(attribution === null ? {} : { attribution }),
+    ...(preferences === null ? {} : { preferences }),
   };
 }

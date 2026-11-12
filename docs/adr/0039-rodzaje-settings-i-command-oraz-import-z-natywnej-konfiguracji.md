@@ -2,6 +2,7 @@
 
 Status: zaakceptowane (decyzje właściciela produktu, 2026-11-12)
 Data: 2026-11-12
+Uzupełnienie: [ADR 0041](0041-import-prawdziwej-konfiguracji-pliki-wspolne-i-odwolania.md) zmienia IMP-01 (dowiązania wewnątrz `--from`), IMP-03 (przegląd plików oznaczonych) i zakres kluczy `settings.json` (pkt 5)
 Dotyczy: ADR 0012 (WriteGate jako jedyna droga zapisu), ADR 0020 (brak automatycznej synchronizacji MCP), ADR 0036 (zachowanie Claude Code), ADR 0037 (model zasobów i resolver), ADR 0038 (fundament CLI)
 Źródło: plan etapów, model zagrożeń i wyniki weryfikacji silnika z 2026-11-12 (pliki w `plans/`, lokalne, poza repozytorium); kod w `src/core/cwm`, `src/infra/cwm/import-*.ts`, `src/infra/cwm/hook-pins.ts`, `src/cli/commands/import.ts`; opis użytkowy w `docs/CLI.md`
 

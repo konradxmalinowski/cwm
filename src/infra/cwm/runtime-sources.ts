@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs';
 import { realpath, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
+import { foldName } from '../../core/cwm';
 import { isPathInside } from '../../core/model/path-containment';
 import { readChecked } from '../fs/bounded-read';
 import { lstatLoose } from './paths';
@@ -72,7 +73,7 @@ export async function readTree(
         continue;
       }
       if (!entry.isFile()) return { ok: false, message: `nie jest zwyklym plikiem: ${rel}` };
-      const folded = rel.normalize('NFC').toLowerCase();
+      const folded = rel.split('/').map(foldName).join('/');
       if (seen.has(folded)) return { ok: false, message: `kolizja wielkosci liter: ${rel}` };
       seen.add(folded);
       if (files.length >= TREE_LIMITS.files) return { ok: false, message: 'wiecej niz 500 plikow' };

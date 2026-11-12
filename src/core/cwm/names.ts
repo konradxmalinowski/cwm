@@ -28,3 +28,23 @@ export function normalizeResourceName(raw: string): NameResult {
   }
   return { ok: true, name, changed: name !== raw };
 }
+
+/**
+ * Jedno zwiniecie nazw dla kazdego porownania, ktore pilnuje granicy (manifest skilla, `synced`,
+ * chronione nazwy, ukryte wpisy, kolizje): NFKC, male litery, bez znakow laczacych i bez koncowych
+ * kropek oraz spacji (Windows i APFS traktuja je jak te same nazwy). `ſkill.md`, `SKİLL.md`,
+ * `ＳＫＩＬＬ.ｍｄ` i `skill.md.` zwijaja sie do `skill.md`.
+ */
+export function foldName(name: string): string {
+  return name
+    .normalize('NFKC')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/\p{M}+/gu, '')
+    .replace(/[. ]+$/, '');
+}
+
+/** Nazwa pliku albo katalogu z samych znakow ASCII (konfiguracja wlasciciela jest ASCII). */
+export function isAsciiName(name: string): boolean {
+  return /^[\x20-\x7e]+$/.test(name);
+}

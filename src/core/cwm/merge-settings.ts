@@ -1,5 +1,11 @@
 import { compareStrings, type ValidationError } from './errors';
-import type { HookGroup, Settings, SettingsEnvEntry } from './resource';
+import type {
+  HookGroup,
+  Settings,
+  SettingsAttribution,
+  SettingsEnvEntry,
+  SettingsPreferences,
+} from './resource';
 import { nullObject } from './safe-keys';
 
 /** Warstwa, z ktorej zasob trafil do konfiguracji; od niej zalezy kolejnosc hookow. */
@@ -17,6 +23,10 @@ export interface SettingsBundle {
     readonly additionalDirectories: readonly string[];
   };
   readonly env: Readonly<Record<string, SettingsEnvEntry>>;
+  /** Teksty doklejane do commitow i PR; ten sam klucz o roznych wartosciach to konflikt, jak `env`. */
+  readonly attribution?: SettingsAttribution;
+  /** Preferencje silnika; ta sama zasada konfliktow. */
+  readonly preferences?: SettingsPreferences;
   /** Id scalonych zasobow w kolejnosci scalania. */
   readonly sources: readonly string[];
 }
@@ -38,12 +48,59 @@ const sortedUnion = (lists: readonly (readonly string[])[]): string[] =>
 const sameEntry = (a: SettingsEnvEntry, b: SettingsEnvEntry): boolean =>
   'envRef' in a ? 'envRef' in b && a.envRef === b.envRef : 'value' in b && a.value === b.value;
 
+type FlatValue = string | boolean;
+
+/** `attribution.commit`, `preferences.theme`, `preferences.voice.mode`: jedna plaska mapa do porownan. */
+function flatten(
+  attribution: SettingsAttribution | undefined,
+  preferences: SettingsPreferences | undefined,
+): Map<string, FlatValue> {
+  const out = new Map<string, FlatValue>();
+  for (const [key, value] of Object.entries(attribution ?? {})) {
+    if (typeof value === 'string') out.set(`attribution.${key}`, value);
+  }
+  for (const [key, value] of Object.entries(preferences ?? {})) {
+    if (key === 'voice' && typeof value === 'object' && value !== null) {
+      for (const [sub, inner] of Object.entries(value as Record<string, FlatValue>)) {
+        out.set(`preferences.voice.${sub}`, inner);
+      }
+    } else if (typeof value === 'string' || typeof value === 'boolean') {
+      out.set(`preferences.${key}`, value);
+    }
+  }
+  return out;
+}
+
+function unflatten(flat: ReadonlyMap<string, FlatValue>): {
+  attribution?: SettingsAttribution;
+  preferences?: SettingsPreferences;
+} {
+  const attribution: Record<string, FlatValue> = {};
+  const preferences: Record<string, unknown> = {};
+  const voice: Record<string, FlatValue> = {};
+  for (const key of [...flat.keys()].sort(compareStrings)) {
+    const value = flat.get(key);
+    if (value === undefined) continue;
+    if (key.startsWith('attribution.')) attribution[key.slice('attribution.'.length)] = value;
+    else if (key.startsWith('preferences.voice.')) {
+      voice[key.slice('preferences.voice.'.length)] = value;
+    } else preferences[key.slice('preferences.'.length)] = value;
+  }
+  if (Object.keys(voice).length > 0) preferences['voice'] = voice;
+  return {
+    ...(Object.keys(attribution).length > 0 ? { attribution: attribution } : {}),
+    ...(Object.keys(preferences).length > 0 ? { preferences: preferences } : {}),
+  };
+}
+
 function mergeGroup(items: readonly Settings[], errors: ValidationError[]): SettingsBundle {
   const events = new Map<string, HookGroup[]>();
   const env = nullObject<SettingsEnvEntry>();
   const envOwner = new Map<string, string>();
   let defaultMode: string | undefined;
   let modeOwner = '';
+  const flat = new Map<string, FlatValue>();
+  const flatOwner = new Map<string, string>();
 
   for (const item of items) {
     for (const [event, groups] of Object.entries(item.hooks)) {
@@ -58,6 +115,18 @@ function mergeGroup(items: readonly Settings[], errors: ValidationError[]): Sett
         errors.push({
           path: `settings:${item.id}.env.${name}`,
           message: `Zmienna ${name} ma rozne definicje w ${envOwner.get(name) ?? '?'} i ${item.id}.`,
+        });
+      }
+    }
+    for (const [key, value] of flatten(item.attribution, item.preferences)) {
+      const known = flat.get(key);
+      if (known === undefined) {
+        flat.set(key, value);
+        flatOwner.set(key, item.id);
+      } else if (known !== value) {
+        errors.push({
+          path: `settings:${item.id}.${key}`,
+          message: `Ustawienie ${key} ma rozne wartosci w ${flatOwner.get(key) ?? '?'} i ${item.id}.`,
         });
       }
     }
@@ -93,6 +162,7 @@ function mergeGroup(items: readonly Settings[], errors: ValidationError[]): Sett
       additionalDirectories: sortedUnion(items.map((i) => i.permissions.additionalDirectories)),
     },
     env: sortedEnv,
+    ...unflatten(flat),
     sources: items.map((i) => i.id),
   };
 }
@@ -126,6 +196,16 @@ export function mergeSettings(inputs: readonly SettingsInput[]): {
       errors.push({
         path: `settings.env.${name}`,
         message: `Zmienna ${name} ma rozne definicje w Settings z enforce true i false.`,
+      });
+    }
+  }
+  const regularFlat = flatten(merged.regular.attribution, merged.regular.preferences);
+  for (const [key, value] of flatten(merged.enforced.attribution, merged.enforced.preferences)) {
+    const other = regularFlat.get(key);
+    if (other !== undefined && other !== value) {
+      errors.push({
+        path: `settings.${key}`,
+        message: `Ustawienie ${key} ma rozne wartosci w Settings z enforce true i false.`,
       });
     }
   }

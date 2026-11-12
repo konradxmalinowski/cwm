@@ -9,15 +9,18 @@ import {
   companyApprovalKey,
   cwmPluginName,
   executionFields,
+  foldName,
   extractPluginExecutables,
   foreignEnvRefs,
   formatJson,
   makeSubject,
   mcpCommandIsPath,
+  nativeDirPattern,
   mcpEnvRefs,
   needsApproval,
   projectApprovalKey,
   refKey,
+  rewriteNativeConfigRefs,
   settingsEnvRefs,
   validateCleanupPath,
   type ApprovalSubject,
@@ -29,7 +32,7 @@ import {
   type ResourceFacts,
 } from '../../core/cwm';
 import { describeUnpinned, pinHookCommands } from './hook-pins';
-import { parseContent } from './import-source';
+import { parseContent, parseFilesMarkdown } from './import-source';
 import { companyDir, resourceFileName, type CwmLayout } from './layout';
 import { realpathLoose } from './paths';
 import { readTextWithin } from './read';
@@ -68,10 +71,18 @@ export interface PlanInput {
 }
 
 export interface PlanSummary {
-  readonly profile: { skills: number; agents: number; commands: number; settings: boolean };
+  readonly profile: {
+    skills: number;
+    agents: number;
+    commands: number;
+    files: number;
+    settings: boolean;
+  };
   readonly plugin: { skills: number; agents: number; commands: number };
   readonly mcp: number;
   readonly pluginDirs: number;
+  /** Odwolania do natywnego katalogu konfiguracji przepisane na sciezke profilu w kopiach zasobow. */
+  readonly rewrittenReferences: number;
 }
 
 export interface RuntimePlan {
@@ -118,19 +129,43 @@ export function planDigest(
 const stripDot = (p: string): string => (p.startsWith('./') ? p.slice(2) : p);
 const nameOf = (id: string): string => id.slice(id.indexOf('/') + 1);
 
+const foldPath = (path: string): string => path.split('/').map(foldName).join('/');
+
+/** Zbior zajetych nazw porownywanych jak sciezki w systemie plikow bez rozroznienia wielkosci liter. */
+class TakenNames extends Set<string> {
+  override has(value: string): boolean {
+    return super.has(foldPath(value));
+  }
+
+  override add(value: string): this {
+    return super.add(foldPath(value));
+  }
+}
+
 class Collector {
   readonly files = new Map<string, PlannedFile>();
   readonly errors: string[] = [];
   readonly warnings: string[] = [];
   readonly notes: string[] = [];
 
+  /** Klucz bez rozroznienia wielkosci liter i w NFC: APFS i NTFS traktuja takie sciezki jak jedna. */
   add(rel: string, bytes: Uint8Array, executable = false): void {
-    if (this.files.has(rel)) {
+    const key = foldPath(rel);
+    if (this.files.has(key)) {
       this.errors.push(`Dwa zasoby zapisywalyby ten sam plik: ${rel}.`);
       return;
     }
-    this.files.set(rel, { rel, bytes, executable, sha256: sha256Hex(bytes) });
+    this.files.set(key, { rel, bytes, executable, sha256: sha256Hex(bytes) });
   }
+}
+
+interface FilesContentFacts {
+  allowedTools: boolean;
+  readonly allowedToolsValue: string[];
+  inlineCommands: boolean;
+  readonly inlineSnippets: string[];
+  readonly tools: string[];
+  readonly model: null;
 }
 
 type Parsed = Extract<ReturnType<typeof parseContent>, { ok: true }>;
@@ -154,8 +189,9 @@ function parseOrReport(
   bytes: Uint8Array,
   label: string,
   out: Collector,
+  resourceName?: string,
 ): Parsed | null {
-  const parsed = parseContent(kind, bytes);
+  const parsed = parseContent(kind, bytes, resourceName);
   if (!parsed.ok) {
     out.errors.push(`${label}: ${parsed.reason}.`);
     return null;
@@ -228,7 +264,8 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
       makeSubject({
         ...(key === undefined ? {} : { key }),
         company: companyId,
-        kind: resource.kind as 'mcp' | 'plugin' | 'settings' | 'skill' | 'agent' | 'command',
+        kind: resource.kind as
+          'mcp' | 'plugin' | 'settings' | 'skill' | 'agent' | 'command' | 'files',
         id: resource.id,
         version: resource.version ?? null,
         fields,
@@ -238,17 +275,69 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
   };
 
   const summary = {
-    profile: { skills: 0, agents: 0, commands: 0, settings: false },
+    profile: { skills: 0, agents: 0, commands: 0, files: 0, settings: false },
     plugin: { skills: 0, agents: 0, commands: 0 },
     mcp: 0,
     pluginDirs: 0,
+    rewrittenReferences: 0,
   };
   const pluginDirs: string[] = [];
   const pluginSnapshots: string[] = [];
   const mcpServers: McpServer[] = [];
   const commandPaths: Record<string, string> = {};
   const profileNames = { skills: [] as string[], agents: [] as string[], commands: [] as string[] };
-  const taken = new Set<string>();
+  const taken = new TakenNames();
+  /** Nazwa z frontmattera decyduje o tym, ktory agent odpowiada: dwa zasoby o tej samej nazwie to blad. */
+  const agentNames = new Map<string, string>();
+  const claimAgentName = (name: string | null, source: string, inPlugin: boolean): void => {
+    if (name === null) return;
+    const key = `${inPlugin ? 'plugin' : 'profile'}:${foldName(name)}`;
+    const other = agentNames.get(key);
+    if (other !== undefined) {
+      out.errors.push(`Dwa zasoby definiuja agenta o nazwie "${name}": ${other} i ${source}.`);
+    } else agentNames.set(key, source);
+  };
+
+  // Odwolania do natywnego `~/.claude` w kopiach: sesja czyta profil, nie prawdziwy katalog natywny.
+  const nativeDir = join(input.homeDir, '.claude');
+  const homeDirs = [nativeDir, await realpathLoose(nativeDir)];
+  const patterns = new Map<string, RegExp>();
+  const patternFor = (origin: string | undefined): RegExp => {
+    const key = origin ?? '';
+    let pattern = patterns.get(key);
+    if (pattern === undefined) {
+      pattern = nativeDirPattern(origin === undefined ? homeDirs : [...homeDirs, origin]);
+      patterns.set(key, pattern);
+    }
+    return pattern;
+  };
+  const rewriter = {
+    /**
+     * Zmienione bajty i liczba odwolan (katalog domowy oraz katalog natywny zapisany w zasobie);
+     * pliki wykonywalne i nietekstowe zostaja bez zmian.
+     */
+    apply(file: TreeFile, origin?: string): { file: TreeFile; count: number } {
+      if (file.executable) return { file, count: 0 };
+      let text: string;
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(file.bytes);
+      } catch {
+        return { file, count: 0 };
+      }
+      if (text.includes('\0')) return { file, count: 0 };
+      const result = rewriteNativeConfigRefs(text, patternFor(origin), join(baseDir, 'claude'));
+      return result.count === 0
+        ? { file, count: 0 }
+        : { file: { ...file, bytes: encoder.encode(result.text) }, count: result.count };
+    },
+    note(label: string, count: number): void {
+      if (count === 0) return;
+      summary.rewrittenReferences += count;
+      out.notes.push(
+        `${label}: przepisano ${count} odwolan do natywnego katalogu konfiguracji na sciezke profilu.`,
+      );
+    },
+  };
 
   for (const entry of effective.resources) {
     const resource = entry.resource;
@@ -279,17 +368,24 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           break;
         }
         const wanted = stripDot(resource.source);
-        const main = tree.files.find((f) => f.rel === wanted);
+        let rewritten = 0;
+        const treeFiles = tree.files.map((f) => {
+          const result = rewriter.apply(f, resource.nativeDir);
+          rewritten += result.count;
+          return result.file;
+        });
+        const main = treeFiles.find((f) => f.rel === wanted);
         if (main === undefined) {
           out.errors.push(`${label}: brak pliku zrodlowego ${wanted}.`);
           break;
         }
-        const parsed = parseOrReport('skill', main.bytes, label, out);
+        const parsed = parseOrReport('skill', main.bytes, label, out, name);
         if (parsed === null) break;
-        const finals: TreeFile[] = tree.files
+        rewriter.note(label, rewritten);
+        const finals: TreeFile[] = treeFiles
           .filter((f) => f.rel !== wanted)
           .concat({ rel: 'SKILL.md', bytes: parsed.content, executable: false });
-        if (new Set(finals.map((f) => f.rel.toLowerCase())).size !== finals.length) {
+        if (new Set(finals.map((f) => foldPath(f.rel))).size !== finals.length) {
           out.errors.push(`${label}: kolizja nazwy SKILL.md w drzewie skilla.`);
           break;
         }
@@ -318,8 +414,14 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           );
           break;
         }
-        const parsed = parseOrReport(resource.kind, bytes, label, out);
+        const rewrittenSource = rewriter.apply(
+          { rel: `${name}.md`, bytes, executable: false },
+          resource.nativeDir,
+        );
+        const parsed = parseOrReport(resource.kind, rewrittenSource.file.bytes, label, out, name);
         if (parsed === null) break;
+        rewriter.note(label, rewrittenSource.count);
+        if (resource.kind === 'agent') claimAgentName(parsed.name, label, inPlugin);
         if (taken.has(`${base}/${folder}/${name}`)) {
           out.errors.push(`${label}: nazwa "${name}" jest juz zajeta przez inny zasob.`);
           break;
@@ -332,6 +434,81 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           (resource.kind === 'agent' ? profileNames.agents : profileNames.commands).push(name);
         }
         subject(resource, contentFacts(parsed, sha256Hex(parsed.content)));
+        break;
+      }
+      case 'files': {
+        if (dir === undefined) break;
+        const tree = await readTree(
+          dir,
+          (rel) => rel === resourceFileName('files') || rel === '.DS_Store',
+        );
+        if (!tree.ok) {
+          out.errors.push(`${label}: ${tree.message}.`);
+          break;
+        }
+        const own = tree.files.filter(
+          (f) => f.rel === resource.path || f.rel.startsWith(`${resource.path}/`),
+        );
+        if (own.length === 0 || own.length !== tree.files.length) {
+          out.errors.push(
+            `${label}: pliki zasobu musza lezec pod spec.path (${resource.path}) i nie moze ich brakowac.`,
+          );
+          break;
+        }
+        if (own.some((f) => foldName(f.rel.split('/').pop() ?? '') === 'skill.md')) {
+          out.errors.push(`${label}: Files nie moze zawierac manifestu skilla (skill.md).`);
+          break;
+        }
+        let rewritten = 0;
+        const finals: TreeFile[] = [];
+        const facts: FilesContentFacts = {
+          allowedTools: false,
+          allowedToolsValue: [],
+          inlineCommands: false,
+          inlineSnippets: [],
+          tools: [],
+          model: null,
+        };
+        let failed = false;
+        for (const original of own) {
+          // Files to dane: bez bitu wykonywania (0600).
+          const file: TreeFile = { ...original, executable: false };
+          const result = rewriter.apply(file, resource.nativeDir);
+          rewritten += result.count;
+          if (foldName(file.rel).endsWith('.md')) {
+            // Plik .md w skills/ albo agents/ nigdy nie zachowuje surowego frontmattera: te same
+            // reguly co Skill i Agent, tools/allowed-tools/model i hooks to odrzucenie.
+            const parsed = parseFilesMarkdown(resource.root, result.file.bytes);
+            if (!parsed.ok) {
+              out.errors.push(`${label}/${file.rel}: ${parsed.reason}.`);
+              failed = true;
+              break;
+            }
+            facts.inlineCommands ||= parsed.flags.inlineCommands;
+            facts.inlineSnippets.push(...parsed.inlineSnippets);
+            if (resource.root === 'agents')
+              claimAgentName(parsed.name, `${label}/${file.rel}`, false);
+            finals.push({ ...result.file, bytes: parsed.content });
+          } else finals.push(result.file);
+        }
+        if (failed) break;
+        const dirs = new Set(
+          finals.filter((f) => f.rel.includes('/')).map((f) => f.rel.split('/')[0] ?? ''),
+        );
+        if (resource.root === 'skills' && [...dirs].some((d) => taken.has(`claude/skills/${d}`))) {
+          out.errors.push(
+            `${label}: katalog w skills/ jest juz zajety przez skill albo inny zasob.`,
+          );
+          break;
+        }
+        if (resource.root === 'skills') for (const d of dirs) taken.add(`claude/skills/${d}`);
+        rewriter.note(label, rewritten);
+        // Dane, nie polecenia: takze zasob obowiazkowy trafia do profilu pod zwykla sciezka (bez przedrostka pluginu).
+        for (const file of finals) {
+          out.add(`claude/${resource.root}/${file.rel}`, file.bytes, false);
+        }
+        summary.profile.files += 1;
+        subject(resource, { content: facts, sourceSha256: treeSha256(finals) });
         break;
       }
       case 'settings': {
@@ -400,6 +577,12 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         break;
       }
     }
+  }
+
+  if (summary.rewrittenReferences > 0) {
+    out.notes.push(
+      `Razem przepisano ${summary.rewrittenReferences} odwolan do natywnego katalogu konfiguracji (hooki bez zmian).`,
+    );
   }
 
   const hasPluginContent = Object.values(summary.plugin).some((count) => count > 0);
