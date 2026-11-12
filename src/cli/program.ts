@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { Command } from 'commander';
 
+import { registerApprovals } from './commands/approvals';
 import { registerCompany } from './commands/company';
 import { registerDoctor } from './commands/doctor';
 import { registerImport } from './commands/import';
@@ -10,6 +11,7 @@ import { registerInit } from './commands/init';
 import { registerProject } from './commands/project';
 import { registerResolve } from './commands/resolve';
 import { registerResource } from './commands/resource';
+import { registerStart } from './commands/start';
 
 function packageVersion(): string {
   try {
@@ -25,7 +27,7 @@ export function buildProgram(): Command {
   const program = new Command('cwm');
   program
     .description(
-      'CWM: zarzadzanie konfiguracja firm i projektow (fundament, bez uruchamiania silnika)',
+      'CWM: zarzadzanie konfiguracja firm i projektow oraz uruchamianie silnika (cwm start)',
     )
     .version(packageVersion(), '-V, --version', 'wypisuje wersje')
     .helpOption('-h, --help', 'wypisuje pomoc')
@@ -40,6 +42,8 @@ export function buildProgram(): Command {
   registerResource(program);
   registerResolve(program);
   registerImport(program);
+  registerApprovals(program);
+  registerStart(program);
   registerDoctor(program);
   return program;
 }

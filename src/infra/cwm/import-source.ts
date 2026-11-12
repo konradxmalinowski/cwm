@@ -97,9 +97,12 @@ function describeProblems(errors: readonly { path: string; message: string }[]):
     .join(' ');
 }
 
-interface ParsedContent {
+export interface ParsedContent {
   readonly ok: true;
+  readonly name: string | null;
   readonly flags: Candidate['flags'];
+  readonly allowedToolsValue: readonly string[];
+  readonly inlineSnippets: readonly string[];
   readonly tools: readonly string[];
   readonly model: string | null;
   readonly unknownKeys: readonly string[];
@@ -108,7 +111,7 @@ interface ParsedContent {
 }
 
 /** Frontmatter wg IMP-04: poczatek pliku, BOM, limit 64 KiB, te same opcje YAML co manifesty. */
-function parseContent(
+export function parseContent(
   kind: ContentKind,
   bytes: Uint8Array,
 ): ParsedContent | { readonly ok: false; readonly reason: string } {
@@ -140,7 +143,17 @@ function parseContent(
     const header = Object.keys(kept).length === 0 ? '' : `---\n${toYaml(kept)}---\n`;
     content = new TextEncoder().encode(`${header}${split.body}`);
   }
-  return { ok: true, flags, tools, model, unknownKeys, content };
+  return {
+    ok: true,
+    name: analysis.value.name,
+    flags,
+    allowedToolsValue: analysis.value.allowedToolsValue,
+    inlineSnippets: analysis.value.inlineSnippets,
+    tools,
+    model,
+    unknownKeys,
+    content,
+  };
 }
 
 function sha256Of(bytes: Uint8Array): string {

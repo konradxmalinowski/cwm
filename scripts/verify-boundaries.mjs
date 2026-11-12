@@ -196,6 +196,44 @@ const cases = [
     code: "export const probe = require('node:fs');\n",
     expect: 'no-restricted-syntax',
   },
+  // SEC-16: child_process tylko z listy plikow (engine-process.ts, gitignore.ts), takze dla katalogow
+  // z prawem zapisu i takze przez require i import().
+  {
+    label: 'cli/ importuje node:child_process',
+    file: `src/cli/${PROBE}`,
+    code: "import { spawn } from 'node:child_process';\n\nexport const probe = spawn;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/ (plik spoza listy) importuje node:child_process',
+    file: `src/infra/cwm/${PROBE}`,
+    code: "import { execFile } from 'node:child_process';\n\nexport const probe = execFile;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/store/ (z prawem zapisu) importuje node:child_process',
+    file: `src/infra/store/${PROBE}`,
+    code: "import { execFile } from 'node:child_process';\n\nexport const probe = execFile;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/ laduje child_process przez require',
+    file: `src/infra/cwm/${PROBE}`,
+    code: "export const probe = require('child_process');\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'infra/store/ laduje child_process dynamicznym importem',
+    file: `src/infra/store/${PROBE}`,
+    code: "export const probe = import('node:child_process');\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'main/ importuje node:child_process',
+    file: `src/main/${PROBE}`,
+    code: "import { fork } from 'node:child_process';\n\nexport const probe = fork;\n",
+    expect: 'no-restricted-imports',
+  },
   {
     label: 'main/ laduje fs/promises dynamicznym importem',
     file: `src/main/${PROBE}`,
@@ -228,11 +266,6 @@ const passCases = [
     code: "import { renameSync } from 'node:fs';\n\nexport const probe = renameSync;\n",
   },
   {
-    label: 'dozwolone: infra/ moze uruchamiac procesy (granica dotyczy core/ i adapters/)',
-    file: `src/infra/platform/${PROBE}`,
-    code: "import { execFile } from 'node:child_process';\n\nexport const probe = execFile;\n",
-  },
-  {
     label: 'dozwolone: adapters/ uzywa slowa Function w nazwie typu i tekscie',
     file: `src/adapters/${PROBE}`,
     code: "export type FunctionLike = () => void;\nexport const probe = 'new Function';\n",
@@ -243,6 +276,9 @@ const passCases = [
     code: "import { readFile, stat } from 'node:fs/promises';\n\nexport const probe = [readFile, stat];\n",
   },
 ];
+
+// Pliki z listy procesow musza przechodzic lint, inaczej lista bylaby martwa.
+const allowedExecFiles = ['src/infra/cwm/engine-process.ts', 'src/infra/cwm/gitignore.ts'];
 
 const control = {
   label: 'proba kontrolna: czysty plik w core/ przechodzi',
@@ -294,6 +330,16 @@ for (const testCase of cases) {
     }
   } finally {
     await rm(testCase.file, { force: true });
+  }
+}
+
+for (const file of allowedExecFiles) {
+  const rules = await lint(file);
+  if (rules.length === 0) {
+    process.stdout.write(`PASS  dozwolone: ${file} uruchamia procesy\n`);
+  } else {
+    failures.push(`${file}: lint zglosil [${rules.join(', ')}]`);
+    process.stdout.write(`FAIL  ${file} -> [${rules.join(', ')}]\n`);
   }
 }
 

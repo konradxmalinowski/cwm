@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { CommanderError } from 'commander';
 
-import { WriteDeniedError } from '../infra/cwm';
+import { ApplyError, WriteDeniedError } from '../infra/cwm';
 import { PathCheckError } from '../infra/cwm';
 import { AtomicWriteError } from '../infra/fs/atomic';
 import { errnoCode } from '../infra/fs/store-error';
@@ -15,7 +15,13 @@ const COMMANDER_OK = new Set(['commander.helpDisplayed', 'commander.version']);
  * maja wlasne, kontrolowane komunikaty, reszta dostaje tylko kod errno.
  */
 function describe(error: unknown): string {
-  if (error instanceof CliError || error instanceof WriteDeniedError) return error.message;
+  if (
+    error instanceof CliError ||
+    error instanceof WriteDeniedError ||
+    error instanceof ApplyError
+  ) {
+    return error.message;
+  }
   if (error instanceof PathCheckError) return `Blad dostepu do sciezki: ${error.message}.`;
   if (error instanceof AtomicWriteError) return `Zapis odrzucony: ${error.message}`;
   return `Nieoczekiwany blad (${errnoCode(error) ?? 'nieznany'}).`;

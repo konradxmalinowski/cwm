@@ -1,11 +1,18 @@
 import { TOOL_IDS } from '../model/item';
 import { Checker, childPath, field } from './check';
 import { fail, ok, type Result } from './errors';
-import { ALL_SET_KEYS, API_VERSION, isSharedNamespace } from './kinds';
-import type { CompanyManifest, GlobalConfig, ProjectImport, ProjectManifest } from './manifest';
+import { ALL_SET_KEYS, API_VERSION, ID_SPACE_PATTERN, isSharedNamespace } from './kinds';
+import { CWM_OWNED_ENV } from './patterns';
+import { ENV_NAME_PATTERN } from './env-policy';
+import type {
+  CompanyManifest,
+  CompanyRuntime,
+  GlobalConfig,
+  ProjectImport,
+  ProjectManifest,
+} from './manifest';
 import { readBlock, readFields } from './read-set';
 
-const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const WORD_PATTERN = /^[a-z][a-z-]{0,31}$/;
 const ASSET_KEYS = ['skills', 'agents', 'workflows', 'commands', 'settings'] as const;
 const OPTIONAL_KEYS = ['skills', 'agents', 'commands', 'settings'] as const;
@@ -33,7 +40,7 @@ function readRoot(
 
 /** Id firmy: jak kazde id, ale nie moze zajmowac przestrzeni zarezerwowanej dla zrodel. */
 function companyId(c: Checker, value: unknown, path: string): string | null {
-  const id = c.string(value, path, ID_PATTERN, 'male litery, cyfry, -');
+  const id = c.string(value, path, ID_SPACE_PATTERN, 'male litery, cyfry, -');
   if (id !== null && isSharedNamespace(id)) {
     c.add(path, `Id "${id}" jest zarezerwowane i nie moze byc nazwa firmy.`);
     return null;
@@ -98,13 +105,47 @@ export function validateGlobalConfig(input: unknown): Result<GlobalConfig> {
   return c.errors.length > 0 ? fail(c.errors) : ok(value);
 }
 
+function readCompanyRuntime(c: Checker, value: unknown): CompanyRuntime {
+  const runtime =
+    value === undefined ? {} : (c.object(value, 'runtime', ['isolation', 'claude', 'env']) ?? {});
+  const isolation = field(runtime, 'isolation');
+  const claudeValue = field(runtime, 'claude');
+  const claude =
+    claudeValue === undefined ? {} : (c.object(claudeValue, 'runtime.claude', ['path']) ?? {});
+  const pathValue = field(claude, 'path');
+  let claudePath: string | null = null;
+  if (pathValue !== undefined) {
+    claudePath = c.string(pathValue, 'runtime.claude.path');
+    if (claudePath !== null && (!claudePath.startsWith('/') || claudePath.includes('..'))) {
+      c.add('runtime.claude.path', 'Sciezka ma byc bezwzgledna i bez "..".');
+      claudePath = null;
+    }
+  }
+  const envValue = field(runtime, 'env');
+  const env =
+    envValue === undefined ? {} : (c.object(envValue, 'runtime.env', ['passthrough']) ?? {});
+  const passthrough = c.list(field(env, 'passthrough'), 'runtime.env.passthrough', (el, p) => {
+    const name = c.string(el, p, ENV_NAME_PATTERN, 'NAZWA_ZMIENNEJ');
+    if (name !== null && CWM_OWNED_ENV.has(name)) {
+      c.add(p, 'Ta zmienna jest ustawiana przez CWM.');
+      return null;
+    }
+    return name;
+  });
+  return {
+    isolation: isolation === undefined ? true : (c.boolean(isolation, 'runtime.isolation') ?? true),
+    claudePath,
+    envPassthrough: passthrough,
+  };
+}
+
 export function validateCompanyManifest(input: unknown): Result<CompanyManifest> {
   const c = new Checker();
   const root = readRoot(
     c,
     input,
     'Company',
-    ['metadata', 'resources', 'plugins', 'mcp', 'instructions', 'exports'],
+    ['metadata', 'resources', 'plugins', 'mcp', 'instructions', 'exports', 'runtime'],
     ['metadata'],
   );
   if (!root) return fail(c.errors);
@@ -121,6 +162,7 @@ export function validateCompanyManifest(input: unknown): Result<CompanyManifest>
       : c.object(instructionsValue, 'instructions', ['file'], ['file']);
   const file = instructions && c.relativePath(field(instructions, 'file'), 'instructions.file');
   const exportsObj = subObject(c, field(root, 'exports'), 'exports', ALL_SET_KEYS);
+  const runtime = readCompanyRuntime(c, field(root, 'runtime'));
 
   const value: CompanyManifest = {
     apiVersion: API_VERSION,
@@ -142,6 +184,7 @@ export function validateCompanyManifest(input: unknown): Result<CompanyManifest>
     mcp: readBlock(c, field(root, 'mcp'), 'mcp', ['enable']),
     instructions: file ? { file } : null,
     exports: readFields(c, exportsObj, 'exports', ALL_SET_KEYS),
+    runtime,
   };
   return c.errors.length > 0 ? fail(c.errors) : ok(value);
 }
@@ -196,7 +239,12 @@ export function validateProjectManifest(input: unknown): Result<ProjectManifest>
     metadata: {
       id:
         (metadata &&
-          c.string(field(metadata, 'id'), 'metadata.id', ID_PATTERN, 'male litery, cyfry, -')) ||
+          c.string(
+            field(metadata, 'id'),
+            'metadata.id',
+            ID_SPACE_PATTERN,
+            'male litery, cyfry, -',
+          )) ||
         '',
       company: (metadata && companyId(c, field(metadata, 'company'), 'metadata.company')) || '',
       ...(projectPath === null ? {} : { path: projectPath }),

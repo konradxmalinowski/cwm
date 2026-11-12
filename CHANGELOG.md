@@ -25,6 +25,29 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
   do przestrzeni wspólnej (`--global`). Pokazuje plan i raport (`--dry-run`), a zapis wymaga
   potwierdzenia na terminalu. Pomija dowiązania symboliczne, pliki wyglądające na sekrety i
   frontmatter uruchamiający kod; sekrety w `env` zamienia na `envRef`; niczego nie uruchamia.
+- Polecenia `cwm start` i `cwm approvals` (gałąź `feat/cwm-run`, jeszcze niescalona; ADR 0040,
+  `docs/CLI.md`): `start` składa konfigurację projektu, wymaga zatwierdzenia zasobów z polami
+  wykonawczymi (zapamiętanego po skrócie w `~/.cwm/approvals/`), generuje profil firmy w
+  `~/.cwm/runtime/<firma>/` i uruchamia Claude Code z `CLAUDE_CONFIG_DIR` profilu, z oczyszczonym
+  środowiskiem i bez możliwości obejścia polityki przez argumenty. `--dry-run` pokazuje plan bez
+  zapisu. `approvals list` i `approvals revoke` zarządzają zatwierdzeniami i unieważniają profil.
+  Nowa opcja firmy `runtime` (`isolation`, `claude.path`, `env.passthrough`). Zatwierdzenie
+  obejmuje m.in. plik polecenia MCP i zawartość pluginów; `node:child_process` jest dozwolony tylko
+  w dwóch plikach (reguła ESLint z próbami granic).
+  - Skan pluginu `local` znajduje `hooks/hooks.json`, `.mcp.json`, `.lsp.json` i `plugin.json` bez
+    rozróżniania wielkości liter. Odwołania manifestu poza drzewo pluginu, do brakujących plików lub
+    ze złym typem oraz nieznane klucze `plugin.json` są błędami. Odwołania `hooks`, `mcpServers`,
+    `lspServers`, `commands`, `agents`, `skills` i `outputStyles` wchodzą do zatwierdzenia.
+  - Zatwierdzenie serwera MCP ma klucz `mcp:<id>@<skrót-projektu>` (katalog projektu w skrócie)
+    tylko dla polecenia-ścieżki; dla polecenia z `PATH` katalog projektu to `null` i klucz bez
+    przyrostka. Sprzątanie wpisów w `approvals` zdejmuje przyrostek. Wygenerowany `mcp.json` ma
+    bezwzględną ścieżkę polecenia po `realpath`.
+  - Zakazane podpolecenia silnika w `cwm start -- ...` obejmują aliasy (`plugins`, `upgrade`,
+    `kill` i pozostałe z `claude --help`), także gdy nie są pierwszym argumentem.
+  - Ostrzeżenia zasobów już zatwierdzonych są wypisywane przed pytaniami o zatwierdzenie.
+  - Izolacja od zasobów konta claude.ai jest domyślnie włączona (`runtime.isolation: false` ją
+    wyłącza), a `SSH_AUTH_SOCK` jest domyślnie usuwany ze środowiska silnika (powrót przez
+    `runtime.env.passthrough`).
 - Rodzaje zasobów `Settings` (hooki typu `command`, uprawnienia, zmienne `env`, `enforce`) i
   `Command` w modelu CWM (rozszerzenie specyfikacji, ADR 0039), z kluczami `commands` i `settings`
   w zbiorach zasobów oraz scalaniem wielu `Settings` w `cwm resolve`.

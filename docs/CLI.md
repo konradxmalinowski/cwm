@@ -5,14 +5,16 @@ last_updated: 2026-11-12
 `cwm` zakłada i sprawdza dane CWM w `~/.cwm`: firmy, projekty i zasoby (skille, agenci, komendy,
 workflowy, ustawienia, pluginy, serwery MCP). Składa też z nich konfigurację projektu, a
 `cwm import claude` kopiuje do rejestru skille, agentów, komendy i ustawienia z natywnego katalogu
-Claude Code. To fundament: polecenie nie uruchamia silnika, nie synchronizuje i niczego nie
-zapisuje w `.claude/`, `CLAUDE.md` ani `.mcp.json`; natywny katalog czyta tylko do odczytu.
-Decyzje i ograniczenia: [ADR 0038](adr/0038-fundament-cli-cwm.md) (fundament) i
+Claude Code. `cwm start` generuje profil firmy w `~/.cwm/runtime` i uruchamia silnik (ADR 0040);
+żadne polecenie nie zapisuje w `.claude/`, `CLAUDE.md` ani `.mcp.json`, a natywny katalog jest
+czytany tylko do odczytu.
+Decyzje i ograniczenia: [ADR 0038](adr/0038-fundament-cli-cwm.md) (fundament),
+[ADR 0040](adr/0040-zatwierdzanie-profil-i-cwm-start.md) (zatwierdzanie, profil, `cwm start`) i
 [ADR 0039](adr/0039-rodzaje-settings-i-command-oraz-import-z-natywnej-konfiguracji.md) (rodzaje
 `Settings` i `Command`, import). Model manifestów:
 [ADR 0037](adr/0037-model-zasobow-i-resolver-warstwy-cwm.md).
 
-Stan: gałąź `feat/cwm-start` (Etap A, zbudowana na `feat/cwm-cli`), niescalona do `main`.
+Stan: gałąź `feat/cwm-run` (Etap B, zbudowana na `feat/cwm-start`, czyli Etapie A), niescalona do `main`.
 
 ## Uruchomienie ze źródeł
 
@@ -61,7 +63,9 @@ cwm init
       settings/<nazwa>/settings.yaml
       workflows/<nazwa>/workflow.yaml
       projects/<id>.yaml          manifesty projektów z `--store home`
-  sources/  cache/  locks/  runtime/   zarezerwowane, na razie puste
+  approvals/<firma>.yaml          zatwierdzenia zasobów z polami wykonawczymi (tworzy `cwm start`)
+  runtime/<firma>/                profil i pliki uruchomienia (tworzy `cwm start`, zob. niżej)
+  sources/  cache/  locks/        zarezerwowane, na razie puste
 ```
 
 Katalog zasobu zawiera plik definicji i pliki, na które wskazuje `spec.source` (np. `SKILL.md`;
@@ -142,6 +146,12 @@ exports:
   settings: []
   plugins: []
   mcp: []
+runtime:                          # opcjonalne, rozszerzenie spoza specyfikacji (ADR 0040)
+  isolation: true                 # false: bez kluczy izolacji od zasobów konta claude.ai
+  claude:
+    path: /home/user/.local/bin/claude   # bezwzględna ścieżka silnika; bez niej szukanie w PATH
+  env:
+    passthrough: [ACME_HTTP_PROXY]       # dziedziczone mimo wzorca sekretu lub ANTHROPIC_*/CLAUDE_*
 ```
 
 Projekt z manifestem lokalnym, `<projekt>/.cwm/project.yaml`:
@@ -378,8 +388,8 @@ i tabulator zostają.
 | Kod | Znaczenie |
 |---|---|
 | `0` | sukces; także `-h` i `-V` |
-| `1` | błąd walidacji, polityki albo stanu na dysku (brak `cwm init`, firma już istnieje, błąd w manifeście, przerwane pytanie, nieoczekiwany błąd); dla `import claude` także zmiany do zapisania bez terminala (zob. niżej) |
-| `2` | błędne użycie: nieznane polecenie lub opcja, brak wymaganego argumentu, niepoprawne id, zła wartość `--store`, `CWM_HOME` niebezwzględny; dla `import claude` brak `--company` i `--global` bez terminala albo oba naraz |
+| `1` | błąd walidacji, polityki albo stanu na dysku (brak `cwm init`, firma już istnieje, błąd w manifeście, przerwane pytanie, nieoczekiwany błąd); dla `import claude` także zmiany do zapisania bez terminala (zob. niżej); dla `start` niezatwierdzone zasoby bez terminala, brak zmiennej `envRef`, trwająca sesja firmy z innym profilem, odmowa zatwierdzenia; po uruchomieniu silnika `start` zwraca jego kod wyjścia |
+| `2` | błędne użycie: nieznane polecenie lub opcja, brak wymaganego argumentu, niepoprawne id, zła wartość `--store`, `CWM_HOME` niebezwzględny; dla `import claude` brak `--company` i `--global` bez terminala albo oba naraz; dla `start` niedozwolone argumenty silnika po `--`, dla `approvals revoke` zły zestaw selektorów |
 
 `cwm` bez argumentów i `cwm help` wypisują pomoc, ale kończą się kodem `2`. Do pomocy z kodem `0`
 służy `-h`.
@@ -787,9 +797,141 @@ terminala, użytkownik odmówił albo zapis któregoś zasobu się nie udał; `2
 Po imporcie `cwm doctor` i `cwm resource list` widzą nowe zasoby. Z zasobem włączonym w firmie
 `cwm resolve` wypisuje jego id w `resolved.skills`, `resolved.commands` albo `resolved.settings`.
 
+### `cwm start`
+
+```text
+cwm start [--project <katalog>] [--strict-mcp] [--dry-run] [--json] [-- <argumenty silnika>]
+```
+
+Składa konfigurację projektu (jak `cwm resolve`), generuje profil firmy i uruchamia Claude Code
+w katalogu projektu. Kolejność jest wiążąca (APR-04): resolve, plan generowania w pamięci,
+skróty zatwierdzeń liczone z tych samych bajtów, zatwierdzenie, zapis dokładnie tych bajtów,
+odczyt kontrolny, `spawn`. Katalogiem silnika jest katalog projektu z manifestem (też przy
+wywołaniu z podkatalogu), nie `cwd`.
+
+**Zatwierdzenia.** Wymagają ich: każdy serwer MCP, plugin `local`, `Settings`, skill, agent i
+komenda z `allowed-tools`, `tools` albo wstawkami `!` (liczone z plików, nie z flag w manifeście)
+para (katalog projektu po `realpath`, firma, z listą zasobów włączonych przez projekt) oraz opcje
+uruchamiania firmy (`company:<id>`: `runtime.claude.path`, `env.passthrough`, `isolation`). Skrót
+obejmuje wszystkie pola wykonawcze (zob. ADR 0040): uprawnienia, `env`, hooki wraz z `sha256`
+wskazanych skryptów, dla pluginu listę plików, hooki oraz serwery MCP i LSP z jego JSON-ów i
+odwołania manifestu, dla serwera MCP z poleceniem-ścieżką plik polecenia (`realpath` i `sha256`,
+bez limitu rozmiaru), a dla skilla i komendy pełne `allowed-tools` i wstawki `!`. Polecenie MCP,
+którego nie da się przypiąć (brak pliku, dowiązanie poza projekt), przerywa start.
+
+Zatwierdzenie serwera MCP ma klucz `mcp:<id>@<skrót-projektu>` tylko wtedy, gdy `command` jest
+ścieżką (zawiera `/`): katalog projektu wchodzi wtedy do skrótu. Dla polecenia z `PATH` (`npx`,
+`node`) klucz to `mcp:<id>`, a katalog projektu w skrócie to `null`, więc zatwierdzenie obowiązuje
+w każdym projekcie. Wygenerowany `mcp.json` ma bezwzględną ścieżkę pliku polecenia po `realpath`
+(tego, który został zahaszowany).
+
+**Skanowanie pluginu `local`.** `hooks/hooks.json`, `.mcp.json`, `.lsp.json` i
+`.claude-plugin/plugin.json` są znajdowane bez rozróżniania wielkości liter. Odwołania `plugin.json`
+(`hooks`, `mcpServers`, `lspServers` jako ścieżka, lista ścieżek albo obiekt, oraz ścieżki
+`commands`, `agents`, `skills`, `outputStyles`) wchodzą do zatwierdzenia. Błędem, który przerywa
+start, jest odwołanie poza drzewo pluginu (ścieżka bezwzględna, `..`), do brakującego pliku, z
+wartością złego typu oraz nieznany klucz `plugin.json` (dozwolone poza tym tylko metadane: `name`,
+`version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`). Zawartość
+katalogów wskazanych przez `commands`, `agents`, `skills` i `outputStyles` nie jest analizowana
+(zob. ADR 0040, ryzyko szczątkowe). Zasób `mandatory` nie omija zatwierdzenia. Zatwierdzenie jest zapamiętane w
+`~/.cwm/approvals/<firma>.yaml`; każda zmiana pola wykonawczego wywołuje ponowne pytanie, z
+różnicą „było/jest” i pełnymi wartościami. Domyślna odpowiedź to „nie”. **Bez terminala** (stdin i
+stdout nie są terminalem, albo `--json`, `--no-input`) start niczego nie zatwierdza: kończy się
+kodem `1` i listą kluczy ze skrótami, chyba że wszystko jest już zatwierdzone. Nie ma `--yes`.
+Przed pytaniami `start` wypisuje ostrzeżenia planu oraz ostrzeżenia zasobów już zatwierdzonych.
+
+**Profil** (`~/.cwm/runtime/<firma>/`, tryby 700/600, właściciel musi być bieżącym użytkownikiem):
+
+```text
+claude/                      CLAUDE_CONFIG_DIR
+  settings.json              Settings bez enforce (hooki, uprawnienia, env z value)
+  CLAUDE.md                  instructions.file firmy (jeśli ustawione)
+  skills/ agents/ commands/  zasoby optional, zwykłe nazwy
+sessions/<skrót projektu>/   pliki tego uruchomienia
+  settings.json              jedyny plik --settings: Settings z enforce, klucze izolacji
+  mcp.json                   serwery MCP jako cwm-<firma>-<nazwa>, env tylko jako ${NAZWA}
+  plugin/                    plugin cwm-<firma> z zasobami mandatory (nazwy z przedrostkiem)
+plugins/<id>@<skrót>/        migawki pluginów local (kopia, nie oryginał)
+generated/manifest.json      lista plików CWM ze skrótami; sprzątanie tylko według niej
+generated/prev/              kopia plików sprzed ostatniej zmiany
+tmp/                         CLAUDE_CODE_TMPDIR
+active/<pid>.json            znaczniki trwających sesji (blokada profilu)
+```
+
+Zasoby `mandatory` trafiają do pluginu przekazanego przez `--plugin-dir`, więc projekt nie może
+ich zasłonić. Zasoby `optional` mają zwykłe nazwy; kolizja z natywnym `.claude/` projektu (cwd,
+katalogi nadrzędne do korzenia repozytorium, `--add-dir`, dwa poziomy w głąb) daje ostrzeżenie.
+CWM nie zapisuje `.claude.json` ani innych plików silnika i usuwa tylko pliki z własnego manifestu,
+których skrót się zgadza. `settings.json` profilu zmieniony przez silnik jest zastępowany z kopią w
+`generated/prev/` i ostrzeżeniem z nazwami zmienionych kluczy. Plik istniejący w profilu, a nie
+pochodzący z CWM (poza `settings.json`), przerywa start.
+
+**Blokada.** Gdy trwa sesja tej firmy (znacznik `active/`, żywy PID CWM albo silnika) z innym
+profilem, start odmawia: silnik przeładowuje `settings.json` profilu na żywo (V-03). Ten sam profil: start bez
+regeneracji. Pliki `sessions/` są niezmienne w trakcie sesji, bo `--settings` jest czytany raz.
+
+**Silnik.** Ścieżka z `runtime.claude.path` albo z bezwzględnych elementów `PATH` (po `realpath`,
+właściciel root lub bieżący użytkownik, bez zapisu dla grupy i innych, poza katalogiem projektu).
+Uruchomienie: `shell: false`, `stdio: inherit`, `SIGTERM` przekazany dziecku (SIGINT i SIGHUP
+dziecko dostaje samo z terminala), kod wyjścia przekazany dalej (sygnał to 128+n). Środowisko dziecka nie jest
+`process.env`: bez `envRef` innych firm, nazw wyglądających na sekret i rodziny
+`ANTHROPIC_*`/`CLAUDE_*` (wyjątki: własne `envRef` firmy i `runtime.env.passthrough`), z
+oczyszczonym `PATH` (bez elementów w katalogu projektu), `CLAUDE_CONFIG_DIR` i `CLAUDE_CODE_TMPDIR`.
+Usuwane są też `envRef` z rejestru, których ta firma nie używa, oraz wartości o kształcie sekretu
+(prefiksy dostawców, JWT, PEM, `://user:hasło@`). `SSH_AUTH_SOCK` jest usuwany; wraca przez
+`runtime.env.passthrough`. `envRef` z `Settings.env`
+trafia wyłącznie do środowiska dziecka. Brak albo pusta zmienna `envRef` kończy się kodem `1`.
+Na Windowsie `start` odmawia. Silnik inny niż 2.1.322 daje ostrzeżenie.
+
+**Argumenty silnika** (po `--`) trafiają do silnika po flagach CWM (`--plugin-dir=...`,
+`--mcp-config=...`, `--strict-mcp-config`, na końcu `--settings <plik>`). Samo `--` jest dodawane
+tylko wtedy, gdy wszystkie argumenty to tekst promptu. Kod `2` dają: `--settings`, `--mcp-config`,
+`--strict-mcp-config` (użyj `--strict-mcp`), `--plugin-dir`, `--plugin-url`, `--setting-sources`,
+`--bare`, `--safe-mode`; `--dangerously-skip-permissions`, `--allow-dangerously-skip-permissions`,
+`--permission-mode bypassPermissions`, `--agents`, `--debug-file`, `--file`, `--desktop`,
+`--cloud`, `--teleport`, `--remote-control`, `--environment`; każdy argument pozycyjny będący
+podpoleceniem silnika lub jego aliasem (`agents`, `attach`, `auth`, `auto-mode`, `config`, `doctor`,
+`gateway`, `import`, `install`, `kill`, `logs`, `mcp`, `plugin`, `plugins`, `purge`, `respawn`,
+`rm`, `setup-token`, `stop`, `ultrareview`, `update`, `upgrade`); drugie `--`.
+
+**`--dry-run`.** Niczego nie zapisuje (ani profilu, ani zatwierdzeń) i nie uruchamia silnika
+(poza `claude --version` do ustalenia wersji). Wypisuje: ścieżkę i wersję silnika, stan zatwierdzeń
+każdego zasobu (zatwierdzone, NOWE, ZMIENIONE, z ostrzeżeniami), listę plików do wygenerowania,
+argumenty silnika oraz nazwy (nigdy wartości) zmiennych usuniętych i dodanych do środowiska.
+Kod `0`, gdy właściwy start zostałby przyjęty, inaczej `1` z listą powodów. Z `--json` ten sam
+zakres jako obiekt (`ok`, `approvals[]` ze skrótami i różnicami, `files`, `argv`, `env`,
+`blockers`).
+
+`--strict-mcp` dodaje `--strict-mcp-config`: tylko serwery z CWM (wyłącza MCP pluginów
+konta, konektory claude.ai i `.mcp.json` projektu). Pluginy, skille i konektory konta wyłączają
+klucze izolacji (`syncClaudeAiPlugins: false`, `syncClaudeAiSkills: false`,
+`disableClaudeAiConnectors: true`), ustawiane domyślnie w pliku `--settings`;
+`runtime.isolation: false` w manifeście firmy je pomija (izolacja jest domyślnie włączona).
+
+### `cwm approvals`
+
+```text
+cwm approvals list [--company <id>]
+cwm approvals revoke <klucz> [--company <id>]
+cwm approvals revoke --company <id>
+cwm approvals revoke --all
+```
+
+`list` wypisuje klucz (np. `mcp:global/acme-docs`, `mcp:global/acme-tool@<skrót-projektu>`, `settings:acme-a/guard`, `company:acme-a`,
+`project:<skrót>`), skrót, wersję, datę i ścieżkę projektu. `revoke` usuwa wpisy zatwierdzeń i od razu
+unieważnia wygenerowany profil dotkniętych firm (usuwa pliki z manifestu o zgodnym skrócie), więc
+kolejny `cwm start` pyta ponownie. Gdy silnik zmienił `settings.json` profilu, `revoke` zapisuje
+kopię w `generated/revoked/` i usuwa z pliku klucze `hooks`, `permissions`, `env`; jeśli czegoś z CWM
+nie da się usunąć, kończy się kodem `1`. **Działająca sesja nie traci wczytanych hooków ani serwerów
+MCP**; trzeba ją zamknąć. Zatwierdzenia są zapisywane pod blokadą firmy; przy zapisie znikają wpisy
+zasobów, których nie ma w rejestrze, i projektów, których katalogu nie ma. Klucz pary projekt-firma
+to `project:<sha256 ścieżki>` (ścieżka widoczna w `list`). Uszkodzony plik zatwierdzeń oznacza „nic nie jest zatwierdzone”
+(kod `1`).
+
 ## Czego jeszcze nie ma
 
-Polecenia `start`, `sync`, `diff` i `run`, lockfile, generowanie profili silnika, zatwierdzanie
-zasobów z polami wykonawczymi (hooki, MCP, pluginy; Etap B, osobny PR), `--follow-links` w
-imporcie, kopiowanie skryptów hooków do rejestru oraz import biblioteki aplikacji i pluginów.
-Zapis do konfiguracji silnika jest poza zakresem.
+Polecenia `sync`, `diff` i `run`, lockfile, `--follow-links` w imporcie, kopiowanie skryptów
+hooków do rejestru (skrypt poza rejestrem jest przypięty skrótem, ale nie skopiowany), pluginy
+`marketplace` i `git` w `cwm start`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
+zatwierdzeń, Windows w `cwm start` oraz import biblioteki aplikacji i pluginów. Zapis do
+konfiguracji silnika (`.claude/`, `CLAUDE.md`, `.mcp.json`) jest poza zakresem.

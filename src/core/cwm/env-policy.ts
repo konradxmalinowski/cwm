@@ -53,6 +53,17 @@ const VALUE_PREFIXES = [
   /:\/\/[^/@\s]*:[^/@\s]*@/,
 ];
 
+/**
+ * Wartosc ma ksztalt znanego sekretu (prefiks dostawcy, JWT, klucz PEM, adres z haslem). Bez
+ * entropii i bez wzorcow klasyfikatora: te dawalyby falszywe trafienia na zwyklych zmiennych
+ * procesu (sciezki, kolory terminala), a tu wartosc jest po prostu usuwana ze srodowiska dziecka.
+ */
+export function valueHasSecretShape(value: string): boolean {
+  return [value, percentDecoded(value)].some((candidate) =>
+    VALUE_PREFIXES.some((pattern) => pattern.test(candidate)),
+  );
+}
+
 /** Nazwa sekretu z dwukropkiem lub znakiem rownosci w tekscie (`--password=...`, `token: ...`). */
 const SECRET_ASSIGNMENT = /(?:password|passwd|secret|token|api[_-]?key)\s*[:=]/i;
 
