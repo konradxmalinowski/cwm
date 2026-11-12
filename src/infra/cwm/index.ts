@@ -1,3 +1,5 @@
+export * from './approvals';
+export * from './engine-process';
 export * from './gitignore';
 export * from './hook-pins';
 export * from './import-plan';
@@ -8,6 +10,10 @@ export * from './paths';
 export * from './project-dir';
 export * from './read';
 export * from './registry';
+export * from './runtime-apply';
+export * from './runtime-fs';
+export * from './runtime-plan';
+export * from './runtime-sources';
 export * from './serialize';
 export * from './workspace';
 export * from './writer';

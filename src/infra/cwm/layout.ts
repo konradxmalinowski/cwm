@@ -1,13 +1,17 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
-import { RESOURCE_KINDS, RESOURCE_SET_KEYS, type ResourceKind } from '../../core/cwm';
+import {
+  ID_SPACE_PATTERN,
+  RESOURCE_KINDS,
+  RESOURCE_SET_KEYS,
+  type ResourceKind,
+} from '../../core/cwm';
 import { protectedSegment } from './paths';
 
 export const CWM_HOME_ENV = 'CWM_HOME';
 
 /** Segment sciezki z id firmy albo projektu. Tylko taki wchodzi do `join`, zeby id nie wyszlo z katalogu. */
-const SAFE_SEGMENT = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export interface CwmLayout {
   readonly home: string;
@@ -51,7 +55,7 @@ export function createLayout(home: string): CwmLayout {
 }
 
 export function isSafeSegment(value: string): boolean {
-  return SAFE_SEGMENT.test(value);
+  return ID_SPACE_PATTERN.test(value);
 }
 
 function safe(segment: string): string {

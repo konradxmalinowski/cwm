@@ -111,6 +111,9 @@ const FS_WRITE_ALLOWED = [
   // Zapis CLI (`cwm`) do ~/.cwm i <projekt>/.cwm: mkdir/chmod z trybami 700, odmowa poza dwoma
   // korzeniami i dla .claude, CLAUDE.md, .mcp.json. Pliki ida przez atomic.ts (temp + rename).
   'src/infra/cwm/writer.ts',
+  // Jedyne miejsce zapisu i usuwania w ~/.cwm/runtime/<firma> (PRF-04): lista dozwolonych sciezek,
+  // brak dowiazan na sciezce, wlasciciel i tryby 0700/0600, usuwanie tylko unlink/rmdir pojedynczych wpisow.
+  'src/infra/cwm/runtime-fs.ts',
   // Odczyt katalogow CWM iteratorem `opendir` z limitem wpisow (bez pelnego readdir). Tylko odczyt;
   // `opendir` jest na liscie zakazanych, bo ta lista nie odroznia odczytu od zapisu.
   'src/infra/cwm/read.ts',
@@ -125,8 +128,35 @@ const FS_WRITE_ALLOWED = [
 ];
 
 const FS_MODULE_NAMES = ['fs', 'node:fs', 'fs/promises', 'node:fs/promises'];
+
+/**
+ * Pliki, ktore wolno uruchamiac procesy (SEC-16): silnik (`cwm start`) i pomocnik `git check-ignore`.
+ * Reszta `src/` nie importuje `child_process`, tez przez `require` i `import()`.
+ */
+const EXEC_ALLOWED = ['src/infra/cwm/engine-process.ts', 'src/infra/cwm/gitignore.ts'];
+const SRC_WRITE_ALLOWED = FS_WRITE_ALLOWED.filter((entry) => entry.startsWith('src/'));
+const EXEC_PATTERN_CHILD = '^(node:)?child_process$';
+const EXEC_PROCESS_MESSAGE =
+  'node:child_process tylko w engine-process.ts i gitignore.ts (SEC-16, eslint.config.mjs).';
+const EXEC_PATHS = PROCESS_MODULES.map((name) => ({ name, message: EXEC_PROCESS_MESSAGE }));
+const PROCESS_DYNAMIC_LOADS = [
+  {
+    selector: `CallExpression[callee.name='require'][arguments.0.value=/${EXEC_PATTERN_CHILD}/]`,
+    message: EXEC_PROCESS_MESSAGE,
+  },
+  {
+    selector: `ImportExpression[source.value=/${EXEC_PATTERN_CHILD}/]`,
+    message: EXEC_PROCESS_MESSAGE,
+  },
+];
 const FS_WRITE_MESSAGE =
   'Zapis do systemu plikow tylko przez WriteGate albo z dozwolonej listy (ADR 0012, eslint.config.mjs).';
+
+const FS_WRITE_PATHS = FS_MODULE_NAMES.map((name) => ({
+  name,
+  importNames: FS_WRITE_NAMES,
+  message: FS_WRITE_MESSAGE,
+}));
 
 /** `require` i `import()` omijaja `no-restricted-imports`, wiec maja osobne selektory. */
 const FS_DYNAMIC_LOADS = [
@@ -222,23 +252,33 @@ export default tseslint.config(
     },
   },
 
-  // Zapis tylko przez bramke. Blok stoi PRZED blokami per warstwa: te zakazuja fs w calosci
-  // i nadpisuja ten, wiec core/, adapters/ i renderer/ nadal widza swoje komunikaty.
+  // Zapis tylko przez bramke i procesy tylko z listy (SEC-16). Bloki stoja PRZED blokami per warstwa:
+  // te zakazuja fs w calosci i nadpisuja te, wiec core/, adapters/ i renderer/ nadal widza swoje
+  // komunikaty. Trzy bloki, bo `no-restricted-imports` nie sklada sie z poprzednim: plik poza obiema
+  // listami dostaje oba zakazy, plik z listy procesow tylko zakaz zapisu, plik z listy zapisu tylko
+  // zakaz procesow.
   {
     files: ['src/**/*.ts'],
+    ignores: [...FS_WRITE_ALLOWED, ...EXEC_ALLOWED],
+    rules: {
+      'no-restricted-imports': ['error', { paths: [...FS_WRITE_PATHS, ...EXEC_PATHS] }],
+      'no-restricted-syntax': ['error', ...FS_DYNAMIC_LOADS, ...PROCESS_DYNAMIC_LOADS],
+    },
+  },
+  {
+    files: EXEC_ALLOWED,
     ignores: FS_WRITE_ALLOWED,
     rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          paths: FS_MODULE_NAMES.map((name) => ({
-            name,
-            importNames: FS_WRITE_NAMES,
-            message: FS_WRITE_MESSAGE,
-          })),
-        },
-      ],
+      'no-restricted-imports': ['error', { paths: FS_WRITE_PATHS }],
       'no-restricted-syntax': ['error', ...FS_DYNAMIC_LOADS],
+    },
+  },
+  {
+    files: SRC_WRITE_ALLOWED,
+    ignores: EXEC_ALLOWED,
+    rules: {
+      'no-restricted-imports': ['error', { paths: EXEC_PATHS }],
+      'no-restricted-syntax': ['error', ...PROCESS_DYNAMIC_LOADS],
     },
   },
 
@@ -322,7 +362,12 @@ export default tseslint.config(
   // z bloku "Zapis tylko przez bramke", bo `no-restricted-imports` i `no-restricted-syntax`
   // z pozniejszego bloku zastepuja wczesniejsze, a nie dokladaja sie do nich.
   {
-    files: ['src/infra/cwm/import*.ts', 'src/infra/cwm/hook-pins*.ts'],
+    files: [
+      'src/infra/cwm/import*.ts',
+      'src/infra/cwm/hook-pins*.ts',
+      'src/infra/cwm/runtime-sources*.ts',
+      'src/infra/cwm/runtime-plan*.ts',
+    ],
     rules: {
       'no-restricted-imports': [
         'error',
