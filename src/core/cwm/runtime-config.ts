@@ -60,6 +60,12 @@ function baseSettings(bundle: SettingsBundle): Record<string, unknown> {
   if (hooks) out['hooks'] = hooks;
   if (permissions) out['permissions'] = permissions;
   if (env) out['env'] = env;
+  if (bundle.attribution !== undefined) out['attribution'] = { ...bundle.attribution };
+  if (bundle.preferences !== undefined) {
+    const { voice, ...rest } = bundle.preferences;
+    Object.assign(out, rest);
+    if (voice !== undefined) out['voice'] = { ...voice };
+  }
   return out;
 }
 

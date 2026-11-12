@@ -9,14 +9,17 @@ import {
   ID_SPACE_PATTERN,
   RESOURCE_ID_PATTERN,
 } from './kinds';
+import { foldName } from './names';
 import { readFields, readIdList } from './read-set';
 import { FORBIDDEN_KEYS } from './safe-keys';
 import { readSettings, rejectSettingsKeys, SETTINGS_SPEC_FIELDS } from './settings-spec';
 import {
   MANIFEST_KINDS,
   type Agent,
+  FILES_ROOTS,
   type Command,
   type ContentFlags,
+  type FilesResource,
   type McpEnvRef,
   type McpServer,
   type Plugin,
@@ -81,13 +84,14 @@ export function validateResource(input: unknown): Result<Resource> {
 }
 
 const SPEC_FIELDS = {
-  skill: ['source', 'visibility', 'compatibility', 'dependencies', 'contentFlags'],
-  agent: ['source', 'skills', 'tools', 'model', 'contentFlags'],
+  skill: ['source', 'visibility', 'compatibility', 'dependencies', 'contentFlags', 'nativeDir'],
+  agent: ['source', 'skills', 'tools', 'model', 'contentFlags', 'nativeDir'],
   workflow: ['type', 'source', 'routing', 'agents', 'steps'],
   plugin: ['source', 'activation'],
   mcp: ['transport', 'command', 'args', 'url', 'env'],
   settings: SETTINGS_SPEC_FIELDS,
-  command: ['source', 'contentFlags'],
+  command: ['source', 'contentFlags', 'nativeDir'],
+  files: ['root', 'path', 'nativeDir'],
 } as const;
 
 function readSpec(
@@ -112,7 +116,40 @@ function readSpec(
       return readSettings(c, spec, id, version);
     case 'command':
       return readCommandResource(c, spec, id, version);
+    case 'files':
+      return readFilesResource(c, spec, id, version);
   }
+}
+
+/** Nazwy, ktorych CWM nie zapisuje w profilu (natywna konfiguracja) ani w katalogu zasobu (manifest). */
+const FILES_PROTECTED = new Set(['.claude', 'claude.md', '.mcp.json']);
+
+function readFilesResource(
+  c: Checker,
+  spec: PlainObject,
+  id: string,
+  version: string,
+): FilesResource {
+  if (!Object.hasOwn(spec, 'root')) c.add('spec.root', 'Pole jest wymagane.');
+  if (!Object.hasOwn(spec, 'path')) c.add('spec.path', 'Pole jest wymagane.');
+  const root = c.oneOf(field(spec, 'root'), 'spec.root', FILES_ROOTS);
+  let path = c.relativePath(field(spec, 'path'), 'spec.path') ?? '';
+  if (path.startsWith('./')) {
+    c.add('spec.path', 'Sciezka ma byc zapisana bez wiodacego "./".');
+    path = '';
+  }
+  const segments = path.split('/');
+  if (path !== '' && segments.some((segment) => FILES_PROTECTED.has(foldName(segment)))) {
+    c.add('spec.path', 'Sciezka zawiera chroniona nazwe (.claude, CLAUDE.md, .mcp.json).');
+  } else if (path !== '' && root === 'skills' && foldName(segments[0] ?? '') === 'synced') {
+    c.add('spec.path', 'Nazwa "synced" nalezy do silnika.');
+  } else if (path !== '' && foldName(path) === 'files.yaml') {
+    c.add('spec.path', 'Nazwa files.yaml jest zarezerwowana na manifest zasobu.');
+  }
+  if (segments.some((segment) => foldName(segment) === 'skill.md')) {
+    c.add('spec.path', 'Plik o nazwie manifestu skilla (skill.md) nie moze byc czescia Files.');
+  }
+  return { kind: 'files', id, version, root: root ?? 'skills', path, ...readNativeDir(c, spec) };
 }
 
 function readContentFlags(c: Checker, value: unknown): ContentFlags | null {
@@ -136,7 +173,21 @@ function readCommandResource(c: Checker, spec: PlainObject, id: string, version:
     version,
     source: requiredPath(c, spec),
     ...(flags ? { contentFlags: flags } : {}),
+    ...readNativeDir(c, spec),
   };
+}
+
+/** Bezwzgledna sciezka katalogu natywnego z importu: bez `..`, bez znakow sterujacych. */
+function readNativeDir(c: Checker, spec: PlainObject): { nativeDir?: string } {
+  const value = field(spec, 'nativeDir');
+  if (value === undefined) return {};
+  const dir = c.string(value, 'spec.nativeDir');
+  if (dir === null) return {};
+  if (!dir.startsWith('/') || dir.split('/').includes('..') || dir.length > 400) {
+    c.add('spec.nativeDir', 'Oczekiwano sciezki bezwzglednej bez "..".');
+    return {};
+  }
+  return { nativeDir: dir };
 }
 
 function requiredPath(c: Checker, spec: PlainObject): string {
@@ -163,6 +214,7 @@ function readSkill(c: Checker, spec: PlainObject, id: string, version: string): 
     ),
     dependencies: readFields(c, deps, 'spec.dependencies', ALL_SET_KEYS),
     ...(flags ? { contentFlags: flags } : {}),
+    ...readNativeDir(c, spec),
   };
 }
 
@@ -184,6 +236,7 @@ function readAgent(c: Checker, spec: PlainObject, id: string, version: string): 
     tools: c.list(field(spec, 'tools'), 'spec.tools', (el, p) => c.string(el, p)),
     model: model === undefined ? 'inherit' : (c.string(model, 'spec.model') ?? 'inherit'),
     ...(flags ? { contentFlags: flags } : {}),
+    ...readNativeDir(c, spec),
   };
 }
 

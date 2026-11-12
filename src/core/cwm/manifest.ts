@@ -3,9 +3,12 @@ import type { API_VERSION, ResourceSet } from './kinds';
 
 export type AssetSet = Pick<
   ResourceSet,
-  'skills' | 'agents' | 'workflows' | 'commands' | 'settings'
+  'skills' | 'agents' | 'workflows' | 'commands' | 'settings' | 'files'
 >;
-export type OptionalAssetSet = Pick<ResourceSet, 'skills' | 'agents' | 'commands' | 'settings'>;
+export type OptionalAssetSet = Pick<
+  ResourceSet,
+  'skills' | 'agents' | 'commands' | 'settings' | 'files'
+>;
 
 export interface GlobalConfig {
   readonly apiVersion: typeof API_VERSION;

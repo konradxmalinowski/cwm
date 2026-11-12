@@ -8,6 +8,7 @@ export const RESOURCE_KINDS = [
   'mcp',
   'settings',
   'command',
+  'files',
 ] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 
@@ -20,6 +21,7 @@ export const RESOURCE_SET_KEYS = {
   mcp: 'mcp',
   settings: 'settings',
   command: 'commands',
+  files: 'files',
 } as const satisfies Record<ResourceKind, string>;
 export type SetKey = (typeof RESOURCE_SET_KEYS)[ResourceKind];
 
@@ -71,6 +73,7 @@ export function emptyResourceSet(): ResourceSet {
     mcp: [],
     settings: [],
     commands: [],
+    files: [],
   };
 }
 

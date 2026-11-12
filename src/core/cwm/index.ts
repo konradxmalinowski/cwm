@@ -13,6 +13,7 @@ export * from './manifest';
 export * from './merge-settings';
 export * from './names';
 export * from './patterns';
+export * from './path-rewrite';
 export * from './plugin-scan';
 export * from './native-settings';
 export * from './policy';

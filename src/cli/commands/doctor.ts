@@ -133,6 +133,20 @@ async function checkRegistry(workspace: Workspace, report: Report): Promise<void
       }
     }
     const { resource } = entry;
+    if (resource.kind === 'files') {
+      await guarded(report, entry.file, async () => {
+        const info = await lstatLoose(join(entry.dir, resource.path));
+        if (info === null) {
+          report.warning(
+            problemWithoutPosition(
+              entry.file,
+              'spec.path',
+              `Sciezka ${resource.path} nie istnieje obok definicji.`,
+            ),
+          );
+        }
+      });
+    }
     if (resource.kind === 'skill' || resource.kind === 'agent' || resource.kind === 'workflow') {
       await guarded(report, entry.file, async () => {
         const info = await lstatLoose(join(entry.dir, resource.source));

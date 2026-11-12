@@ -11,7 +11,7 @@ import type { ToolId } from '../../core/model/item';
 
 /** Za kazdym razem nowy obiekt: wspolny obiekt YAML zapisalby jako alias (&a1/*a1), a aliasy sa w manifestach zabronione. */
 const emptyAssets = (): Record<
-  'skills' | 'agents' | 'workflows' | 'commands' | 'settings',
+  'skills' | 'agents' | 'workflows' | 'commands' | 'settings' | 'files',
   never[]
 > => ({
   skills: [],
@@ -19,6 +19,7 @@ const emptyAssets = (): Record<
   workflows: [],
   commands: [],
   settings: [],
+  files: [],
 });
 
 export function toYaml(document: unknown): string {
@@ -31,8 +32,8 @@ export function defaultGlobalConfig(engine: ToolId = 'claude-code'): GlobalConfi
     kind: 'GlobalConfig',
     defaults: { engine, projectMode: 'clean', workflowSelection: 'automatic' },
     resources: {
-      mandatory: { skills: [], agents: [], commands: [], settings: [] },
-      optional: { skills: [], agents: [], commands: [], settings: [] },
+      mandatory: { skills: [], agents: [], commands: [], settings: [], files: [] },
+      optional: { skills: [], agents: [], commands: [], settings: [], files: [] },
     },
     runtime: {
       separateCompanyConfigs: true,

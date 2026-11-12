@@ -15,7 +15,7 @@ export const APPROVAL_DOMAIN = 'cwm-approval-v1\n';
 export const APPROVAL_ENGINE = 'claude-code';
 
 export type ApprovalKind =
-  'mcp' | 'plugin' | 'settings' | 'skill' | 'agent' | 'command' | 'project' | 'company';
+  'mcp' | 'plugin' | 'settings' | 'skill' | 'agent' | 'command' | 'files' | 'project' | 'company';
 
 export interface ApprovalDocumentInput {
   readonly company: string;
@@ -133,7 +133,8 @@ export function needsApproval(resource: Resource, facts: ResourceFacts): boolean
       return true;
     case 'skill':
     case 'agent':
-    case 'command': {
+    case 'command':
+    case 'files': {
       const content = facts.content;
       return (
         content !== undefined &&
@@ -186,11 +187,15 @@ export function executionFields(
         permissions: resource.permissions,
         env: resource.env,
         enforce: resource.enforce,
+        // Dodawane tylko gdy sa, zeby skrot zatwierdzonych Settings bez tych pol sie nie zmienil.
+        ...(resource.attribution === undefined ? {} : { attribution: resource.attribution }),
+        ...(resource.preferences === undefined ? {} : { preferences: resource.preferences }),
         pins: (facts.pins ?? []).map((pin) => ({ path: pin.raw, sha256: pin.sha256 })),
       };
     case 'skill':
     case 'agent':
-    case 'command': {
+    case 'command':
+    case 'files': {
       if (!needsApproval(resource, facts)) return null;
       const content = facts.content;
       return {
@@ -343,7 +348,7 @@ export function statusOf(subject: ApprovalSubject, file: ApprovalsFile): Approva
 }
 
 const KEY =
-  /^(?:mcp|plugin|settings|skill|agent|command|project|company):[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]{1,512}$/u;
+  /^(?:mcp|plugin|settings|skill|agent|command|files|project|company):[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]{1,512}$/u;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const MAX_ENTRIES = 500;
 

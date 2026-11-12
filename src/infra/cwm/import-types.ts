@@ -13,7 +13,7 @@ export const IMPORT_LIMITS = {
   importDirs: 5000,
 } as const;
 
-export type ImportKind = 'skill' | 'agent' | 'command' | 'settings';
+export type ImportKind = 'skill' | 'agent' | 'command' | 'settings' | 'files';
 
 /** Wpis raportu: co zostalo pominiete albo zmienione i dlaczego. Nigdy wartosc z pliku. */
 export interface ReportItem {
@@ -25,6 +25,23 @@ export interface SourceFile {
   readonly rel: string;
   readonly bytes: Uint8Array;
   readonly executable: boolean;
+}
+
+/**
+ * Plik pomocniczy oznaczony jako mozliwy sekret. Domyslnie nie jest kopiowany. Twardy sekret
+ * (`hard`) nie ma tresci w pamieci i nie da sie go dolaczyc; reszte uzytkownik moze dolaczyc po
+ * przegladzie (`included`). Sam powod i numer wiersza trafiaja do planu, nigdy wartosc.
+ */
+export interface FlaggedFile {
+  /** Sciezka wewnatrz zasobu (jak `SourceFile.rel`). */
+  readonly rel: string;
+  /** Sciezka wzgledna wobec `--from`: jedyny klucz dla `--include-flagged`. */
+  readonly path: string;
+  readonly reason: string;
+  readonly line: number | null;
+  readonly hard: boolean;
+  readonly file: SourceFile | null;
+  readonly included: boolean;
 }
 
 export interface Candidate {
@@ -50,6 +67,11 @@ export interface Candidate {
   readonly envRefs: readonly string[];
   readonly pins: readonly PinnedPath[];
   readonly notes: readonly ReportItem[];
+  readonly flagged: readonly FlaggedFile[];
+  /** Dla rodzaju `files`: korzen w profilu i wspolny przedrostek sciezek. */
+  /** `realpath(--from)`: zapisywane w manifescie, zeby `cwm start` przepisal odwolania do tego katalogu. */
+  readonly nativeDir?: string;
+  readonly filesSpec: { readonly root: 'skills' | 'agents'; readonly path: string } | null;
 }
 
 export type ScanOutcome =

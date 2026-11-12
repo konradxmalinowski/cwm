@@ -11,7 +11,10 @@ export type CleanupPathCheck =
 
 const MAX_PATH_LENGTH = 512;
 const MAX_SEGMENTS = 20;
-const NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/;
+/** Pierwszy segment pod `skills/` i `agents/` dla rodzaju Files: sciezki bywaja wielkimi literami (`Toolkit`). */
+const ENTRY = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
+const FLAT_MARKDOWN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}\.md$/;
+import { foldName } from './names';
 import { HASH16 } from './patterns';
 
 const PLUGIN_SLUG = /^[a-z0-9][a-z0-9-]{0,62}@[0-9a-f]{16}$/;
@@ -42,7 +45,7 @@ function treeRest(segments: readonly string[], from: number, protect = true): st
   for (const segment of segments.slice(from)) {
     if (segment === '' || segment === '.' || segment === '..')
       return 'niedozwolony segment sciezki';
-    if (protect && PROTECTED_INSIDE.has(segment.toLowerCase())) {
+    if (protect && PROTECTED_INSIDE.has(foldName(segment))) {
       return 'chroniona nazwa wewnatrz drzewa';
     }
   }
@@ -65,13 +68,21 @@ export function validateCleanupPath(rel: unknown): CleanupPathCheck {
 
   if (top === 'claude') {
     if (a === undefined) return bad('katalog profilu nie jest plikiem CWM');
-    if (ENGINE_OWNED_NAMES.includes(a.toLowerCase())) return bad('nazwa nalezy do silnika');
+    if (ENGINE_OWNED_NAMES.includes(foldName(a))) return bad('nazwa nalezy do silnika');
     if (segments.length === 2 && (a === 'settings.json' || a === 'CLAUDE.md')) {
       return { ok: true, area: 'profile' };
     }
-    if (a === 'skills' && b !== undefined && segments.length >= 4) {
-      if (!NAME.test(b)) return bad('nazwa skilla poza wzorcem');
-      if (b === 'synced') return bad('nazwa nalezy do silnika');
+    if (a === 'skills' && b !== undefined && segments.length === 3) {
+      // Plik `.md` wprost w skills/ (rodzaj Files); katalog skilla bez pliku zostaje odrzucony.
+      if (!FLAT_MARKDOWN.test(b) || PROTECTED_INSIDE.has(foldName(b))) {
+        return bad('katalog skilla nie jest plikiem CWM');
+      }
+      return { ok: true, area: 'profile' };
+    }
+    if ((a === 'skills' || a === 'agents') && b !== undefined && segments.length >= 4) {
+      if (!ENTRY.test(b))
+        return bad(a === 'skills' ? 'nazwa skilla poza wzorcem' : 'nazwa katalogu poza wzorcem');
+      if (a === 'skills' && foldName(b) === 'synced') return bad('nazwa nalezy do silnika');
       const rest = treeRest(segments, 3);
       return rest === null ? { ok: true, area: 'profile' } : bad(rest);
     }

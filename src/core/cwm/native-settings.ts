@@ -13,12 +13,19 @@ import {
 } from './env-policy';
 import { FORBIDDEN_KEYS, hasForbiddenKey, nullObject } from './safe-keys';
 import {
+  ATTRIBUTION_KEYS,
+  attributionProblem,
   EVENT_PATTERN,
   hookCommandProblem,
   MAX_HOOK_TIMEOUT,
   MIN_HOOK_TIMEOUT,
   PERMISSION_MODES,
+  PREFERENCE_FLAG_KEYS,
+  PREFERENCE_KEYS,
+  PREFERENCE_TEXT,
+  PREFERENCE_TEXT_KEYS,
   SETTINGS_REJECTED_KEYS,
+  VOICE_KEYS,
 } from './settings-spec';
 
 /**
@@ -50,6 +57,13 @@ export type NativeSettingsResult =
   | { readonly ok: false; readonly message: string };
 
 const MAX_SKIPPED = 200;
+const HANDLED_KEYS: ReadonlySet<string> = new Set([
+  'hooks',
+  'permissions',
+  'env',
+  'attribution',
+  ...PREFERENCE_KEYS,
+]);
 
 function validText(value: unknown): value is string {
   return (
@@ -78,9 +92,11 @@ export function convertNativeSettings(input: unknown): NativeSettingsResult {
   const spec: Record<string, unknown> = {};
 
   for (const key of Object.keys(input)) {
-    if ((SETTINGS_REJECTED_KEYS as readonly string[]).includes(key)) {
+    if (key === 'skipDangerousModePermissionPrompt') {
+      skip(childPath('$', key), 'zabroniony: wylacza ostrzezenie przed trybem bypassPermissions');
+    } else if ((SETTINGS_REJECTED_KEYS as readonly string[]).includes(key)) {
       skip(childPath('$', key), 'zabroniony: uruchamia polecenia albo zmienia zrodla pluginow');
-    } else if (key !== 'hooks' && key !== 'permissions' && key !== 'env') {
+    } else if (!HANDLED_KEYS.has(key)) {
       skip(childPath('$', key), 'poza zakresem importu');
     }
   }
@@ -91,6 +107,10 @@ export function convertNativeSettings(input: unknown): NativeSettingsResult {
   if (Object.keys(permissions).length > 0) spec['permissions'] = permissions;
   const env = convertEnv(input['env'], skip, envRefs);
   if (Object.keys(env).length > 0) spec['env'] = env;
+  const attribution = convertAttribution(input['attribution'], skip);
+  if (Object.keys(attribution).length > 0) spec['attribution'] = attribution;
+  const preferences = convertPreferences(input, skip);
+  if (Object.keys(preferences).length > 0) spec['preferences'] = preferences;
 
   return { ok: true, value: { spec, skipped, envRefs, hookCommands, secretPaths } };
 }
@@ -112,7 +132,7 @@ function convertHooks(
   const result = nullObject<unknown>();
   if (value === undefined) return result;
   if (!isPlainObject(value)) {
-    skip('hooks', 'oczekiwano obiektu');
+    skip(childPath('$', 'hooks'), 'oczekiwano obiektu');
     return result;
   }
   for (const event of Object.keys(value)) {
@@ -217,7 +237,7 @@ function convertPermissions(
   const result: Record<string, unknown> = {};
   if (value === undefined) return result;
   if (!isPlainObject(value)) {
-    skip('permissions', 'oczekiwano obiektu');
+    skip(childPath('$', 'permissions'), 'oczekiwano obiektu');
     return result;
   }
   for (const key of Object.keys(value)) {
@@ -260,7 +280,7 @@ function convertEnv(value: unknown, skip: Skip, envRefs: string[]): Record<strin
   const result = nullObject<unknown>();
   if (value === undefined) return result;
   if (!isPlainObject(value)) {
-    skip('env', 'oczekiwano obiektu');
+    skip(childPath('$', 'env'), 'oczekiwano obiektu');
     return result;
   }
   for (const name of Object.keys(value)) {
@@ -277,6 +297,62 @@ function convertEnv(value: unknown, skip: Skip, envRefs: string[]): Record<strin
     } else {
       result[name] = { envRef: name };
       envRefs.push(name);
+    }
+  }
+  return result;
+}
+
+function convertAttribution(value: unknown, skip: Skip): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (value === undefined) return result;
+  if (!isPlainObject(value)) {
+    skip(childPath('$', 'attribution'), 'oczekiwano obiektu');
+    return result;
+  }
+  for (const key of Object.keys(value)) {
+    const path = childPath('attribution', key);
+    const raw = value[key];
+    if (!(ATTRIBUTION_KEYS as readonly string[]).includes(key)) skip(path, 'poza zakresem importu');
+    else if (typeof raw !== 'string') skip(path, 'oczekiwano tekstu');
+    else {
+      const problem = attributionProblem(raw);
+      if (problem === null) result[key] = raw;
+      else skip(path, problem);
+    }
+  }
+  return result;
+}
+
+/** Preferencje silnika: typ sprawdzany, nic poza nimi nie wchodzi. Teksty to krotkie nazwy trybow. */
+function convertPreferences(input: Record<string, unknown>, skip: Skip): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key of PREFERENCE_TEXT_KEYS) {
+    const raw = input[key];
+    if (raw === undefined) continue;
+    if (typeof raw === 'string' && PREFERENCE_TEXT.test(raw)) result[key] = raw;
+    else skip(childPath('$', key), 'oczekiwano krotkiej nazwy (litery, cyfry, _ . : -)');
+  }
+  for (const key of PREFERENCE_FLAG_KEYS) {
+    const raw = input[key];
+    if (raw === undefined) continue;
+    if (typeof raw === 'boolean') result[key] = raw;
+    else skip(childPath('$', key), 'oczekiwano wartosci true lub false');
+  }
+  const voice = input['voice'];
+  if (voice !== undefined) {
+    if (!isPlainObject(voice)) skip(childPath('$', 'voice'), 'oczekiwano obiektu');
+    else {
+      const kept: Record<string, unknown> = {};
+      for (const key of Object.keys(voice)) {
+        const path = childPath('voice', key);
+        const raw = voice[key];
+        if (!(VOICE_KEYS as readonly string[]).includes(key)) skip(path, 'poza zakresem importu');
+        else if (key === 'enabled' && typeof raw === 'boolean') kept[key] = raw;
+        else if (key === 'mode' && typeof raw === 'string' && PREFERENCE_TEXT.test(raw)) {
+          kept[key] = raw;
+        } else skip(path, 'niepoprawny typ lub format');
+      }
+      if (Object.keys(kept).length > 0) result['voice'] = kept;
     }
   }
   return result;

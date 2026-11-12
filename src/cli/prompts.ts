@@ -52,3 +52,27 @@ export async function promptConfirm(message: string): Promise<boolean> {
   }
   return value;
 }
+
+export interface MultiChoice {
+  readonly value: string;
+  readonly label: string;
+}
+
+/** Wielokrotny wybor; domyslnie nic nie jest zaznaczone. Anulowanie przerywa polecenie. */
+export async function promptMultiSelect(
+  message: string,
+  choices: readonly MultiChoice[],
+): Promise<string[]> {
+  const p = await clack();
+  const value = await p.multiselect<string>({
+    message,
+    options: choices.map((choice) => ({ value: choice.value, label: choice.label })),
+    required: false,
+    maxItems: 15,
+  });
+  if (p.isCancel(value)) {
+    p.cancel('Przerwano.');
+    throw cancelled();
+  }
+  return value;
+}
