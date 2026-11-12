@@ -1,6 +1,14 @@
 export const API_VERSION = 'cwm.dev/v1';
 
-export const RESOURCE_KINDS = ['skill', 'agent', 'workflow', 'plugin', 'mcp'] as const;
+export const RESOURCE_KINDS = [
+  'skill',
+  'agent',
+  'workflow',
+  'plugin',
+  'mcp',
+  'settings',
+  'command',
+] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
 
 /** Nazwa pola z lista id danego rodzaju (`exports.plugins`, `dependencies.skills`). */
@@ -10,6 +18,8 @@ export const RESOURCE_SET_KEYS = {
   workflow: 'workflows',
   plugin: 'plugins',
   mcp: 'mcp',
+  settings: 'settings',
+  command: 'commands',
 } as const satisfies Record<ResourceKind, string>;
 export type SetKey = (typeof RESOURCE_SET_KEYS)[ResourceKind];
 
@@ -53,7 +63,15 @@ export function refKey(ref: ResourceRef): string {
 }
 
 export function emptyResourceSet(): ResourceSet {
-  return { skills: [], agents: [], workflows: [], plugins: [], mcp: [] };
+  return {
+    skills: [],
+    agents: [],
+    workflows: [],
+    plugins: [],
+    mcp: [],
+    settings: [],
+    commands: [],
+  };
 }
 
 /** Wola `fn` dla kazdego id ze zbioru, ze sciezka pola. Brakujace listy sa puste. */

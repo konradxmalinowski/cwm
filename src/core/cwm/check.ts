@@ -1,4 +1,5 @@
 import { escapeControlChars, MAX_ERRORS, type ValidationError } from './errors';
+import { FORBIDDEN_KEYS } from './safe-keys';
 
 /** Manifest jest niezaufanym wejsciem, wiec listy i teksty maja gorny limit. */
 export const MAX_LIST_ITEMS = 500;
@@ -30,7 +31,7 @@ export function childPath(base: string, key: string): string {
 }
 
 /** Znaki sterujace (Cc) i formatujace (Cf: RLO, zero-width), ktore moga ukryc tresc przed czlowiekiem. */
-const CONTROL_CHARS = /[\p{Cc}\p{Cf}]/u;
+export const CONTROL_CHARS = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 const WINDOWS_DEVICE = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i;
 const SECRET_QUERY_NAME = /token|key|secret|password|auth/i;
 
@@ -71,7 +72,8 @@ export class Checker {
       return null;
     }
     for (const key of Object.keys(value)) {
-      if (!allowed.includes(key)) this.add(childPath(path, key), 'Nieznane pole.');
+      if (FORBIDDEN_KEYS.has(key)) this.add(childPath(path, key), 'Zabroniony klucz.');
+      else if (!allowed.includes(key)) this.add(childPath(path, key), 'Nieznane pole.');
     }
     for (const key of required) {
       if (!Object.hasOwn(value, key)) this.add(childPath(path, key), 'Pole jest wymagane.');

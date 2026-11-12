@@ -8,7 +8,19 @@ export const MANIFEST_KINDS = {
   Workflow: 'workflow',
   Plugin: 'plugin',
   MCP: 'mcp',
+  Settings: 'settings',
+  Command: 'command',
 } as const satisfies Record<string, ResourceKind>;
+
+/**
+ * Cechy tresci pliku zrodlowego, ktore robia z zasobu zasob z polami wykonawczymi (IMP-05):
+ * `allowed-tools` lub `tools` we frontmatterze oraz wstawki `!` z poleceniem w odwrotnych apostrofach,
+ * wykonywane przy wczytaniu. Etap zatwierdzania liczy je ponownie z pliku; to jest zapis z importu.
+ */
+export interface ContentFlags {
+  readonly allowedTools: boolean;
+  readonly inlineCommands: boolean;
+}
 
 export interface Skill {
   readonly kind: 'skill';
@@ -19,6 +31,16 @@ export interface Skill {
   /** Puste znaczy brak ograniczenia. */
   readonly engines: readonly ToolId[];
   readonly dependencies: ResourceSet;
+  readonly contentFlags?: ContentFlags;
+}
+
+/** Plik `.md` z `commands/`. Jak Skill, ale bez zaleznosci i bez ograniczen silnika. */
+export interface Command {
+  readonly kind: 'command';
+  readonly id: string;
+  readonly version: string;
+  readonly source: string;
+  readonly contentFlags?: ContentFlags;
 }
 
 export interface Agent {
@@ -34,6 +56,7 @@ export interface Agent {
   };
   readonly tools: readonly string[];
   readonly model: string;
+  readonly contentFlags?: ContentFlags;
 }
 
 export interface WorkflowRouting {
@@ -96,16 +119,76 @@ export interface McpServer {
   readonly env: Readonly<Record<string, McpEnvRef | McpEnvLiteral>>;
 }
 
+/** Jeden hook; `type` to zawsze `command` (SET-03: `http`, `prompt` i `agent` sa odrzucane). */
+export interface HookCommand {
+  readonly type: 'command';
+  readonly command: string;
+  readonly timeout?: number;
+}
+
+export interface HookGroup {
+  readonly matcher?: string;
+  readonly hooks: readonly HookCommand[];
+}
+
+export interface SettingsPermissions {
+  readonly allow: readonly string[];
+  readonly deny: readonly string[];
+  readonly ask: readonly string[];
+  readonly defaultMode?: string;
+  readonly additionalDirectories: readonly string[];
+}
+
+/** Zmienna `Settings.env`: odwolanie do zmiennej srodowiska uzytkownika albo wartosc niebedaca sekretem. */
+export type SettingsEnvEntry = { readonly envRef: string } | { readonly value: string };
+
+/** Hooki, uprawnienia i zmienne srodowiska silnika. Mapy sa obiektami bez prototypu (IMP-04). */
+export interface Settings {
+  readonly kind: 'settings';
+  readonly id: string;
+  readonly version: string;
+  readonly hooks: Readonly<Record<string, readonly HookGroup[]>>;
+  readonly permissions: SettingsPermissions;
+  readonly env: Readonly<Record<string, SettingsEnvEntry>>;
+  /** True: do pliku `--settings` (wyzszy priorytet niz projekt), false: do `settings.json` profilu. */
+  readonly enforce: boolean;
+}
+
 /**
  * Pola, ktore decyduja o tym, co zostanie uruchomione lub z kim polaczy sie narzedzie. Przyszly
  * ekran zatwierdzania musi je pokazac uzytkownikowi przed aktywacja zasobu (bez UI na tym etapie).
  */
 export const EXECUTION_RELEVANT_FIELDS = {
-  mcp: ['command', 'args', 'url', 'env.envRef'],
-  plugin: ['source'],
+  mcp: [
+    'transport',
+    'command',
+    'args',
+    'url',
+    'env.envRef',
+    'headers',
+    'headersHelper',
+    'command.sha256',
+  ],
+  plugin: ['source', 'tree.sha256'],
+  settings: [
+    'hooks',
+    'permissions.allow',
+    'permissions.deny',
+    'permissions.ask',
+    'permissions.defaultMode',
+    'permissions.additionalDirectories',
+    'env',
+    'enforce',
+    'hooks.paths.sha256',
+  ],
+  /** Tylko zasoby z `contentFlags`; skrot tresci pliku zrodlowego wchodzi razem z tymi polami. */
+  skill: ['tools', 'allowed-tools', 'model', 'source.sha256'],
+  agent: ['tools', 'allowed-tools', 'model', 'source.sha256'],
+  command: ['tools', 'allowed-tools', 'model', 'source.sha256'],
+  project: ['path.realpath', 'company'],
 } as const;
 
-export type Resource = Skill | Agent | Workflow | Plugin | McpServer;
+export type Resource = Skill | Agent | Workflow | Plugin | McpServer | Settings | Command;
 
 /** `id@wersja`, a dla MCP bez wersji samo `id` (sekcja 10 specyfikacji). */
 export function formatResource(resource: Resource): string {
@@ -133,6 +216,8 @@ export function dependenciesOf(resource: Resource): readonly ResourceRef[] {
       return refs('agent', [...resource.agents, ...resource.steps.map((step) => step.agent)]);
     case 'plugin':
     case 'mcp':
+    case 'settings':
+    case 'command':
       return [];
   }
 }

@@ -7,8 +7,8 @@ import { readBlock, readFields } from './read-set';
 
 const ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const WORD_PATTERN = /^[a-z][a-z-]{0,31}$/;
-const ASSET_KEYS = ['skills', 'agents', 'workflows'] as const;
-const OPTIONAL_KEYS = ['skills', 'agents'] as const;
+const ASSET_KEYS = ['skills', 'agents', 'workflows', 'commands', 'settings'] as const;
+const OPTIONAL_KEYS = ['skills', 'agents', 'commands', 'settings'] as const;
 
 /** Wspolna otoczka: apiVersion i kind. Reszte pol sprawdza wywolujacy. */
 function readRoot(

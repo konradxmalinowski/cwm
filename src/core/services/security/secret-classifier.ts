@@ -47,6 +47,8 @@ const SENSITIVE_EXTENSIONS = new Set([
   '.keystore',
   '.p8',
   '.ppk',
+  '.tfstate',
+  '.tfvars',
 ]);
 const SENSITIVE_NAMES = new Set([
   'auth.json',
@@ -56,6 +58,13 @@ const SENSITIVE_NAMES = new Set([
   'id_dsa',
   'id_ecdsa',
   'id_ed25519',
+  'secrets.yaml',
+  'secrets.yml',
+  'secrets.json',
+  'kubeconfig',
+  '.pgpass',
+  '.htpasswd',
+  'token.txt',
 ]);
 const ENV_TEMPLATE_SUFFIXES = ['.example', '.sample', '.template', '.dist'];
 const DOC_EXTENSIONS = new Set(['.md', '.mdx', '.markdown']);
@@ -86,6 +95,9 @@ export function classifyFileName(relPath: string): SecretHit | null {
   }
   if (name.startsWith('.env.') && !ENV_TEMPLATE_SUFFIXES.some((s) => name.endsWith(s))) {
     return make('high', 'Plik środowiskowy „.env.*” zwykle trzyma zmienne z hasłami i tokenami.');
+  }
+  if (/^service-account.*\.json$/.test(name)) {
+    return make('high', 'Plik „service-account*.json” zwykle trzyma klucz konta usługi.');
   }
   if (SENSITIVE_EXTENSIONS.has(ext)) {
     return make('high', `Rozszerzenie „${ext}” oznacza zwykle klucz albo certyfikat.`);
@@ -310,4 +322,42 @@ function dedupe(hits: readonly SecretHit[]): SecretHit[] {
     result.push(hit);
   }
   return result;
+}
+
+/**
+ * Szersza regula liniowa dla importu z niezaufanego zrodla (cwm import): nazwa sekretu, `:` lub `=`
+ * i wartosc co najmniej 4 znaki. Lapie tez placeholdery, bo tam nadmiar trafien jest tansi niz
+ * przeoczenie. Osobna funkcja, zeby `classifySecrets` (aplikacja desktopowa) zostalo bez zmian.
+ */
+export const STRICT_LINE_RULE =
+  /(?:password|passwd|secret|api[_-]?key|token|aws_secret_access_key)\s*[:=]\s*\S{4,}/i;
+
+/** Jak `classifySecrets`, plus regula `STRICT_LINE_RULE` takze dla plikow binarnych (wzorzec ASCII w bajtach). */
+export function classifyStrict(files: readonly SecretScanFile[]): SecretHit[] {
+  const hits = classifySecrets(files);
+  for (const file of files) {
+    const binary = looksBinary(file.bytes);
+    const text = binary
+      ? new TextDecoder('latin1').decode(file.bytes)
+      : new TextDecoder('utf-8').decode(file.bytes);
+    const lines = binary ? [text] : text.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i] ?? '';
+      if (line.length <= 20_000 || binary) {
+        if (STRICT_LINE_RULE.test(line)) {
+          hits.push({
+            rule: 'key-name',
+            relPath: file.relPath,
+            line: binary ? null : i + 1,
+            confidence: 'medium',
+            reason: binary
+              ? 'Plik binarny zawiera ciąg „hasło/token/klucz = wartość”.'
+              : 'Linia przypisuje wartość do nazwy typu hasło, token albo klucz.',
+          });
+          break;
+        }
+      }
+    }
+  }
+  return dedupe(hits);
 }
