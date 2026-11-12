@@ -1,4 +1,4 @@
-import { MAX_ERRORS, type ValidationError } from './errors';
+import { escapeControlChars, MAX_ERRORS, type ValidationError } from './errors';
 
 /** Manifest jest niezaufanym wejsciem, wiec listy i teksty maja gorny limit. */
 export const MAX_LIST_ITEMS = 500;
@@ -19,9 +19,13 @@ export function field(obj: PlainObject, key: string): unknown {
 
 const MAX_PATH_KEY = 64;
 
-/** Klucze pochodza z niezaufanego dokumentu, wiec w sciezce bledu sa przyciete. */
+/**
+ * Klucze pochodza z niezaufanego dokumentu, wiec w sciezce bledu sa przyciete, a znaki sterujace
+ * i formatujace zapisane jako `\xNN` (sciezka trafia na terminal).
+ */
 export function childPath(base: string, key: string): string {
-  const safe = key.length > MAX_PATH_KEY ? `${key.slice(0, MAX_PATH_KEY)}...` : key;
+  const cut = key.length > MAX_PATH_KEY ? `${key.slice(0, MAX_PATH_KEY)}...` : key;
+  const safe = escapeControlChars(cut);
   return base === '$' ? safe : `${base}.${safe}`;
 }
 

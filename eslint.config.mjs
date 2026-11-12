@@ -108,6 +108,12 @@ const FS_WRITE_ALLOWED = [
   'src/infra/library/**',
   // Content store i backupy w userData (ADR 0019).
   'src/infra/store/**',
+  // Zapis CLI (`cwm`) do ~/.cwm i <projekt>/.cwm: mkdir/chmod z trybami 700, odmowa poza dwoma
+  // korzeniami i dla .claude, CLAUDE.md, .mcp.json. Pliki ida przez atomic.ts (temp + rename).
+  'src/infra/cwm/writer.ts',
+  // Odczyt katalogow CWM iteratorem `opendir` z limitem wpisow (bez pelnego readdir). Tylko odczyt;
+  // `opendir` jest na liscie zakazanych, bo ta lista nie odroznia odczytu od zapisu.
+  'src/infra/cwm/read.ts',
   // Kwarantanna uszkodzonego indeksu (ADR 0029) i tworzenie katalogu bazy.
   'src/infra/db/**',
   // Logger do userData/logs/app.log (ADR 0014).
@@ -201,6 +207,15 @@ export default tseslint.config(
             { target: './src/renderer', from: './src/infra' },
             { target: './src/renderer', from: './src/adapters' },
             { target: './src/renderer', from: './src/preload' },
+            // CLI jest drugim composition rootem: widzi core i infra, nie widzi procesow Electrona.
+            { target: './src/cli', from: './src/main' },
+            { target: './src/cli', from: './src/renderer' },
+            { target: './src/cli', from: './src/preload' },
+            { target: './src/core', from: './src/cli' },
+            { target: './src/adapters', from: './src/cli' },
+            { target: './src/infra', from: './src/cli' },
+            { target: './src/main', from: './src/cli' },
+            { target: './src/renderer', from: './src/cli' },
           ],
         },
       ],
@@ -329,7 +344,7 @@ export default tseslint.config(
   },
 
   {
-    files: ['src/main/**/*.ts', 'src/preload/**/*.ts', 'src/infra/**/*.ts'],
+    files: ['src/main/**/*.ts', 'src/preload/**/*.ts', 'src/infra/**/*.ts', 'src/cli/**/*.ts'],
     languageOptions: {
       globals: { ...globals.node },
     },

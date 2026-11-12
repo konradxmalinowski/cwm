@@ -5,6 +5,9 @@
   "description": "Desktop manager for AI tool configuration: skills, agents, commands, rules.",
   "license": "UNLICENSED",
   "main": "dist/main/index.js",
+  "bin": {
+    "cwm": "dist/cli/index.js"
+  },
   "engines": {
     "node": ">=24.0.0"
   },
@@ -26,7 +29,9 @@
     "package:dist": "electron-builder"
   },
   "dependencies": {
+    "@clack/prompts": "1.8.1",
     "better-sqlite3": "13.0.3",
+    "commander": "15.0.0",
     "smol-toml": "1.9.1",
     "yaml": "2.9.1"
   },

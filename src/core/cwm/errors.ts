@@ -41,3 +41,19 @@ export function sortErrors(errors: readonly ValidationError[]): ValidationError[
     { path: '$', message: `Co najmniej ${rest} wiecej bledow.` },
   ];
 }
+
+/**
+ * Zamienia znaki sterujace (Cc) i formatujace (Cf: RLO, zero-width) na zapis `\xNN` / `\uNNNN`.
+ * `keep` to znaki, ktore zostaja (np. "\n" przy wieloliniowym wyniku). Tekst z dysku nie moze
+ * sterowac terminalem ani ukrywac tresci przed czlowiekiem.
+ */
+export function escapeControlChars(text: string, keep = ''): string {
+  return text.replace(/[\p{Cc}\p{Cf}]/gu, (char) => {
+    if (keep.includes(char)) return char;
+    const code = char.codePointAt(0) ?? 0;
+    if (code <= 0xff) return `\\x${code.toString(16).padStart(2, '0')}`;
+    return code <= 0xffff
+      ? `\\u${code.toString(16).padStart(4, '0')}`
+      : `\\u{${code.toString(16)}}`;
+  });
+}

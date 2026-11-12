@@ -52,7 +52,12 @@ export interface ProjectImport extends ResourceSet {
 export interface ProjectManifest {
   readonly apiVersion: typeof API_VERSION;
   readonly kind: 'Project';
-  readonly metadata: { readonly id: string; readonly company: string };
+  readonly metadata: {
+    readonly id: string;
+    readonly company: string;
+    /** Katalog projektu. Tylko w manifescie trzymanym w `~/.cwm` (`--store home`), gdzie nie ma go z polozenia pliku. */
+    readonly path?: string;
+  };
   readonly spec: {
     readonly engine: ToolId;
     readonly resources: {

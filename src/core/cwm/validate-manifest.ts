@@ -155,9 +155,13 @@ export function validateProjectManifest(input: unknown): Result<ProjectManifest>
   const metadata = c.object(
     field(root, 'metadata'),
     'metadata',
-    ['id', 'company'],
+    ['id', 'company', 'path'],
     ['id', 'company'],
   );
+  const projectPath =
+    metadata && Object.hasOwn(metadata, 'path')
+      ? c.string(field(metadata, 'path'), 'metadata.path')
+      : null;
   const spec = c.object(
     field(root, 'spec'),
     'spec',
@@ -195,6 +199,7 @@ export function validateProjectManifest(input: unknown): Result<ProjectManifest>
           c.string(field(metadata, 'id'), 'metadata.id', ID_PATTERN, 'male litery, cyfry, -')) ||
         '',
       company: (metadata && companyId(c, field(metadata, 'company'), 'metadata.company')) || '',
+      ...(projectPath === null ? {} : { path: projectPath }),
     },
     spec: {
       engine: (spec && c.oneOf(field(spec, 'engine'), 'spec.engine', TOOL_IDS)) || TOOL_IDS[0],

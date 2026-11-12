@@ -81,6 +81,21 @@ Zastrzeżenia, które warto znać przed pierwszym użyciem (szczegóły w `docs/
 - Nie ma jeszcze: porównywania i scalania wersji poza podglądem w planie eksportu, profili,
   ustawień aplikacji, eksportu do ZIP, autoaktualizacji ani integracji z Gitem.
 
+## Polecenie `cwm` (CLI)
+
+Obok aplikacji desktopowej jest polecenie `cwm`, które zakłada i sprawdza dane warstwy CWM w
+`~/.cwm`: firmy, projekty i zasoby. Umie `init`, `company add|list`, `project create|attach|list`,
+`resource list`, `resolve` i `doctor`. Niczego nie uruchamia i nie zapisuje w `.claude/`,
+`CLAUDE.md` ani `.mcp.json`. Stan: gałąź `feat/cwm-cli`, niescalona.
+
+```sh
+npm run build
+node dist/cli/index.js --help
+```
+
+Opis poleceń, układ `~/.cwm`, przykładowe manifesty i kody wyjścia: [`docs/CLI.md`](docs/CLI.md).
+Decyzje: [ADR 0038](docs/adr/0038-fundament-cli-cwm.md).
+
 ## Dla deweloperów: wymagania
 
 - Node.js 24 (linia LTS; wersja w `.nvmrc`)
@@ -329,6 +344,8 @@ Kryterium akceptacji Etapu 1 punkt 5: kazda pozycja w `package.json` ma powod.
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `better-sqlite3` | indeks metadanych, FTS5, synchroniczne API pasujace do procesu glownego (ADR 0007)                                                                              |
 | `smol-toml`      | niezalezny parser TOML do weryfikacji semantycznej edycji `config.toml` w `SegmentTomlEditor` (ADR 0011); zapisu nie robi, wiec komentarze uzytkownika nie gina |
+| `commander`      | parser argumentow polecenia `cwm` w `src/cli` (ADR 0038); wersja przypieta dokladnie, modul ESM ladowany z buildu CommonJS (Node 24)                            |
+| `@clack/prompts` | pytania interaktywne polecenia `cwm`, ladowane dopiero przy pierwszym pytaniu (ADR 0038); wersja przypieta dokladnie                                            |
 | `yaml`           | parser manifestow CWM w `src/infra/cwm` (ADR 0037); wersja przypieta dokladnie, aliasy i jawne znaczniki odrzucane                                              |
 
 ### Fonty (pliki w `src/renderer/assets/fonts/`, ida do paczki)

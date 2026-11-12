@@ -100,7 +100,13 @@ universal-ai-skills-manager/
       source/                       fs-source-reader
       platform/                     env, locations, root-salt
       logging/                      logger, redact
-      cwm/                          yaml-manifest (parser YAML manifestów, ADR 0037)
+      cwm/                          yaml-manifest (parser YAML manifestów, ADR 0037); odczyt i rejestr
+                                    plików, workspace, writer (zapis tylko do ~/.cwm i <projekt>/.cwm,
+                                    ADR 0038; na gałęzi feat/cwm-cli, niescalone)
+
+    cli/                            polecenie cwm: index, program, context, prompts, resolve-flow,
+                                    commands/ (ADR 0038; drugi korzeń kompozycji, na gałęzi
+                                    feat/cwm-cli, niescalone)
 
   tests/
     harness/                        podstawianie HOME, kanarek na plikach wlasciciela
@@ -689,18 +695,19 @@ właściciela, nie wynik CI; systemu i architektury nie podał.
 Dokumentacja użytkownika (`README.md`, `docs/INSTALACJA.md`, `docs/ODZYSKIWANIE.md`,
 `docs/OGRANICZENIA.md`) opisuje stan docelowy v0.2.0.
 
-### Warstwa CWM: model zasobów i workspace (ADR 0036, 0037)
+### Warstwa CWM: model zasobów i workspace (ADR 0036, 0037, 0038)
 
 Kolejność etapów pochodzi z planu właściciela (`plans/2026-11-11-cwm-core.md`). Etapy nie mają
 jeszcze kryteriów akceptacji w stylu Etapów 1 do 10; powstaną przy planowaniu każdego z nich.
 
-| Krok | Zakres | Stan na 2026-11-11 |
+| Krok | Zakres | Stan na 2026-11-12 |
 |---|---|---|
 | S1 | Spike: jak Claude Code ładuje konfigurację, co przenosi `CLAUDE_CONFIG_DIR` | Zrobione, ADR 0036 |
-| Model i resolver | Typy manifestów i zasobów, walidatory, `resolve`, `validatePolicy`, parser YAML (ADR 0037) | Zrobione na gałęzi `feat/cwm-core`, niescalone do `main`, bez testów (decyzja właściciela), nie podłączone do aplikacji |
-| Profile i manifesty firm | Odczyt `~/.cwm` (globalny manifest, firmy, zasoby) z limitem bajtów przed dekodowaniem, implementacja `ResourceRegistry` | Następny |
-| Konfiguracje projektów | Odczyt `project.yaml`, projekty zagnieżdżone | Następny po powyższym |
-| CLI `cwm` | Polecenia na modelu i resolverze, w tym lockfile | Planowane |
+| Model i resolver | Typy manifestów i zasobów, walidatory, `resolve`, `validatePolicy`, parser YAML (ADR 0037) | Zrobione na gałęzi `feat/cwm-core`, niescalone do `main`, bez testów (decyzja właściciela), podłączone tylko do CLI, nie do aplikacji desktopowej |
+| Profile i manifesty firm | Odczyt `~/.cwm` (globalny manifest, firmy, zasoby) z limitem bajtów przed dekodowaniem, implementacja `ResourceRegistry` | Zrobione na gałęzi `feat/cwm-cli` w ramach CLI fundament, niescalone |
+| Konfiguracje projektów | Odczyt `project.yaml`, projekty zagnieżdżone | Zrobione na gałęzi `feat/cwm-cli` w ramach CLI fundament, niescalone |
+| CLI fundament | `cwm init`, `company`, `project`, `resource list`, `resolve`, `doctor` na odczycie `~/.cwm` (ADR 0038, `docs/CLI.md`); bez `start`, `sync`, `diff`, `run` i bez zapisu do konfiguracji silnika | Zrobione na gałęzi `feat/cwm-cli`, niescalone do `main`, bez testów (decyzja właściciela) |
+| CLI `cwm`, dalsze polecenia | Lockfile i polecenia, które zmieniają stan silnika | Planowane |
 | Adapter runtime | Profil Claude Code z `CLAUDE_CONFIG_DIR` na podstawie ADR 0036 | Planowane |
 | Pluginy i MCP | Zapis do konfiguracji silnika z ekranem zatwierdzania `EXECUTION_RELEVANT_FIELDS` i przeglądem bezpieczeństwa (ADR 0037, ADR 0020) | Planowane |
 | Dyspozytor workflow | Wybór workflow na podstawie `routing` | Planowane |
