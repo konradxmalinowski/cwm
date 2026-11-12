@@ -1,5 +1,6 @@
 import { TOOL_IDS } from '../model/item';
 import { Checker, childPath, field, isPlainObject, type PlainObject } from './check';
+import { ENV_NAME_PATTERN, MCP_ENV_DENYLIST } from './env-policy';
 import { fail, ok, type Result } from './errors';
 import {
   ALL_SET_KEYS,
@@ -9,9 +10,13 @@ import {
   RESOURCE_ID_PATTERN,
 } from './kinds';
 import { readFields, readIdList } from './read-set';
+import { FORBIDDEN_KEYS } from './safe-keys';
+import { readSettings, rejectSettingsKeys, SETTINGS_SPEC_FIELDS } from './settings-spec';
 import {
   MANIFEST_KINDS,
   type Agent,
+  type Command,
+  type ContentFlags,
   type McpEnvRef,
   type McpServer,
   type Plugin,
@@ -26,13 +31,8 @@ import {
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const WORD_PATTERN = /^[a-z][a-z-]{0,31}$/;
 const STEP_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
-const ENV_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 const GIT_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const COMMAND_FORBIDDEN = /[\s;|&$`<>()'"\\]/;
-/** Zmienne, ktore zmieniaja sposob ladowania lub uruchamiania procesu albo kieruja ruch gdzie indziej. */
-const ENV_DENYLIST =
-  /^(?:LD_|DYLD_|PYTHON|NPM_CONFIG_)|^(?:NODE_OPTIONS|NODE_PATH|NODE_EXTRA_CA_CERTS|PATH|BASH_ENV|ENV|SSL_CERT_FILE|SSL_CERT_DIR|JAVA_TOOL_OPTIONS|_JAVA_OPTIONS|GIT_SSH_COMMAND|GIT_EXEC_PATH|RUBYOPT|PERL5OPT|PERL5LIB|IFS|SHELL|HOME)$|_PROXY$/i;
-
 /** Waliduje manifest zasobu (sekcja 5 specyfikacji): Skill, Agent, Workflow, Plugin albo MCP. */
 export function validateResource(input: unknown): Result<Resource> {
   const c = new Checker();
@@ -71,7 +71,9 @@ export function validateResource(input: unknown): Result<Resource> {
       ? null
       : c.string(versionValue, 'metadata.version', VERSION_PATTERN, 'MAJOR.MINOR.PATCH');
 
-  const spec = c.object(field(root, 'spec'), 'spec', SPEC_FIELDS[kind]);
+  const specValue = field(root, 'spec');
+  if (kind === 'settings' && isPlainObject(specValue)) rejectSettingsKeys(c, specValue, 'spec');
+  const spec = c.object(specValue, 'spec', SPEC_FIELDS[kind]);
   if (!spec) return fail(c.errors);
 
   const resource = readSpec(c, kind, spec, id ?? '', version ?? '');
@@ -79,11 +81,13 @@ export function validateResource(input: unknown): Result<Resource> {
 }
 
 const SPEC_FIELDS = {
-  skill: ['source', 'visibility', 'compatibility', 'dependencies'],
-  agent: ['source', 'skills', 'tools', 'model'],
+  skill: ['source', 'visibility', 'compatibility', 'dependencies', 'contentFlags'],
+  agent: ['source', 'skills', 'tools', 'model', 'contentFlags'],
   workflow: ['type', 'source', 'routing', 'agents', 'steps'],
   plugin: ['source', 'activation'],
   mcp: ['transport', 'command', 'args', 'url', 'env'],
+  settings: SETTINGS_SPEC_FIELDS,
+  command: ['source', 'contentFlags'],
 } as const;
 
 function readSpec(
@@ -104,7 +108,35 @@ function readSpec(
       return readPlugin(c, spec, id, version);
     case 'mcp':
       return readMcp(c, spec, id, version);
+    case 'settings':
+      return readSettings(c, spec, id, version);
+    case 'command':
+      return readCommandResource(c, spec, id, version);
   }
+}
+
+function readContentFlags(c: Checker, value: unknown): ContentFlags | null {
+  if (value === undefined) return null;
+  const obj = c.object(value, 'spec.contentFlags', ['allowedTools', 'inlineCommands']);
+  if (!obj) return null;
+  const flag = (key: string): boolean => {
+    const raw = field(obj, key);
+    return raw === undefined
+      ? false
+      : (c.boolean(raw, childPath('spec.contentFlags', key)) ?? false);
+  };
+  return { allowedTools: flag('allowedTools'), inlineCommands: flag('inlineCommands') };
+}
+
+function readCommandResource(c: Checker, spec: PlainObject, id: string, version: string): Command {
+  const flags = readContentFlags(c, field(spec, 'contentFlags'));
+  return {
+    kind: 'command',
+    id,
+    version,
+    source: requiredPath(c, spec),
+    ...(flags ? { contentFlags: flags } : {}),
+  };
 }
 
 function requiredPath(c: Checker, spec: PlainObject): string {
@@ -116,6 +148,7 @@ function readSkill(c: Checker, spec: PlainObject, id: string, version: string): 
   const compat = optionalObject(c, field(spec, 'compatibility'), 'spec.compatibility', ['engines']);
   const deps = optionalObject(c, field(spec, 'dependencies'), 'spec.dependencies', ALL_SET_KEYS);
   const visibility = field(spec, 'visibility');
+  const flags = readContentFlags(c, field(spec, 'contentFlags'));
   return {
     kind: 'skill',
     id,
@@ -129,12 +162,14 @@ function readSkill(c: Checker, spec: PlainObject, id: string, version: string): 
       c.oneOf(el, p, TOOL_IDS),
     ),
     dependencies: readFields(c, deps, 'spec.dependencies', ALL_SET_KEYS),
+    ...(flags ? { contentFlags: flags } : {}),
   };
 }
 
 function readAgent(c: Checker, spec: PlainObject, id: string, version: string): Agent {
   const skills = optionalObject(c, field(spec, 'skills'), 'spec.skills', ['shared', 'private']);
   const model = field(spec, 'model');
+  const flags = readContentFlags(c, field(spec, 'contentFlags'));
   return {
     kind: 'agent',
     id,
@@ -148,6 +183,7 @@ function readAgent(c: Checker, spec: PlainObject, id: string, version: string): 
     },
     tools: c.list(field(spec, 'tools'), 'spec.tools', (el, p) => c.string(el, p)),
     model: model === undefined ? 'inherit' : (c.string(model, 'spec.model') ?? 'inherit'),
+    ...(flags ? { contentFlags: flags } : {}),
   };
 }
 
@@ -329,7 +365,7 @@ function readMcp(c: Checker, spec: PlainObject, id: string, version: string): Mc
     }
   }
   const command = commandValue === undefined ? null : readCommand(c, commandValue);
-  const url = urlValue === undefined ? null : c.url(urlValue, 'spec.url');
+  const url = urlValue === undefined ? null : noDollar(c, c.url(urlValue, 'spec.url'), 'spec.url');
   return {
     kind: 'mcp',
     id,
@@ -337,9 +373,21 @@ function readMcp(c: Checker, spec: PlainObject, id: string, version: string): Mc
     transport: transport ?? 'stdio',
     ...(command ? { command } : {}),
     ...(url ? { url } : {}),
-    args: c.list(field(spec, 'args'), 'spec.args', (el, p) => c.string(el, p)),
+    args: c.list(field(spec, 'args'), 'spec.args', (el, p) => noDollar(c, c.string(el, p), p)),
     env: readMcpEnv(c, field(spec, 'env')),
   };
+}
+
+/**
+ * MCP-01: silnik rozwija `${...}` w `command`, `args` i `url`, wiec `$` pozwolilby wyniesc sekret,
+ * ktorego nie zadeklarowano jako `envRef`. Jedyne `${...}` w `mcp.json` wpisuje generator.
+ */
+function noDollar(c: Checker, value: string | null, path: string): string | null {
+  if (value !== null && value.includes('$')) {
+    c.add(path, 'Znak $ jest zabroniony (silnik rozwija ${...}). Sekrety przekazuj przez envRef.');
+    return null;
+  }
+  return value;
 }
 
 /** Jeden token wykonywalny: nazwa z PATH albo sciezka wzgledna. Zadnej powloki, zadnych argumentow. */
@@ -365,7 +413,11 @@ function readMcpEnv(c: Checker, value: unknown): Record<string, McpEnvRef> {
   }
   for (const name of Object.keys(value)) {
     const path = childPath('spec.env', name);
-    if (ENV_DENYLIST.test(name)) {
+    if (FORBIDDEN_KEYS.has(name)) {
+      c.add(path, 'Zabroniony klucz.');
+      continue;
+    }
+    if (MCP_ENV_DENYLIST.test(name)) {
       c.add(
         path,
         'Ta zmienna zmienia sposob uruchamiania procesu lub ruch sieciowy i jest zabroniona.',

@@ -48,7 +48,7 @@ export function sortErrors(errors: readonly ValidationError[]): ValidationError[
  * sterowac terminalem ani ukrywac tresci przed czlowiekiem.
  */
 export function escapeControlChars(text: string, keep = ''): string {
-  return text.replace(/[\p{Cc}\p{Cf}]/gu, (char) => {
+  return text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (char) => {
     if (keep.includes(char)) return char;
     const code = char.codePointAt(0) ?? 0;
     if (code <= 0xff) return `\\x${code.toString(16).padStart(2, '0')}`;

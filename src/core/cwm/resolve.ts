@@ -12,6 +12,7 @@ import {
   type ResourceRef,
 } from './kinds';
 import type { CompanyManifest, GlobalConfig, ProjectManifest } from './manifest';
+import { LAYER_RANK, mergeSettings, type Layer } from './merge-settings';
 import { validatePolicy } from './policy';
 import type { ResourceRegistry } from './registry';
 import { dependenciesOf, formatResource } from './resource';
@@ -31,10 +32,12 @@ export interface ResolveOptions {
 interface Root {
   readonly ref: ResourceRef;
   readonly path: string;
+  readonly layer: Layer;
 }
 
 interface Frame {
   readonly key: string;
+  readonly layer: Layer;
   readonly dependencies: readonly ResourceRef[];
   next: number;
 }
@@ -127,7 +130,7 @@ function build(
         add(refPath, `Zasob ${key} ma widocznosc private i nie moze byc importowany.`);
       } else {
         imported.add(key);
-        importRoots.push({ ref, path: refPath });
+        importRoots.push({ ref, path: refPath, layer: 'project' });
       }
     });
   });
@@ -138,7 +141,8 @@ function build(
   /** Wszystko, co firma lub projekt wylaczyly. Jako zaleznosc takiego zasobu nie wolno zachowac. */
   const disabled = new Set<string>();
   const enableInto =
-    (target: Map<string, Root>, projectLayer: boolean) => (ref: ResourceRef, path: string) => {
+    (target: Map<string, Root>, layer: Layer) => (ref: ResourceRef, path: string) => {
+      const projectLayer = layer === 'project';
       const key = refKey(ref);
       const owner = foreignOwner(ref.id);
       if (owner !== null && !imported.has(key)) {
@@ -147,7 +151,7 @@ function build(
       if (projectLayer && companyDisabled.has(key)) {
         add(path, `Firma "${companyId}" wylaczyla zasob ${key}, projekt nie moze go wlaczyc.`);
       }
-      if (!target.has(key)) target.set(key, { ref, path });
+      if (!target.has(key)) target.set(key, { ref, path, layer });
     };
   const disable = (ref: ResourceRef, path: string): void => {
     if (mandatory.has(refKey(ref))) {
@@ -161,17 +165,17 @@ function build(
   forEachRef(
     global.resources.mandatory,
     'global.resources.mandatory',
-    enableInto(mandatory, false),
+    enableInto(mandatory, 'global'),
   );
-  forEachRef(global.resources.optional, 'global.resources.optional', enableInto(optional, false));
-  forEachRef(company.resources.enable, 'company.resources.enable', enableInto(optional, false));
-  forEachId(
-    'plugin',
-    company.plugins.enable,
-    'company.plugins.enable',
-    enableInto(optional, false),
+  forEachRef(
+    global.resources.optional,
+    'global.resources.optional',
+    enableInto(optional, 'global'),
   );
-  forEachId('mcp', company.mcp.enable, 'company.mcp.enable', enableInto(optional, false));
+  const enableCompany = enableInto(optional, 'company');
+  forEachRef(company.resources.enable, 'company.resources.enable', enableCompany);
+  forEachId('plugin', company.plugins.enable, 'company.plugins.enable', enableCompany);
+  forEachId('mcp', company.mcp.enable, 'company.mcp.enable', enableCompany);
   forEachRef(
     company.resources.disableOptional,
     'company.resources.disableOptional',
@@ -181,7 +185,7 @@ function build(
     },
   );
 
-  const enableProject = enableInto(optional, true);
+  const enableProject = enableInto(optional, 'project');
   forEachRef(spec.resources.enable, 'project.spec.resources.enable', enableProject);
   forEachId('plugin', spec.plugins.enable, 'project.spec.plugins.enable', enableProject);
   forEachId('mcp', spec.mcp.enable, 'project.spec.mcp.enable', enableProject);
@@ -206,7 +210,13 @@ function build(
     add(path, message);
   };
 
-  const enter = (ref: ResourceRef, origin: Origin, path: string, parent: string | null): void => {
+  const enter = (
+    ref: ResourceRef,
+    origin: Origin,
+    path: string,
+    parent: string | null,
+    layer: Layer,
+  ): void => {
     const key = refKey(ref);
     if (forbidden.has(key)) {
       return reject(key, path, `Plugin ${ref.id} jest zabroniony przez firme "${companyId}".`);
@@ -219,7 +229,11 @@ function build(
     }
     const known = entries.get(key);
     if (known) {
-      if (ORIGIN_RANK[origin] > ORIGIN_RANK[known.origin]) entries.set(key, { ...known, origin });
+      entries.set(key, {
+        ...known,
+        origin: ORIGIN_RANK[origin] > ORIGIN_RANK[known.origin] ? origin : known.origin,
+        layer: LAYER_RANK[layer] < LAYER_RANK[known.layer] ? layer : known.layer,
+      });
       return;
     }
     if (parent !== null && disabled.has(key)) {
@@ -262,23 +276,23 @@ function build(
     if (stack.length >= MAX_DEPTH) {
       return reject(key, path, `Lancuch zaleznosci jest glebszy niz ${MAX_DEPTH} poziomow.`);
     }
-    entries.set(key, { origin, resource });
+    entries.set(key, { origin, layer, resource });
     const dependencies = [...dependenciesOf(resource)].sort((a, b) =>
       compareStrings(refKey(a), refKey(b)),
     );
-    stack.push({ key, dependencies, next: 0 });
+    stack.push({ key, layer, dependencies, next: 0 });
   };
 
   // Jawny stos zamiast rekurencji: gleboki lancuch z manifestu nie moze przepelnic stosu wywolan.
   const visitRoot = (root: Root, origin: Origin): void => {
-    enter(root.ref, origin, root.path, null);
+    enter(root.ref, origin, root.path, null, root.layer);
     while (stack.length > 0 && !aborted) {
       const frame = stack[stack.length - 1];
       if (!frame) break;
       const dependency = frame.dependencies[frame.next];
       frame.next += 1;
       if (dependency === undefined) stack.pop();
-      else enter(dependency, 'dependency', `${frame.key}.dependencies`, frame.key);
+      else enter(dependency, 'dependency', `${frame.key}.dependencies`, frame.key, frame.layer);
     }
     stack.length = 0;
   };
@@ -293,6 +307,12 @@ function build(
   const resources = [...entries.values()].sort((a, b) =>
     compareStrings(refKey(a.resource), refKey(b.resource)),
   );
+  const settingsMerge = mergeSettings(
+    resources.flatMap((entry) =>
+      entry.resource.kind === 'settings' ? [{ resource: entry.resource, layer: entry.layer }] : [],
+    ),
+  );
+  errors.push(...settingsMerge.errors);
   const resolved = (kind: ResourceKind): string[] =>
     resources
       .filter((entry) => entry.resource.kind === kind)
@@ -307,7 +327,10 @@ function build(
       workflows: resolved('workflow'),
       plugins: resolved('plugin'),
       mcp: resolved('mcp'),
+      settings: resolved('settings'),
+      commands: resolved('command'),
     },
+    settings: settingsMerge.merged,
     validation: { conflicts: [], missingDependencies: [] },
     resources,
   };

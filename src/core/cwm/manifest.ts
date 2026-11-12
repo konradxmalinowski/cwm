@@ -1,8 +1,11 @@
 import type { ToolId } from '../model/item';
 import type { API_VERSION, ResourceSet } from './kinds';
 
-export type AssetSet = Pick<ResourceSet, 'skills' | 'agents' | 'workflows'>;
-export type OptionalAssetSet = Pick<ResourceSet, 'skills' | 'agents'>;
+export type AssetSet = Pick<
+  ResourceSet,
+  'skills' | 'agents' | 'workflows' | 'commands' | 'settings'
+>;
+export type OptionalAssetSet = Pick<ResourceSet, 'skills' | 'agents' | 'commands' | 'settings'>;
 
 export interface GlobalConfig {
   readonly apiVersion: typeof API_VERSION;

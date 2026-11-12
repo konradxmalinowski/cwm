@@ -81,7 +81,10 @@ universal-ai-skills-manager/
         security/                   secret-classifier, secret-redactor
         normalization/              hash, line-endings
       cwm/                          model manifestów i zasobów, walidatory, resolver, validatePolicy
-                                    (ADR 0037; na gałęzi feat/cwm-core, niescalone)
+                                    (ADR 0037; na gałęzi feat/cwm-core, niescalone); rodzaje Settings
+                                    i Command, scalanie ustawień, wejście z natywnej konfiguracji:
+                                    content, native-settings, env-policy, hook-paths, names,
+                                    safe-keys (ADR 0039; na gałęzi feat/cwm-start, niescalone)
 
     adapters/
       index.ts
@@ -102,7 +105,9 @@ universal-ai-skills-manager/
       logging/                      logger, redact
       cwm/                          yaml-manifest (parser YAML manifestów, ADR 0037); odczyt i rejestr
                                     plików, workspace, writer (zapis tylko do ~/.cwm i <projekt>/.cwm,
-                                    ADR 0038; na gałęzi feat/cwm-cli, niescalone)
+                                    ADR 0038; na gałęzi feat/cwm-cli, niescalone); import-source,
+                                    import-plan, hook-pins (import z natywnej konfiguracji, ADR 0039;
+                                    na gałęzi feat/cwm-start, niescalone)
 
     cli/                            polecenie cwm: index, program, context, prompts, resolve-flow,
                                     commands/ (ADR 0038; drugi korzeń kompozycji, na gałęzi
@@ -707,6 +712,8 @@ jeszcze kryteriów akceptacji w stylu Etapów 1 do 10; powstaną przy planowaniu
 | Profile i manifesty firm | Odczyt `~/.cwm` (globalny manifest, firmy, zasoby) z limitem bajtów przed dekodowaniem, implementacja `ResourceRegistry` | Zrobione na gałęzi `feat/cwm-cli` w ramach CLI fundament, niescalone |
 | Konfiguracje projektów | Odczyt `project.yaml`, projekty zagnieżdżone | Zrobione na gałęzi `feat/cwm-cli` w ramach CLI fundament, niescalone |
 | CLI fundament | `cwm init`, `company`, `project`, `resource list`, `resolve`, `doctor` na odczycie `~/.cwm` (ADR 0038, `docs/CLI.md`); bez `start`, `sync`, `diff`, `run` i bez zapisu do konfiguracji silnika | Zrobione na gałęzi `feat/cwm-cli`, niescalone do `main`, bez testów (decyzja właściciela) |
+| Etap A: rodzaje Settings i Command, `cwm import claude` | Nowe rodzaje zasobów (hooki, uprawnienia, `env`; komendy), scalanie `Settings` w resolverze, import skilli, agentów, komend i `settings.json` z natywnego katalogu do rejestru z planem, raportem i potwierdzeniem na terminalu (ADR 0039, `docs/CLI.md`); wyniki weryfikacji silnika V-01 do V-08 w ADR 0036 | Zrobione na gałęzi `feat/cwm-start`, niescalone do `main`; testy tylko dla wykrywania sekretów w `env` (decyzja właściciela) |
+| Etap B: zatwierdzanie, profil, `cwm start` | Zatwierdzanie zasobów z polami wykonawczymi w `~/.cwm/approvals/` (skrót pól, ponowne pytanie po zmianie), generowanie profilu w `~/.cwm/runtime/<firma>/`, `cwm start` uruchamiający Claude Code z `CLAUDE_CONFIG_DIR`. Wymaga przeliczenia `contentFlags` i skrótów skryptów hooków z plików (ADR 0039); testy dla czterech czystych funkcji (skrót zatwierdzenia, ścieżki sprzątania, środowisko procesu, argumenty silnika) | Następny, osobny PR i ADR |
 | CLI `cwm`, dalsze polecenia | Lockfile i polecenia, które zmieniają stan silnika | Planowane |
 | Adapter runtime | Profil Claude Code z `CLAUDE_CONFIG_DIR` na podstawie ADR 0036 | Planowane |
 | Pluginy i MCP | Zapis do konfiguracji silnika z ekranem zatwierdzania `EXECUTION_RELEVANT_FIELDS` i przeglądem bezpieczeństwa (ADR 0037, ADR 0020) | Planowane |

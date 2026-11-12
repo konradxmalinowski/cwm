@@ -317,6 +317,43 @@ export default tseslint.config(
     },
   },
 
+  // Import (`cwm import`, IMP-12) czyta niezaufana konfiguracje i niczego nie wykonuje: zadnych
+  // procesow ani watkow, tez przez `require` i `import()`. Blok powtarza ograniczenia zapisu
+  // z bloku "Zapis tylko przez bramke", bo `no-restricted-imports` i `no-restricted-syntax`
+  // z pozniejszego bloku zastepuja wczesniejsze, a nie dokladaja sie do nich.
+  {
+    files: ['src/infra/cwm/import*.ts', 'src/infra/cwm/hook-pins*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            ...FS_MODULE_NAMES.map((name) => ({
+              name,
+              importNames: FS_WRITE_NAMES,
+              message: FS_WRITE_MESSAGE,
+            })),
+            ...[...EXEC_MODULES, 'module', 'node:module'].map((name) => ({
+              name,
+              message:
+                'Import (cwm import) niczego nie uruchamia ani nie laduje kodu (IMP-12, ARCHITECTURE 12.4).',
+            })),
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        ...FS_DYNAMIC_LOADS,
+        ...EXEC_DYNAMIC_LOADS,
+        {
+          selector: `CallExpression[callee.name='require'][arguments.0.value=/^(node:)?module$/]`,
+          message: EXEC_MESSAGE,
+        },
+        { selector: `ImportExpression[source.value=/^(node:)?module$/]`, message: EXEC_MESSAGE },
+      ],
+    },
+  },
+
   {
     files: ['src/renderer/**/*.ts'],
     languageOptions: {

@@ -19,6 +19,16 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
   Manifest projektu może leżeć w projekcie (`--store local`) albo w `~/.cwm` (`--store home`).
   Nowe zależności, przypięte dokładnie: `commander` 15.0.0 i `@clack/prompts` 1.8.1. Nie ma
   jeszcze `start`, `sync`, `diff` ani `run`.
+- Polecenie `cwm import claude` (gałąź `feat/cwm-start`, jeszcze niescalona; ADR 0039,
+  `docs/CLI.md`): kopiuje do rejestru CWM skille, agentów, komendy i `settings.json` z natywnego
+  katalogu Claude Code (domyślnie `~/.claude`), tylko do odczytu źródła, do firmy (`--company`) albo
+  do przestrzeni wspólnej (`--global`). Pokazuje plan i raport (`--dry-run`), a zapis wymaga
+  potwierdzenia na terminalu. Pomija dowiązania symboliczne, pliki wyglądające na sekrety i
+  frontmatter uruchamiający kod; sekrety w `env` zamienia na `envRef`; niczego nie uruchamia.
+- Rodzaje zasobów `Settings` (hooki typu `command`, uprawnienia, zmienne `env`, `enforce`) i
+  `Command` w modelu CWM (rozszerzenie specyfikacji, ADR 0039), z kluczami `commands` i `settings`
+  w zbiorach zasobów oraz scalaniem wielu `Settings` w `cwm resolve`.
+- Weryfikacje Claude Code 2.1.322 na żywo (V-01 do V-08) w dodatku do ADR 0036.
 - Rdzeń warstwy CWM: model manifestów firmy, projektu i zasobów (skill, agent, workflow, plugin,
   MCP), ręczne walidatory, resolver składający konfigurację z warstw global, firma, projekt i
   importy oraz parser manifestów YAML (nowa zależność `yaml`). Wewnętrzne, jeszcze niepodłączone
@@ -49,6 +59,13 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
   instaluje się obok v0.1.0 zamiast ją aktualizować, więc najpierw odinstaluj v0.1.0. Dane
   zostają i są migrowane.
 - Repozytorium zmienia nazwę na `konradxmalinowski/cwm`. Stare adresy GitHub przekierowuje.
+- Klasyfikator sekretów rozpoznaje więcej nazw plików: `secrets.yaml`, `secrets.yml`,
+  `secrets.json`, `kubeconfig`, `.pgpass`, `.htpasswd`, `token.txt`, `service-account*.json` oraz
+  rozszerzenia `.tfstate` i `.tfvars`. Dotyczy też aplikacji desktopowej: pliki o takich nazwach
+  są traktowane jak potencjalne sekrety przy skanowaniu importu i w redakcji podglądu różnic.
+  Nowa, ostrzejsza reguła liniowa (`hasło/token/klucz = wartość`) działa tylko w `cwm import`.
+- Walidator serwerów MCP w warstwie CWM odrzuca znak `$` także w `args` i `url` (wcześniej tylko w
+  `command`), bo silnik rozwija `${...}`. Sekrety przekazuje się przez `envRef`.
 
 Powrót do v0.1.0 po synchronizacji w nowej wersji nie jest bezstratny: stara wersja nie
 rozpozna bloku `cwm:*` ani kopii `cwm-backup` i dopisze własny blok obok.

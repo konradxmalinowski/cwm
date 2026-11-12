@@ -84,9 +84,11 @@ Zastrzeżenia, które warto znać przed pierwszym użyciem (szczegóły w `docs/
 ## Polecenie `cwm` (CLI)
 
 Obok aplikacji desktopowej jest polecenie `cwm`, które zakłada i sprawdza dane warstwy CWM w
-`~/.cwm`: firmy, projekty i zasoby. Umie `init`, `company add|list`, `project create|attach|list`,
-`resource list`, `resolve` i `doctor`. Niczego nie uruchamia i nie zapisuje w `.claude/`,
-`CLAUDE.md` ani `.mcp.json`. Stan: gałąź `feat/cwm-cli`, niescalona.
+`~/.cwm`: firmy, projekty i zasoby (skille, agenci, komendy, workflowy, ustawienia, pluginy, serwery
+MCP). Umie `init`, `company add|list`, `project create|attach|list`, `resource list`, `resolve`,
+`doctor` i `import claude` (kopiuje skille, agentów, komendy i ustawienia z `~/.claude` do rejestru
+po potwierdzeniu na terminalu; źródło czyta tylko do odczytu). Niczego nie uruchamia i nie zapisuje
+w `.claude/`, `CLAUDE.md` ani `.mcp.json`. Stan: gałąź `feat/cwm-start`, niescalona.
 
 ```sh
 npm run build
@@ -94,7 +96,9 @@ node dist/cli/index.js --help
 ```
 
 Opis poleceń, układ `~/.cwm`, przykładowe manifesty i kody wyjścia: [`docs/CLI.md`](docs/CLI.md).
-Decyzje: [ADR 0038](docs/adr/0038-fundament-cli-cwm.md).
+Decyzje: [ADR 0038](docs/adr/0038-fundament-cli-cwm.md) (fundament) i
+[ADR 0039](docs/adr/0039-rodzaje-settings-i-command-oraz-import-z-natywnej-konfiguracji.md)
+(rodzaje `Settings` i `Command`, import).
 
 ## Dla deweloperów: wymagania
 

@@ -1,5 +1,6 @@
-import { chmod, mkdir, realpath } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { chmod, mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
 import { isPathInside } from '../../core/model/path-containment';
 import { ensureDirectory, writeFileAtomic } from '../fs/atomic';
@@ -121,6 +122,102 @@ export async function writeScopedFile(
     throw new WriteDeniedError(`Cel zapisu nie jest zwyklym plikiem: ${target}`);
   }
   await writeFileAtomic(target, new TextEncoder().encode(text), { mode: FILE_MODE });
+}
+
+export interface ScopedTreeFile {
+  /** Sciezka wzgledna wewnatrz katalogu zasobu (separator `/`), bez `..`. */
+  readonly rel: string;
+  readonly bytes: Uint8Array;
+  /** Bit wykonywania dla wlasciciela: tryb 0700, w przeciwnym razie 0600. Nigdy setuid ani sticky. */
+  readonly executable: boolean;
+}
+
+const BACKUP_KEEP = 1;
+
+export interface ReplaceTreeResult {
+  /** Ostrzezenia, ktore nie cofaja zapisu: odzyskana wersja, pozostalosci, nieusunieta kopia. */
+  readonly warnings: readonly string[];
+}
+
+/**
+ * Zastepuje katalog `dir` nowym drzewem plikow: najpierw zapis do katalogu tymczasowego obok
+ * (kazdy plik atomowo, tryb 0600 albo 0700), potem zamiana katalogow. Poprzednia wersja zostaje
+ * obok jako kopia `.nazwa.old-*` (zachowujemy najnowsza), wiec zasob nie znika po cichu.
+ * Na starcie: gdy brakuje `dir`, a istnieje kopia (przerwana zamiana), kopia wraca na miejsce.
+ * Nazwy zaczynajace sie od `.` sa pomijane przez odczyt rejestru. Sukces oznacza, ze nowe drzewo
+ * jest na miejscu, nawet gdy sprzatanie po nim sie nie udalo (wtedy ostrzezenie).
+ */
+export async function replaceScopedTree(
+  scope: WriteScope,
+  dir: string,
+  files: readonly ScopedTreeFile[],
+): Promise<ReplaceTreeResult> {
+  for (const file of files) {
+    if (file.rel.split('/').some((part) => part === '' || part === '.' || part === '..')) {
+      throw new WriteDeniedError('Niedozwolona sciezka pliku w drzewie zasobu.');
+    }
+  }
+  const target = await checkTarget(scope, dir);
+  const parent = dirname(target);
+  await ensureScopedDirectory(scope, parent);
+  const warnings: string[] = [];
+  const name = basename(target);
+  const oldPrefix = `.${name}.old-`;
+  const stalePrefix = `.${name}.import-`;
+
+  const leftovers = (await readdir(parent).catch(() => [] as string[])).sort();
+  const backups = leftovers.filter((entry) => entry.startsWith(oldPrefix));
+  if ((await lstatLoose(target)) === null && backups.length > 0) {
+    const newest = backups[backups.length - 1] ?? '';
+    await rename(join(parent, newest), target);
+    backups.pop();
+    warnings.push(`odzyskano poprzednia wersje ${name} z kopii po przerwanej zamianie`);
+  }
+  for (const entry of leftovers.filter((e) => e.startsWith(stalePrefix))) {
+    await rm(join(parent, entry), { recursive: true, force: true }).catch(() => {
+      warnings.push(`pozostalosc po przerwanym zapisie: ${entry}`);
+    });
+  }
+
+  const stamp = `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`;
+  const staging = join(parent, `${stalePrefix}${stamp}`);
+  await ensureScopedDirectory(scope, staging);
+  let previous: string | null = null;
+  try {
+    for (const file of files) {
+      const path = join(staging, ...file.rel.split('/'));
+      await ensureScopedDirectory(scope, dirname(path));
+      const fileTarget = await checkTarget(scope, path);
+      await writeFileAtomic(fileTarget, file.bytes, { mode: file.executable ? 0o700 : FILE_MODE });
+    }
+    const existing = await lstatLoose(target);
+    if (existing !== null) {
+      if (!existing.isDirectory()) {
+        throw new WriteDeniedError(`Cel zapisu nie jest katalogiem: ${target}`);
+      }
+      previous = join(parent, `${oldPrefix}${stamp}`);
+      await rename(target, previous);
+    }
+    try {
+      await rename(staging, target);
+    } catch (error: unknown) {
+      if (previous !== null) await rename(previous, target).catch(() => undefined);
+      throw error;
+    }
+  } catch (error: unknown) {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
+
+  // Nowe drzewo jest na miejscu: od tej chwili bledy sprzatania sa tylko ostrzezeniami.
+  // Zostaje jedna kopia: ta z tej zamiany, a gdy jej nie bylo (nowy zasob), najnowsza dawna.
+  const prune = previous === null ? backups.slice(0, -BACKUP_KEEP) : backups;
+  for (const entry of prune) {
+    await rm(join(parent, entry), { recursive: true, force: true }).catch(() => {
+      warnings.push(`nie usunieto starej kopii: ${entry}`);
+    });
+  }
+  return { warnings };
 }
 
 /**

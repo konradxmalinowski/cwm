@@ -104,6 +104,49 @@ const cases = [
     code: "import { IpcRegistry } from '../main/ipc/registry';\n\nexport const probe = IpcRegistry;\n",
     expect: 'import-x/no-restricted-paths',
   },
+  // Import CWM (IMP-12): niczego nie uruchamia ani nie laduje kodu, takze hook-pins.ts.
+  {
+    label: 'infra/cwm/import* importuje node:child_process',
+    file: 'src/infra/cwm/import-boundary-probe.ts',
+    code: "import { execFile } from 'node:child_process';\n\nexport const probe = execFile;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/cwm/import* importuje worker_threads',
+    file: 'src/infra/cwm/import-boundary-probe.ts',
+    code: "import { Worker } from 'node:worker_threads';\n\nexport const probe = Worker;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/cwm/import* laduje child_process dynamicznym importem',
+    file: 'src/infra/cwm/import-boundary-probe.ts',
+    code: "export const probe = import('node:child_process');\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'infra/cwm/import* laduje child_process przez require',
+    file: 'src/infra/cwm/import-boundary-probe.ts',
+    code: "export const probe: unknown = require('child_process');\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'infra/cwm/import* importuje createRequire z node:module',
+    file: 'src/infra/cwm/import-boundary-probe.ts',
+    code: "import { createRequire } from 'node:module';\n\nexport const probe = createRequire;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/cwm/import* zapisuje do pliku (writeFile)',
+    file: 'src/infra/cwm/import-boundary-probe.ts',
+    code: "import { writeFile } from 'node:fs/promises';\n\nexport const probe = writeFile;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/cwm/hook-pins* importuje node:child_process',
+    file: 'src/infra/cwm/hook-pins-boundary-probe.ts',
+    code: "import { execFile } from 'node:child_process';\n\nexport const probe = execFile;\n",
+    expect: 'no-restricted-imports',
+  },
   // Zapis tylko przez bramke (ADR 0012, Etap 5 kryterium 1): proby poza dozwolona lista.
   {
     label: 'core/ zapisuje do pliku (writeFile)',

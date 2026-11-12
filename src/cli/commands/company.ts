@@ -79,6 +79,8 @@ async function addCompany(
     join(base, RESOURCE_SET_KEYS.skill),
     join(base, RESOURCE_SET_KEYS.agent),
     join(base, RESOURCE_SET_KEYS.workflow),
+    join(base, RESOURCE_SET_KEYS.command),
+    join(base, RESOURCE_SET_KEYS.settings),
     companyProjectsDir(ctx.layout, id),
   ]) {
     await ensureScopedDirectory(scope, dir);

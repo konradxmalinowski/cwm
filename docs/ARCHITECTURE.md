@@ -213,10 +213,24 @@ danych), `registry.ts` (`FileResourceRegistry`, implementacja portu `ResourceReg
 (`import/no-restricted-paths`) zabrania importu między `cli` a `main`, `renderer` i `preload` oraz
 importu `cli` z `core`, `adapters` i `infra`. Opis poleceń: `docs/CLI.md`.
 
-Stan na 2026-11-12 (gałąź `feat/cwm-cli`, niescalona): CLI potrafi założyć dane, wypisać zasoby,
-złożyć konfigurację projektu (`resolve`) i sprawdzić manifesty (`doctor`). Nie ma jeszcze
-`start`, `sync`, `diff`, `run`, adaptera runtime ani lockfile, a CLI nie zapisuje do konfiguracji
-silnika. Zachowanie Claude Code, na którym ma stanąć adapter runtime, jest w ADR 0036.
+Rodzaje `Settings` i `Command` oraz import z natywnej konfiguracji (ADR 0039). `core/cwm` ma
+model `Settings` (hooki, uprawnienia, `env`, `enforce`; `settings-spec.ts`) i `Command`, a resolver
+scala wiele `Settings` w kolejności global, firma, projekt (`merge-settings.ts`). Czyste funkcje
+wejścia z niezaufanego źródła też są w `core/cwm`: `content.ts` (frontmatter i flagi treści),
+`native-settings.ts` (konwersja `settings.json`), `env-policy.ts` (sekrety i zakazane zmienne),
+`hook-paths.ts`, `names.ts`, `safe-keys.ts`. `src/infra/cwm` czyta natywny katalog tylko do
+odczytu i tylko z listy dozwolonej (`import-source.ts`), buduje plan (`import-plan.ts`), przypina
+skrypty hooków skrótem (`hook-pins.ts`) i zapisuje wyłącznie przez `writer.ts`. Reguła lintu
+zabrania w `import*.ts` i `hook-pins*.ts` procesów, wątków i funkcji zapisu z `fs`. Import jest
+granicą zaufania "natywny katalog -> rejestr `~/.cwm`": dowiązania, sekrety i frontmatter
+wykonujący kod są pomijane z raportem, a zapis wymaga potwierdzenia na terminalu.
+
+Stan na 2026-11-12 (gałąź `feat/cwm-start`, niescalona; Etap A): CLI potrafi założyć dane, wypisać
+zasoby, złożyć konfigurację projektu (`resolve`), sprawdzić manifesty (`doctor`) i zaimportować
+skille, agentów, komendy i ustawienia z `~/.claude` (`import claude`). Nie ma jeszcze zatwierdzania,
+profilu, `start`, `sync`, `diff`, `run` ani lockfile (Etap B), a CLI nie zapisuje do konfiguracji
+silnika. Zachowanie Claude Code, na którym ma stanąć adapter runtime, jest w ADR 0036 (wraz z
+wynikami weryfikacji na żywo V-01 do V-08).
 
 ### 3.3 Diagram komponentów
 

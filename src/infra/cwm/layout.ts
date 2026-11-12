@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 
-import { RESOURCE_SET_KEYS, type ResourceKind } from '../../core/cwm';
+import { RESOURCE_KINDS, RESOURCE_SET_KEYS, type ResourceKind } from '../../core/cwm';
 import { protectedSegment } from './paths';
 
 export const CWM_HOME_ENV = 'CWM_HOME';
@@ -97,9 +97,7 @@ export function homeDirectories(layout: CwmLayout): readonly string[] {
   return [
     layout.home,
     layout.registryDir,
-    ...(['skill', 'agent', 'workflow', 'plugin', 'mcp'] as const).map((kind) =>
-      registryKindDir(layout, kind),
-    ),
+    ...RESOURCE_KINDS.map((kind) => registryKindDir(layout, kind)),
     layout.companiesDir,
     layout.sourcesDir,
     layout.cacheDir,

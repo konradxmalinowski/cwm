@@ -277,3 +277,116 @@ Nieustalone, do sprawdzenia w sesji testowej, zanim adapter runtime trafi do wyd
 `https://code.claude.com/docs/en/authentication`, `https://code.claude.com/docs/en/mcp`,
 `https://code.claude.com/docs/en/skills`, `https://code.claude.com/docs/en/sub-agents`,
 `https://code.claude.com/docs/en/plugins/loading`, `https://code.claude.com/docs/en/memory`.
+
+## Uzupełnienie 2026-11-12: weryfikacje na żywo V-01 do V-08
+
+Treść ADR powyżej zostaje bez zmian. Poniżej wyniki sesji testowych, które zamykają część punktów
+oznaczonych wyżej jako [?] i dokładają fakty potrzebne Etapowi B (zatwierdzanie, profil, `cwm
+start`; ADR 0039).
+
+**Warunki testu.** Wszystkie fakty poniżej są [E]: zmierzone na Claude Code **2.1.322** w
+osobnym, zalogowanym profilu testowym (`CLAUDE_CONFIG_DIR` wskazywał katalog tymczasowy; po
+testach profil przywrócono do `{"theme":"dark"}`, a fixture'y usunięto). Projekt testowy
+`acme-p1` był niezaufany w tym profilu. Krótkie sesje nieinteraktywne (`claude -p`, model
+`haiku`, `--max-turns` od 1 do 7), 22 sesje z modelem plus `claude mcp add|list|remove`.
+Fixture'y `acme-*`: skrypt hooka dopisujący znacznik czasu, tag, `hook_event_name` i `tool_name`
+oraz minimalny serwer MCP stdio dopisujący swoje argumenty i same NAZWY zmiennych `ACME_*`
+(bez wartości). Hooki z tagami `user` (ustawienia profilu), `project` (ustawienia projektu),
+`cli1` i `cli2` (pliki `--settings`). Poza katalogiem tymczasowym nic nie było zapisywane;
+prawdziwe `~/.claude/skills` i `~/.claude/agents` tylko wylistowano. Zachowanie w sesji
+interaktywnej nie było testowane.
+
+### V-01: hooki z trzech źródeł
+
+[E] Hooki tego samego zdarzenia z `--settings`, ustawień projektu i ustawień użytkownika są
+sumowane i uruchamiane wszystkie; żadne źródło nie nadpisuje klucza `hooks` innego. Uruchamiają
+się równolegle: znaczniki czasu różnią się o mikrosekundy, a kolejność zapisu zmieniała się między
+sesjami, więc kolejności nie wolno zakładać. Hooki niezaufanego projektu ruszyły, bo w trybie `-p`
+zaufanie folderu nie jest sprawdzane. [?] Deduplikacja identycznych poleceń z różnych źródeł (w
+teście każde polecenie miało inny tag).
+
+### V-02: pierwszeństwo `--mcp-config`
+
+[E] Serwer o tej samej nazwie zdefiniowany w `.mcp.json` projektu (zatwierdzony), w zakresie local
+i w pliku `--mcp-config`: wygrywa definicja z `--mcp-config` (źródło `dynamic`), potem local, potem
+projekt. Wygrywa jedna definicja w całości, a procesy przesłoniętych nie startują. `claude mcp
+list` raportuje konflikt zakresów local i projektu, ale nie widzi `--mcp-config` (polecenie nie
+przyjmuje tej flagi).
+
+### V-03: przeładowanie ustawień w trakcie sesji
+
+[E] `settings.json` profilu i `.claude/settings.json` projektu są przeładowywane na żywo: hook i
+reguła `permissions.deny` dopisane przez hook w trakcie sesji zadziałały w tej samej sesji, z
+opóźnieniem (nie przy następnym wywołaniu narzędzia, ale po kilku sekundach). Plik z `--settings`
+NIE jest przeładowywany: czytany jest raz przy starcie. Hooki dopisane w trakcie sesji działają
+bez przeglądu w `/hooks`. [?] Dokładny czas opóźnienia; przeładowanie `settings.local.json`.
+
+### V-04: `--strict-mcp-config`, pluginy i konektory
+
+[E] Zalogowany profil sam pobrał przy pierwszej sesji pluginy i skille konta claude.ai (do
+`plugins/synced/` i `skills/synced/`) razem z ich serwerami MCP; konektor claude.ai był widoczny
+od początku. Z `--strict-mcp-config --mcp-config <plik>` jedynym serwerem MCP był ten z pliku:
+flaga wyłącza serwery MCP pluginów, konektory, zakres local i `.mcp.json`. Same pluginy dalej się
+ładują (ich skille, agenci i hooki działają), więc flaga izoluje wyłącznie MCP. [?] Serwery
+`mcpServers` z frontmattera agenta przy tej fladze.
+
+### V-05: `disableAllHooks` i dwie flagi `--settings`
+
+[E] Druga flaga `--settings` zastępuje pierwszą w całości, bez scalania kluczy (hook i `deny` z
+pierwszego pliku zniknęły, `env` z drugiego zadziałał). Projektowe `disableAllHooks: true`
+wyłącza też hooki użytkownika. `disableAllHooks: false` w pliku `--settings` wygrywa z projektem i
+przywraca WSZYSTKIE hooki, także te, które projekt chciał wyłączyć.
+
+### V-06: kolejność argumentów przy `--mcp-config`
+
+[E] Flaga jest wielowartościowa i połyka każdy następny argument pozycyjny, także prompt: wywołania
+`claude --mcp-config a.json "prompt" -p ...` i `claude -p --mcp-config a.json "prompt"` kończą się
+błędem `MCP config file not found: <cwd>/<prompt>` (kod 1). Działają: `-p ... --mcp-config a.json
+-- "prompt"`, `--mcp-config=a.json "prompt"` oraz wariant, w którym po `--mcp-config` stoi inna
+opcja. Prompt będący poprawnym JSON-em albo nazwą istniejącego pliku zostałby po cichu wzięty za
+konfigurację (wniosek z komunikatu, niesprawdzony). `--settings` jest jednowartościowa i niczego nie
+połyka.
+
+### V-07: czy `CLAUDE_CONFIG_DIR` odcina `~/.claude`
+
+[E] Z ustawionym `CLAUDE_CONFIG_DIR` lista skilli i agentów w sesji nie zawierała skilli ani
+agentów z prawdziwego `~/.claude`, a `CLAUDE.md` z prawdziwego `~/.claude` nie został wczytany;
+`CLAUDE.md` z profilu testowego został. To zamyka pierwszy punkt listy "Nieustalone" wyżej na
+[E]. Uwaga: konto claude.ai wnosi do profilu własne skille, pluginy i konektory (V-04).
+
+### V-08: frontmatter agenta poziomu user i wstawki `!`
+
+Agent w `agents/` profilu z `tools`, `permissionMode`, `mcpServers` (serwer inline) i
+`hooks.PreToolUse`; skill i komenda z wstawkami `` !`...` ``.
+
+[E] Jako subagent i jako agent sesji (`--agent`): `hooks` z frontmattera działają; serwer z
+`mcpServers` startuje bez żadnego zatwierdzania po stronie silnika, z poleceniem wskazanym we
+frontmatterze (zgody wymagało dopiero użycie jego narzędzia). `permissionMode` (`bypassPermissions`, `acceptEdits`)
+nie podniósł uprawnień w trybie `-p`: init raportował `permissionMode: 'default'`, a zapis pliku
+został odrzucony. [?] `permissionMode` w sesji interaktywnej.
+
+[E] Wstawki `!` w skillu i komendzie wykonują się przy wczytaniu. Domyślnie polecenia wymagające
+zgody (przekierowanie poza `cwd` albo tworzenie pliku) kończą się błędem, a błąd jednej wstawki
+blokuje rozwinięcie całego skilla. Z `--allowedTools Bash` albo z `allowed-tools: Bash` w
+frontmatterze skilla (bez żadnej flagi) wykonują się wszystkie: skill nadaje sobie uprawnienie do
+własnych wstawek.
+
+### Wpływ na decyzje ADR
+
+- Decyzja 3 (`--settings`): jest jeden plik `--settings` na uruchomienie (V-05); polityka firmy,
+  hooki, `disableAllHooks` i `deny` muszą być scalone w nim. Plik jest niezmienny przez całą
+  sesję (V-03), a `settings.json` profilu przeładowuje się na żywo, więc zapis do niego przy
+  działającej sesji zmienia jej zachowanie.
+- Decyzja 4 (`--mcp-config`): przesłanianie po nazwie jest pewne (V-02); tryb ścisły izoluje MCP, ale
+  nie pluginy ani skille konta (V-04). Obietnica pełnej izolacji wymaga w profilu
+  `syncClaudeAiPlugins: false`, `syncClaudeAiSkills: false`, `disableClaudeAiConnectors: true`.
+- Kolejność argv: wszystkie flagi przed promptem, prompt po `--`, flagi wielowartościowe w formie
+  `--flaga=wartość` (V-06).
+- Hooki firmy nie mogą zakładać kolejności względem hooków projektu ani że je zastąpią (V-01).
+- Izolacja przez `CLAUDE_CONFIG_DIR` od `~/.claude` jest potwierdzona (V-07).
+- Import i zatwierdzanie muszą obejmować frontmatter agentów (`hooks`, `mcpServers`,
+  `permissionMode`) oraz wstawki `!` i `allowed-tools` w skillach i komendach (V-08); stąd reguły
+  w ADR 0039.
+- Nadal [?]: kolizja skilla profilu ze skillem projektu w działającej sesji, deduplikacja
+  identycznych hooków, `permissionMode` w sesji interaktywnej, `mcpServers` agenta przy
+  `--strict-mcp-config`, dokładne opóźnienie przeładowania ustawień.
