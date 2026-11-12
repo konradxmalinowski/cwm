@@ -10,6 +10,7 @@
   },
   "include": [
     "src/main/**/*.ts",
+    "src/cli/**/*.ts",
     "src/core/**/*.ts",
     "src/infra/**/*.ts",
     "src/adapters/**/*.ts",
