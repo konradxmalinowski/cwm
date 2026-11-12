@@ -51,6 +51,7 @@ cwm init
     agents/<przestrzeń>/<nazwa>/agent.yaml
     commands/<przestrzeń>/<nazwa>/command.yaml
     settings/<przestrzeń>/<nazwa>/settings.yaml
+    files/<przestrzeń>/<nazwa>/files.yaml
     workflows/<przestrzeń>/<nazwa>/workflow.yaml
     plugins/<przestrzeń>/<nazwa>/plugin.yaml
     mcp/<przestrzeń>/<nazwa>/mcp.yaml
@@ -61,6 +62,7 @@ cwm init
       agents/<nazwa>/agent.yaml
       commands/<nazwa>/command.yaml
       settings/<nazwa>/settings.yaml
+      files/<nazwa>/files.yaml
       workflows/<nazwa>/workflow.yaml
       projects/<id>.yaml          manifesty projektów z `--store home`
   approvals/<firma>.yaml          zatwierdzenia zasobów z polami wykonawczymi (tworzy `cwm start`)
@@ -70,7 +72,9 @@ cwm init
 
 Katalog zasobu zawiera plik definicji i pliki, na które wskazuje `spec.source` (np. `SKILL.md`;
 import tworzy `SKILL.md`, `AGENT.md` i `COMMAND.md`). `Settings` nie ma pliku źródłowego: cała
-treść jest w `settings.yaml`.
+treść jest w `settings.yaml`. `Files` (wspólne pliki, zob. niżej) trzyma treść pod tą samą ścieżką
+względną, pod którą trafi do profilu. Istniejący `~/.cwm` dostaje katalog `registry/files/` po
+ponownym `cwm init`; bez niego `cwm doctor` ostrzega, a reszta działa.
 Id zasobu musi zgadzać się z położeniem: `registry/skills/global/code-review/` to
 `global/code-review`, a `companies/acme-a/skills/coding-standards/` to `acme-a/coding-standards`.
 Zasób w katalogu firmy z id spoza jej przestrzeni nazw jest pomijany z komunikatem. Przestrzenie
@@ -324,6 +328,30 @@ silnikiem lub procesem (`PATH`, `NODE_OPTIONS`, `CLAUDE_CONFIG_DIR`, `ANTHROPIC_
 `enabledPlugins` i pokrewne. `enforce` (domyślnie `false`) jest zapisywane i scalane, a użyje go
 dopiero generowanie profilu.
 
+Poza hookami, uprawnieniami i `env` `Settings` niesie dwa bloki bez wpływu na wykonanie kodu:
+`attribution` (`commit`, `pr`: teksty dopisywane do commitów i opisów PR, do 2048 znaków, bez
+sekretów; pusty tekst wyłącza dopisek) oraz `preferences` (`theme`, `tui`, `preferredNotifChannel`,
+`voiceEnabled`, `enableWorkflows` i `voice` z polami `enabled` i `mode`; teksty to krótkie nazwy
+trybów). Ten sam klucz o różnych wartościach w dwóch zasobach to błąd resolvera, jak w `env`.
+
+`registry/files/global/acme-guides/files.yaml` (rodzaj `Files`: wspólny materiał, który agenci i
+skille czytają po ścieżce, bez pól wykonawczych):
+
+```yaml
+apiVersion: cwm.dev/v1
+kind: Files
+metadata:
+  id: global/acme-guides
+  version: 1.0.0
+spec:
+  root: skills          # skills albo agents: katalog profilu
+  path: acme-guides.md  # ścieżka pod root; plik albo katalog
+```
+
+Treść leży w katalogu zasobu pod tą samą ścieżką (`acme-guides.md`, a dla katalogu
+`acme-support/ref.md` itd.), a `spec.path` jest jej wspólnym przedrostkiem. `cwm start` zapisuje ją
+w `claude/<root>/<ścieżka>`.
+
 ```yaml
 apiVersion: cwm.dev/v1
 kind: Settings
@@ -428,7 +456,7 @@ cwm company add [id] [--name <nazwa>] [--instructions <plik>]
 | `--instructions <plik>` | ścieżka względna pliku instrukcji firmy (np. `CLAUDE.md`), zapisana w `instructions.file` |
 
 Tworzy `companies/<id>/` z `company.yaml` oraz `skills/`, `agents/`, `workflows/`, `commands/`,
-`settings/` i `projects/`.
+`settings/`, `files/` i `projects/`.
 
 ```sh
 cwm company add acme-a --name "Acme A"
@@ -539,7 +567,7 @@ pomijane: `cwm` podaje ich liczbę i pierwsze pięć błędów na stderr (pełn�
 
 | Opcja | Znaczenie |
 |---|---|
-| `--kind <rodzaj>` | `skill`, `agent`, `workflow`, `plugin`, `mcp`, `settings` albo `command` |
+| `--kind <rodzaj>` | `skill`, `agent`, `workflow`, `plugin`, `mcp`, `settings`, `command` albo `files` |
 | `--company <id>` | tylko zasoby z katalogu tej firmy |
 
 ```sh
@@ -634,7 +662,7 @@ każdy wpis ma `file`, `path`, `message`, `line` i `col`.
 ### `cwm import claude`
 
 ```text
-cwm import claude (--company <id> | --global) [--from <katalog>] [--dry-run]
+cwm import claude (--company <id> | --global) [--from <katalog>] [--include-flagged <ścieżka>]... [--dry-run]
 ```
 
 Czyta natywny katalog Claude Code tylko do odczytu, pokazuje plan i raport, a po potwierdzeniu na
@@ -646,6 +674,7 @@ zasobów w żadnej konfiguracji. Model zagrożeń i decyzje: [ADR 0039](adr/0039
 | `--company <id>` | zapis w `companies/<id>/`, id zasobów `<id>/<nazwa>`; firma musi istnieć (`cwm company add`) |
 | `--global` | zapis w `registry/`, id `global/<nazwa>`; zasób jest widoczny dla wszystkich firm. Nie łączy się z `--company` |
 | `--from <katalog>` | katalog źródłowy; domyślnie `~/.claude` (zmienna `CLAUDE_CONFIG_DIR` nie jest brana pod uwagę). Nie może leżeć w katalogu danych CWM ani nim być |
+| `--include-flagged <ścieżka>` | dołącza plik oznaczony jako możliwy sekret (ścieżka względem `--from`, jak w sekcji „Oznaczone pliki”); powtarzalna. Nieznana ścieżka albo twardy sekret to błąd użycia (kod `2`) |
 | `--dry-run` | pokazuje plan i raport, niczego nie zapisuje; kod `0` |
 
 Na terminalu bez `--company` i `--global` `cwm` pyta o przestrzeń (firma albo `global`). Bez
@@ -657,36 +686,75 @@ i reszta).
 
 | Źródło | Rodzaj | Co powstaje |
 |---|---|---|
-| `skills/<nazwa>/` | `Skill` | `SKILL.md` i pliki pomocnicze skilla |
+| `skills/<nazwa>/` z `SKILL.md` | `Skill` | `SKILL.md` i pliki pomocnicze skilla |
+| `skills/<nazwa>/` bez `SKILL.md` | `Files` | drzewo wsparcia, id `<przestrzeń>/skills-<nazwa>`, `root: skills` |
+| `skills/<nazwa>.md` | `Files` | plik wprost w `skills/` (przewodnik), id `<przestrzeń>/skills-<nazwa>` |
 | `agents/<nazwa>.md` | `Agent` | `AGENT.md`; `tools` i `model` z frontmattera trafiają do manifestu |
+| `agents/<podkatalog>/` | `Files` | moduły agentów, id `<przestrzeń>/agents-<nazwa>`, `root: agents` |
 | `commands/<nazwa>.md` | `Command` | `COMMAND.md` |
-| `settings.json` | `Settings` | jeden zasób `<przestrzeń>/claude-settings` z `hooks`, `permissions` i `env` |
+| `settings.json` | `Settings` | jeden zasób `<przestrzeń>/claude-settings` z `hooks`, `permissions`, `env`, `attribution` i `preferences` |
 
 Zasoby dostają wersję `0.1.0`. Frontmatter jest odtwarzany z dozwolonych kluczy (nie kopiowany
-bajt w bajt), a treść pliku zostaje bez zmian. Nazwy są normalizowane do wzorca id (małe litery,
+bajt w bajt), a treść pliku zostaje bez zmian. Agent zachowuje `name`, `description`, `tools`,
+`model`, `color` i `memory` (tylko `user`, `project` albo `local`; inna wartość idzie do raportu).
+Nazwa zasobu `Files` ma przedrostek rodzaju (`skills-`, `agents-`), a ścieżka w profilu jest
+dokładnie taka jak w źródle, bo agenci odwołują się do niej po nazwie. Pliki `.md` w `agents/<podkatalog>/`
+przechodzą `parseFilesMarkdown`, także w `skills/`: frontmatter jest odtwarzany z dozwolonych kluczy
+(nigdy surowy), a plik z `hooks`, `mcpServers`, `permissionMode`, `tools`, `allowed-tools`, `model`,
+kluczem scalania YAML `<<` albo znacznikiem `...` jest pomijany z raportem. Wstawki `!` w treści dają
+zasobowi `Files` zatwierdzenie przy `cwm start` (pola w całości). Poza tym `Files` to dane: bez bitu
+wykonywania. `Files` nie może zawierać pliku `skill.md` w żadnej postaci (zwinięcie nazwy: NFKC, małe
+litery, bez znaków łączących i końcowych kropek oraz spacji): katalog z manifestem skilla jest
+`Skill`. Nazwy plików i katalogów spoza ASCII w drzewach skilli, agentów, komend i `Files` są
+pomijane z raportem. Dwa zasoby definiujące agenta o tej samej nazwie we frontmatterze to błąd planu
+`cwm start`. Nazwy są normalizowane do wzorca id (małe litery,
 znaki spoza `a-z0-9._-` zamienione na `-`).
 
 **Co jest pomijane** (każde pominięcie ma wpis w raporcie, bez wartości z pliku):
 
-- dowiązania symboliczne wszędzie (w tym `skills/<nazwa>` wskazujące na inne repozytorium); opcji
+- dowiązania symboliczne, których cel (po `realpath`) nie jest zwykłym plikiem ani katalogiem
+  wewnątrz `realpath(--from)`, leży poza `skills/`, `agents/`, `commands/`, w `skills/synced`,
+  w ukrytym wpisie `skills/`, w `.git`, `node_modules` albo pod chronioną nazwą, a także
+  zerwane i tworzące pętlę. Cel wewnątrz `--from` (np. skill instalowany przez narzędzie jako
+  dowiązania do `skills/<narzędzie>/...`) jest śledzony, ale do rejestru trafia kopia treści, nigdy
+  dowiązanie; raport podaje liczbę takich dowiązań per zasób. Dowiązanie na `skills/`, `agents/`,
+  `commands/` i `settings.json` jest zawsze pomijane. Cel nie może być samym korzeniem obszaru, a
+  reguły `synced`, ukrytych wpisów, `.git`, `node_modules` i chronionych nazw dotyczą też wpisów
+  wewnątrz śledzonego katalogu. Dowiązanie najwyższego poziomu do innego wpisu tego samego obszaru
+  (także innego obszaru, np. `skills/x -> agents/m`) jest aliasem i jest pomijane. Ukryte wpisy
+  są blokowane w `skills/`, `agents/` i `commands/`, także przez dowiązanie. Pliki z wieloma twardymi dowiązaniami są pomijane. Opcji
   `--follow-links` nie ma,
 - `skills/synced` (skille z konta claude.ai), `.git` i `node_modules`, a także wpisy zaczynające
   się od `.` bezpośrednio w `skills/`, `agents/` i `commands/` oraz zagnieżdżone katalogi w
-  `agents/` i `commands/`,
-- pliki, które wyglądają na zawierające sekret: nazwy w rodzaju `.env`, `*.pem`, `secrets.yaml`,
-  `kubeconfig`, `token.txt`, `service-account*.json`, a w treści m.in. znane prefiksy kluczy,
-  długie ciągi o wysokiej entropii i linie `hasło/token/klucz = wartość` (wartość co najmniej 4
-  znaki). Trafienie w `SKILL.md` pomija cały skill, w pliku pomocniczym tylko ten plik,
+  `commands/`,
+- trafienie klasyfikatora sekretów w `SKILL.md`, `AGENT.md` albo `COMMAND.md` pomija cały zasób.
+  Pliki pomocnicze z trafieniem nie są pomijane po cichu, tylko trafiają do przeglądu (sekcja
+  „Oznaczone pliki”),
 - agenci, skille i komendy z kluczem frontmattera `hooks`, `mcpServers` albo `permissionMode`
   (cały zasób jest odrzucany),
-- z `settings.json` wszystko poza `hooks`, `permissions` i `env`; klucze uruchamiające polecenia
-  (`statusLine`, `apiKeyHelper`, `enabledPlugins` i pokrewne), hooki inne niż `command`,
+- z `settings.json` wszystko poza `hooks`, `permissions`, `env`, `attribution` (`commit`, `pr`) oraz
+  preferencjami `theme`, `tui`, `voice`, `voiceEnabled`, `preferredNotifChannel`,
+  `enableWorkflows` (sprawdzane typy); klucze uruchamiające polecenia
+  (`statusLine`, `apiKeyHelper`, `enabledPlugins` i pokrewne) oraz `skipDangerousModePermissionPrompt`
+  (wyłącza ostrzeżenie przed `bypassPermissions`; raportowany jako zabroniony), hooki inne niż `command`,
   zmienne `env` sterujące silnikiem lub procesem (`PATH`, `NODE_OPTIONS`, `ANTHROPIC_BASE_URL`,
   `CLAUDE_CONFIG_DIR` i pokrewne); sekret w poleceniu hooka lub regule uprawnień pomija cały zasób
   `Settings`,
 - kolizje nazw po normalizacji (`Acme-Notes` i `acme-notes`): żadna ze stron nie jest importowana,
 - limity: plik do 1 MiB; skill do 500 plików, 10 MiB i 16 poziomów; cały import do 20 000 plików,
   5000 katalogów i 256 MiB (przekroczenie przerywa import kodem `1`).
+
+**Oznaczone pliki.** Plik pomocniczy z trafieniem klasyfikatora (nazwa, wzorzec klucza, entropia,
+linia `hasło/token/klucz = wartość`) nie jest kopiowany, ale plan wymienia go w sekcji „Oznaczone
+pliki”: ścieżka względem `--from`, powód, numer wiersza i stan (`pominiety`, `dolaczony`,
+`zawsze pominiety`), nigdy wartość. Na terminalu, po wypisaniu planu, `cwm` pyta o wielokrotny
+wybór plików do dołączenia (domyślnie żaden) i pokazuje plan jeszcze raz. Bez terminala służy do
+tego `--include-flagged <ścieżka>`. Dołączony plik staje się częścią zasobu i jego skrótu
+drzewa, a przy `cwm start` częścią zatwierdzenia (`Skill`, `Agent`) jak każdy inny. **Twardych
+sekretów nie da się dołączyć** i nie są trzymane w pamięci: blok klucza prywatnego, identyfikator
+`AKIA`/`ASIA`, klucze `sk-` i `sk-ant-`, tokeny `ghp_`, `github_pat_`, `glpat-`, `xox?-`, JWT, adres
+z danymi logowania (`://użytkownik:hasło@`) oraz pliki o nazwach takich jak `.env`, `*.pem`, `*.key`.
+Skan twardych sekretów obejmuje każdy plik pomocniczy, nie tylko te z trafieniem klasyfikatora.
 
 **Sekrety w `env`.** Wartość trafia do manifestu jako `value` tylko wtedy, gdy ani nazwa, ani
 wartość nie wyglądają na sekret. W przeciwnym razie powstaje `envRef` o tej samej nazwie, a raport
@@ -700,7 +768,7 @@ manifeście, a skryptów nie kopiuje się do rejestru.
 
 #### Przykład
 
-Natywny katalog (`acme-linked` to dowiązanie do innego repozytorium, `acme-reviewer` ma
+Natywny katalog (`acme-linked` to dowiązanie do innego repozytorium poza `--from`, `acme-reviewer` ma
 w frontmatterze klucz `hooks`, `acme-lint` ma obok `SKILL.md` plik `.env`):
 
 ```text
@@ -738,12 +806,14 @@ Pochodzenie (zrodlo po realpath, skrot kopiowanego drzewa):
   acme-a/acme-lint: /home/user/.claude/skills/acme-lint sha256:85667ea3...
   acme-a/acme-notes: /home/user/.claude/skills/Acme-Notes sha256:10237d43...
 
-Raport (10):
+Oznaczone pliki (mozliwy sekret, 1; do przegladu 0, twardych 1):
+  skills/acme-lint/.env: Nazwa pliku ".env" wskazuje na dane uwierzytelniajace. [zawsze pominiety]
+
+Raport (9):
   settings.json: hook ~/.claude/hooks/acme-fmt.js: nieprzypiete: zatwierdzasz sciezke, nie tresc (brak pliku)
   settings.json: env: wyglada na sekret, zapisano envRef zamiast wartosci (uzupelnij zmienne srodowiska): ACME_API_TOKEN
   skills/Acme-Notes: nazwa znormalizowana do "acme-notes"
-  skills/acme-linked: dowiazanie symboliczne pominiete (brak --follow-links)
-  skills/acme-lint/.env: mozliwy sekret: Nazwa pliku ".env" wskazuje na dane uwierzytelniajace.
+  skills/acme-linked: dowiazanie prowadzi poza katalog --from
   agents/acme-reviewer.md: frontmatter.hooks: Klucz uruchamia kod albo rozszerza uprawnienia: zasob jest odrzucany.
   settings.json: model: poza zakresem importu
   settings.json: statusLine: zabroniony: uruchamia polecenia albo zmienia zrodla pluginow
@@ -766,7 +836,8 @@ Skróty w przykładzie są obcięte do 8 znaków; polecenie wypisuje pełne 64.
 3. `Pochodzenie`: dla każdego zasobu ścieżka źródła po `realpath` i `sha256` kopiowanego drzewa (dla
    `Settings` skrót bajtów `settings.json`). To jest tylko wyjście polecenia, rejestr tego nie
    przechowuje.
-4. `Raport (N)`: najpierw uwagi do importowanych zasobów (normalizacja nazwy, nieznane klucze
+4. `Oznaczone pliki`: lista z punktu wyżej (tekst pokazuje 40 wpisów).
+5. `Raport (N)`: najpierw uwagi do importowanych zasobów (normalizacja nazwy, nieznane klucze
    frontmattera, `envRef`, skrypty hooków), potem wszystko, co pominięto. Tekst pokazuje 40
    wpisów, resztę da `--json`.
 
@@ -784,9 +855,9 @@ kopia, pomijana przy odczycie rejestru). Zasoby `bez zmian` nie są zapisywane.
 Gdy plan ma coś do zapisania, `cwm` wypisuje go i kończy się kodem `1`; nie ma opcji `--yes`.
 Plan do obejrzenia daje `--dry-run` (kod `0`).
 
-**`--json`.** Obiekt `{ ok, dryRun, written, from, target, namespace, items[], skipped[] }`, gdzie
-`items[]` mają `kind`, `id`, `status`, `changes`, `flags`, `notes`, `source`, `sha256`, a
-`skipped[]` pary `{ item, reason }`. Przy zmianach do zapisania bez terminala `ok` to `false`, a
+**`--json`.** Obiekt `{ ok, dryRun, written, from, target, namespace, items[], skipped[], flagged[] }`, gdzie
+`items[]` mają `kind`, `id`, `status`, `changes`, `flags`, `notes`, `source`, `sha256`,
+`skipped[]` to pary `{ item, reason }`, a `flagged[]` wpisy `{ label, path, reason, line, hard, included }`. Przy zmianach do zapisania bez terminala `ok` to `false`, a
 obiekt ma dodatkowo pole `error`.
 
 Kody: `0` (plan wypisany, zapis wykonany albo brak zmian); `1`, gdy firma nie istnieje, `--from`
@@ -795,7 +866,7 @@ terminala, użytkownik odmówił albo zapis któregoś zasobu się nie udał; `2
 `--company` i `--global` bez terminala, przy obu naraz albo niepoprawnym id firmy.
 
 Po imporcie `cwm doctor` i `cwm resource list` widzą nowe zasoby. Z zasobem włączonym w firmie
-`cwm resolve` wypisuje jego id w `resolved.skills`, `resolved.commands` albo `resolved.settings`.
+`cwm resolve` wypisuje jego id w `resolved.skills`, `resolved.commands`, `resolved.files` albo `resolved.settings`.
 
 ### `cwm start`
 
@@ -846,7 +917,7 @@ Przed pytaniami `start` wypisuje ostrzeżenia planu oraz ostrzeżenia zasobów j
 claude/                      CLAUDE_CONFIG_DIR
   settings.json              Settings bez enforce (hooki, uprawnienia, env z value)
   CLAUDE.md                  instructions.file firmy (jeśli ustawione)
-  skills/ agents/ commands/  zasoby optional, zwykłe nazwy
+  skills/ agents/ commands/  zasoby optional, zwykłe nazwy; Files pod claude/<root>/<ścieżka>
 sessions/<skrót projektu>/   pliki tego uruchomienia
   settings.json              jedyny plik --settings: Settings z enforce, klucze izolacji
   mcp.json                   serwery MCP jako cwm-<firma>-<nazwa>, env tylko jako ${NAZWA}
@@ -858,7 +929,23 @@ tmp/                         CLAUDE_CODE_TMPDIR
 active/<pid>.json            znaczniki trwających sesji (blokada profilu)
 ```
 
-Zasoby `mandatory` trafiają do pluginu przekazanego przez `--plugin-dir`, więc projekt nie może
+Zasoby `Files` zawsze trafiają do profilu pod zwykłą ścieżką `claude/<root>/<ścieżka>`, także gdy
+są `mandatory`: to dane, nie polecenia, a agenci odwołują się do nich po ścieżce, której plugin
+by zmienił. Zatwierdzenia wymaga tylko `Files` z `agents/`, w którym plik `.md` ma frontmatter
+agenta z wstawkami `!`.
+
+**Odwołania do natywnego katalogu.** W kopiach skilli, agentów, komend i `Files` odwołania do
+`~/.claude`, `$HOME/.claude`, `${HOME}/.claude` i bezwzględnej ścieżki katalogu domowego (też po
+`realpath`) są przepisywane na ścieżkę profilu (`CLAUDE_CONFIG_DIR`), żeby sesja nie czytała
+prawdziwego katalogu natywnego. Dopasowanie kończy się na granicy nazwy (`~/.claude.json` zostaje).
+Przepisywane są pliki tekstowe bez bitu wykonywania; skrypty wykonywalne i pliki binarne nie.
+Przepisana treść jest częścią planu i skrótów zatwierdzenia (APR-04). `cwm start --dry-run` podaje
+liczbę per zasób i łącznie (`rewrittenReferences` w `--json`). Polecenia hooków nie są
+przepisywane: zostają przypięte do prawdziwych skryptów. Katalog `--from` jest zapisany w manifeście zasobu (`spec.nativeDir`), więc jego odwołania są
+przepisywane także wtedy, gdy leży poza katalogiem domowym. Po aktualizacji zatwierdzenia zasobów
+wspominających katalog natywny zostaną zapytane raz ponownie (zmienia się treść po przepisaniu).
+
+Zasoby `mandatory` (poza `Files`) trafiają do pluginu przekazanego przez `--plugin-dir`, więc projekt nie może
 ich zasłonić. Zasoby `optional` mają zwykłe nazwy; kolizja z natywnym `.claude/` projektu (cwd,
 katalogi nadrzędne do korzenia repozytorium, `--add-dir`, dwa poziomy w głąb) daje ostrzeżenie.
 CWM nie zapisuje `.claude.json` ani innych plików silnika i usuwa tylko pliki z własnego manifestu,

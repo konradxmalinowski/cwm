@@ -67,6 +67,26 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 - Odczyt kopii zapasowych w formacie `uasm-backup` z v0.1.0.
 - Rozpoznawanie dowiązań utworzonych przez v0.1.0 jako własnych dowiązań aplikacji, więc
   eksport i cofnięcie działają na nich od razu.
+- `cwm import claude` i `cwm start` na prawdziwej konfiguracji (Etap C, ADR 0041, `docs/CLI.md`):
+  - Dowiązania symboliczne, których cel leży wewnątrz `--from` (skille instalowane przez narzędzia
+    jako dowiązania), są śledzone, a do rejestru trafia kopia treści. Cele poza `--from` i w
+    pominiętych obszarach nadal są pomijane z raportem.
+  - Pliki pomocnicze z trafieniem klasyfikatora sekretów trafiają do przeglądu w planie (ścieżka,
+    powód, wiersz) zamiast być pomijane po cichu. Na terminalu wielokrotny wybór (domyślnie żaden),
+    bez terminala `--include-flagged <ścieżka>`. Twardych sekretów (klucz prywatny, `AKIA`, `sk-`,
+    tokeny GitHub/GitLab/Slack, JWT, adres z hasłem) nie da się dołączyć.
+  - Nowy rodzaj zasobu `Files` (wspólne pliki: `.md` w `skills/`, katalogi bez `SKILL.md`,
+    podkatalogi `agents/`) i klucz `files` we wszystkich zbiorach zasobów. Profil zapisuje je w
+    `claude/<skills|agents>/<ścieżka>`.
+  - Frontmatter agenta zachowuje `memory` (`user`, `project`, `local`) i `color`.
+  - `cwm start` przepisuje w kopiach skilli, agentów, komend i `Files` odwołania do `~/.claude`,
+    `$HOME/.claude` i ścieżki katalogu domowego na ścieżkę profilu; hooki bez zmian.
+  - Poprawka bezpieczeństwa: frontmatter skilli, agentów, komend i plików `Files` jest
+    odtwarzany bez pustego bloku (`name:` albo brak nagłówka), a treść zaczynająca się od drugiego
+    bloku `---` albo od prologu w kształcie YAML zakończonego `---` jest odrzucana. Wcześniej drugi blok mógł trafić do silnika bez analizy (`hooks`, `permissionMode`).
+  - `settings.json`: import `attribution` (`commit`, `pr`) i preferencji `theme`, `tui`, `voice`,
+    `voiceEnabled`, `preferredNotifChannel`, `enableWorkflows`. `skipDangerousModePermissionPrompt`
+    jest nadal odrzucany.
 
 ### Changed
 
