@@ -98,6 +98,22 @@ export interface PinInfo {
   readonly unpinnedReason: string | null;
 }
 
+/**
+ * Zrodlo pluginu z lokalnego marketplace'u (ADR 0043), rozwiazane przy `cwm start`. Wchodzi do pol
+ * zatwierdzenia, wiec zmiana nazwy marketplace'u, wpisu, deklarowanego zrodla albo rozwiazanej
+ * sciezki pyta ponownie, nawet gdy tresc drzewa pozostala ta sama.
+ */
+export interface MarketplaceFacts {
+  readonly marketplace: string;
+  /** Nazwa wpisu tak, jak stoi w marketplace.json (moze roznic sie wielkoscia liter od `source.plugin`). */
+  readonly plugin: string;
+  /** Tekst `source` z marketplace.json. */
+  readonly declaredSource: string;
+  /** Katalog marketplace'u i katalog pluginu po `realpath`. */
+  readonly marketplaceRoot: string;
+  readonly resolvedPath: string;
+}
+
 /** Fakty o tresci zasobu liczone z plikow zrodlowych, nie z flag w manifescie (APR-01). */
 export interface ResourceFacts {
   readonly pins?: readonly PinInfo[];
@@ -110,6 +126,8 @@ export interface ResourceFacts {
   readonly treeSha256?: string;
   readonly files?: readonly { readonly path: string; readonly sha256: string }[];
   readonly pluginExec?: PluginExecutables;
+  /** Tylko plugin `source.type: marketplace`; brak dla `local`, wiec skroty pluginow `local` sie nie zmieniaja. */
+  readonly marketplace?: MarketplaceFacts;
   /** Skrot tresci zrodla skilla, agenta lub komendy. */
   readonly sourceSha256?: string;
   readonly content?: {
@@ -188,6 +206,8 @@ export function executionFields(
         manifestRefs: facts.pluginExec?.manifestRefs ?? {},
         unparsed: [...(facts.pluginExec?.unparsed ?? [])],
         pins: (facts.pins ?? []).map((pin) => ({ path: pin.raw, sha256: pin.sha256 })),
+        // Dodawane tylko dla marketplace'u, zeby skroty zatwierdzonych pluginow `local` sie nie zmienily.
+        ...(facts.marketplace === undefined ? {} : { marketplace: { ...facts.marketplace } }),
       };
     case 'settings':
       return {

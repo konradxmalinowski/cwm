@@ -275,6 +275,109 @@ describe('pola zatwierdzenia pluginu (SEC-04)', () => {
       'dodany plik: c.js',
     ]);
   });
+
+  it('headersHelper z .mcp.json pluginu jest w polach, wiec jego zmiana zmienia skrot', () => {
+    const exec = (helper: string) =>
+      extractPluginExecutables([
+        {
+          rel: '.mcp.json',
+          bytes: text({
+            mcpServers: {
+              docs: { type: 'http', url: 'https://example.invalid/m', headersHelper: helper },
+            },
+          }),
+        },
+      ]);
+    const before = exec('${CLAUDE_PLUGIN_ROOT}/helper.sh');
+    expect(before.mcpServers['.mcp.json:docs']?.headersHelper).toBe(
+      '${CLAUDE_PLUGIN_ROOT}/helper.sh',
+    );
+    const a = executionFields(plugin, { treeSha256: 't'.repeat(64), pluginExec: before });
+    const b = executionFields(plugin, {
+      treeSha256: 't'.repeat(64),
+      pluginExec: exec('${CLAUDE_PLUGIN_ROOT}/other.sh'),
+    });
+    expect(canonicalJson(a)).not.toBe(canonicalJson(b));
+  });
+
+  it('polecenie z CLAUDE_PLUGIN_ROOT i ".." (tez zakodowane) jest bledem, a zwykla sciezka nie', () => {
+    const scan = (command: string, server = false) =>
+      extractPluginExecutables(
+        server
+          ? [{ rel: '.mcp.json', bytes: text({ mcpServers: { s: { command } } }) }]
+          : [
+              {
+                rel: 'hooks/hooks.json',
+                bytes: text({ hooks: { Stop: [{ hooks: [{ type: 'command', command }] }] } }),
+              },
+            ],
+      ).errors;
+    expect(scan('${CLAUDE_PLUGIN_ROOT}/hooks/check.sh')).toEqual([]);
+    for (const bad of [
+      '${CLAUDE_PLUGIN_ROOT}/../../x/check.sh',
+      'sh "${CLAUDE_PLUGIN_ROOT}/a/../../x.sh"',
+      '${CLAUDE_PLUGIN_ROOT}/%2e%2e/x.sh',
+      '${CLAUDE_PLUGIN_ROOT}\\..\\x.sh',
+    ]) {
+      expect(scan(bad)).toHaveLength(1);
+      expect(scan(bad, true)).toHaveLength(1);
+    }
+  });
+
+  describe('plugin z marketplace (ADR 0043)', () => {
+    const marketplacePlugin: Plugin = {
+      kind: 'plugin',
+      id: 'marketplace/acme-lint',
+      version: '1.0.0',
+      source: { type: 'marketplace', marketplace: 'example-market', plugin: 'acme-lint' },
+      activationDefault: 'enabled',
+    };
+    const facts = {
+      marketplace: 'example-market',
+      plugin: 'acme-lint',
+      declaredSource: './plugins/acme-lint',
+      marketplaceRoot: '/m',
+      resolvedPath: '/m/plugins/acme-lint',
+    };
+    const tree = { treeSha256: 't'.repeat(64) };
+    const hashOf = (resource: Plugin, extra: object) =>
+      approvalHash({
+        company: 'acme-a',
+        kind: 'plugin',
+        id: resource.id,
+        fields: executionFields(resource, { ...tree, ...extra }),
+      });
+
+    it('pola pluginu local nie dostaja klucza marketplace (skroty zatwierdzonych sie nie zmieniaja)', () => {
+      const fields = executionFields(plugin, tree);
+      expect(Object.keys(fields ?? {}).sort()).toEqual([
+        'files',
+        'hookCommands',
+        'hookOther',
+        'lspServers',
+        'manifestRefs',
+        'mcpServers',
+        'pins',
+        'source',
+        'treeSha256',
+        'unparsed',
+      ]);
+    });
+
+    it('nazwa marketplace, wpis, zrodlo i rozwiazana sciezka wchodza do skrotu', () => {
+      const base = hashOf(marketplacePlugin, { marketplace: facts });
+      expect(base).toMatch(/^[0-9a-f]{64}$/);
+      for (const change of [
+        { marketplace: 'other-market' },
+        { plugin: 'Acme-Lint' },
+        { declaredSource: './plugins/other' },
+        { marketplaceRoot: '/m2' },
+        { resolvedPath: '/m/plugins/other' },
+      ]) {
+        expect(hashOf(marketplacePlugin, { marketplace: { ...facts, ...change } })).not.toBe(base);
+      }
+    });
+  });
 });
 
 describe('pola zatwierdzenia skilla i komendy (SEC-04)', () => {

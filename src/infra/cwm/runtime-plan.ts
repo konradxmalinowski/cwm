@@ -11,6 +11,8 @@ import {
   executionFields,
   foldName,
   extractPluginExecutables,
+  isInsidePluginRoot,
+  serverCommandStrings,
   foreignEnvRefs,
   formatJson,
   makeSubject,
@@ -26,6 +28,7 @@ import {
   type ApprovalSubject,
   type CompanyManifest,
   type EffectiveConfiguration,
+  type MarketplaceFacts,
   type McpServer,
   type PinInfo,
   type Resource,
@@ -34,6 +37,7 @@ import {
 import { describeUnpinned, pinHookCommands } from './hook-pins';
 import { parseContent, parseFilesMarkdown } from './import-source';
 import { companyDir, resourceFileName, type CwmLayout } from './layout';
+import { directoryUnchanged, resolveMarketplacePlugin, versionWarnings } from './marketplace';
 import { realpathLoose } from './paths';
 import { readTextWithin } from './read';
 import { runtimeCompanyDir } from './runtime-fs';
@@ -281,6 +285,8 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     resource: Resource;
     facts: ResourceFacts;
     commands: readonly string[];
+    /** Teksty serwerow MCP i LSP: z nich przypinamy tylko sciezki bezwzgledne i `~`. */
+    serverStrings?: readonly string[];
     exclude?: (raw: string) => boolean;
   }> = [];
 
@@ -553,19 +559,46 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         break;
       }
       case 'plugin': {
-        if (resource.source.type !== 'local') {
+        const source = resource.source;
+        let root: string | null;
+        let marketplaceFacts: MarketplaceFacts | undefined;
+        let entryVersion: string | null = null;
+        if (source.type === 'local') {
+          root = dir === undefined ? null : await realInside(dir, source.path);
+        } else if (source.type === 'marketplace') {
+          // Marketplace: katalog pluginu wskazuje wpis z marketplace.json; dalej ta sama sciezka co `local`.
+          const resolved = await resolveMarketplacePlugin(
+            workspace.global.ok ? workspace.global.value.marketplaces : undefined,
+            source.marketplace,
+            source.plugin,
+          );
+          if (!resolved.ok) {
+            out.errors.push(`${label}: ${resolved.reason}.`);
+            break;
+          }
+          root = resolved.dir;
+          marketplaceFacts = resolved.facts;
+          entryVersion = resolved.version;
+        } else {
           out.errors.push(
-            `${label}: pluginy ${resource.source.type} nie sa obslugiwane w cwm start (tylko local).`,
+            `${label}: pluginy ${source.type} nie sa obslugiwane w cwm start (tylko local i marketplace).`,
           );
           break;
         }
-        const root = dir === undefined ? null : await realInside(dir, resource.source.path);
-        const tree = root === null ? null : await readTree(root);
+        const tree =
+          root === null ? null : await readTree(root, undefined, { rejectHardlinks: true });
         if (tree === null || !tree.ok) {
           out.errors.push(
             `${label}: ${tree === null ? 'katalog pluginu nie istnieje albo wychodzi poza zasob' : tree.message}.`,
           );
           break;
+        }
+        if (marketplaceFacts !== undefined) {
+          if (root === null || !(await directoryUnchanged(root))) {
+            out.errors.push(`${label}: katalog pluginu zmienil sie w trakcie odczytu.`);
+            break;
+          }
+          out.warnings.push(...versionWarnings(label, resource.version, entryVersion, tree.files));
         }
         const treeHash = treeSha256(tree.files);
         const slug = `${slugOf(resource.id)}@${treeHash.slice(0, 16)}`;
@@ -586,10 +619,12 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
             treeSha256: treeHash,
             files: tree.files.map((f) => ({ path: f.rel, sha256: sha256Hex(f.bytes) })),
             pluginExec: exec,
+            ...(marketplaceFacts === undefined ? {} : { marketplace: marketplaceFacts }),
           },
           commands: exec.hookCommands,
-          // Sciezki pod ${CLAUDE_PLUGIN_ROOT} sa w drzewie, wiec obejmuje je lista plikow.
-          exclude: (raw) => raw.includes('CLAUDE_PLUGIN_ROOT'),
+          serverStrings: serverCommandStrings(exec),
+          // Sciezki pod ${CLAUDE_PLUGIN_ROOT} bez ".." sa w drzewie, wiec obejmuje je lista plikow.
+          exclude: isInsidePluginRoot,
         });
         break;
       }
@@ -716,7 +751,18 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
       pending.exclude === undefined
         ? pins
         : pins.filter((pin) => !pending.exclude?.(pin.token.raw));
-    const infos = pinInfos(kept, dropped).map((info) => {
+    let all = kept;
+    let droppedAll = dropped;
+    if (pending.serverStrings !== undefined && pending.serverStrings.length > 0) {
+      const server = await pinHookCommands(pending.serverStrings, input.homeDir);
+      const have = new Set(all.map((pin) => pin.token.raw));
+      all = [
+        ...all,
+        ...server.pins.filter((pin) => pin.token.base !== 'variable' && !have.has(pin.token.raw)),
+      ];
+      droppedAll += server.dropped;
+    }
+    const infos = pinInfos(all, droppedAll).map((info) => {
       // Sciezka do pliku tego uruchomienia: liczy sie tresc, ktora trafi na dysk, nie stara kopia.
       const rel = info.raw.startsWith(`${baseDir}/`) ? info.raw.slice(baseDir.length + 1) : null;
       const planned = rel === null ? undefined : out.files.get(foldPath(rel));

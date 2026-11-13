@@ -153,6 +153,57 @@ function resolveRef(text: string): Ref {
   return { ok: true, rel: parts.join('/') };
 }
 
+/** Tokeny polecenia (bez cudzyslowow), ktore wspominaja `CLAUDE_PLUGIN_ROOT`. */
+function rootTokens(text: string): string[] {
+  return text
+    .replace(/["']/g, '')
+    .split(/[\s;|&()<>`]+/)
+    .filter((token) => token.includes('CLAUDE_PLUGIN_ROOT'));
+}
+
+/** Segmenty sciezki po zdjeciu kodowania procentowego i zamianie `\` na `/` (warianty `..`: `%2e%2e`, `..\\`). */
+function pathSegments(token: string): string[] {
+  let decoded = token;
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return decoded.replace(/\\/g, '/').split('/');
+}
+
+/**
+ * Czy token z `CLAUDE_PLUGIN_ROOT` wychodzi z korzenia pluginu (segment `..` gdziekolwiek w sciezce,
+ * takze zakodowany albo z ukosnikiem wstecznym). Ta sama regula co `resolveRef`.
+ */
+export function escapesPluginRoot(text: string): boolean {
+  return rootTokens(text).some((token) => pathSegments(token).includes('..'));
+}
+
+/** Czy token to sciezka pod `${CLAUDE_PLUGIN_ROOT}` (lub `$CLAUDE_PLUGIN_ROOT`) bez wyjscia z korzenia: obejmuje ja lista plikow. */
+export function isInsidePluginRoot(token: string): boolean {
+  return /^\$\{?CLAUDE_PLUGIN_ROOT\}?\//.test(token) && !escapesPluginRoot(token);
+}
+
+/** Teksty serwerow MCP i LSP, ktore moga byc poleceniami lub sciezkami: `command`, `args`, `headersHelper`, `cwd`. */
+export function serverCommandStrings(
+  exec: Pick<PluginExecutables, 'mcpServers' | 'lspServers'>,
+): string[] {
+  const out: string[] = [];
+  for (const group of [exec.mcpServers, exec.lspServers]) {
+    for (const server of Object.values(group)) {
+      for (const text of [server.command, server.headersHelper, server.cwd, ...server.args]) {
+        if (text !== null) out.push(text);
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * Czyta `hooks/hooks.json`, `.mcp.json`, `.lsp.json` i `.claude-plugin/plugin.json` oraz pliki, na ktore
  * wskazuje manifest. Nazwy plikow dopasowujemy bez rozroznienia wielkosci liter (APFS i NTFS tak je
@@ -258,6 +309,23 @@ export function extractPluginExecutables(files: readonly ScanFile[]): PluginExec
           `plugin.json: nieznany klucz "${key}" (moze uruchamiac procesy); plugin odrzucony.`,
         );
       }
+    }
+  }
+  // `${CLAUDE_PLUGIN_ROOT}/../x` wychodzi z migawki: tresc skryptu nie trafilaby do skrotu.
+  const probe: PluginExecutables = {
+    hookCommands: [],
+    hookOther: [],
+    mcpServers: mcp,
+    lspServers: lsp,
+    manifestRefs: {},
+    unparsed: [],
+    errors: [],
+  };
+  for (const text of [...commands, ...serverCommandStrings(probe)]) {
+    if (escapesPluginRoot(text)) {
+      errors.push(
+        `polecenie wychodzi poza korzen pluginu przez "..": ${text.length > 120 ? `${text.slice(0, 120)}...` : text}`,
+      );
     }
   }
   return {

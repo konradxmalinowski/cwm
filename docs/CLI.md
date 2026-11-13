@@ -45,7 +45,7 @@ cwm init
 
 ```text
 ~/.cwm/
-  config.yaml                     konfiguracja globalna (tworzy ją `cwm init`)
+  config.yaml                     konfiguracja globalna (tworzy ją `cwm init`), w tym marketplace'y
   registry/                       zasoby wspólne
     skills/<przestrzeń>/<nazwa>/skill.yaml
     agents/<przestrzeń>/<nazwa>/agent.yaml
@@ -284,6 +284,25 @@ spec:
   activation:
     default: disabled
 ```
+
+Plugin z lokalnego marketplace'u (ADR 0043) wymaga wpisu w `~/.cwm/config.yaml` (opcjonalne pole
+`marketplaces`; jego brak oznacza brak marketplace'ów, a stare pliki pozostają poprawne). Wpis
+tworzy `cwm marketplace add`:
+
+```yaml
+marketplaces:
+  example-market:
+    type: local
+    path: /home/user/marketplaces/example-market
+```
+
+Nazwa to małe litery ASCII (jak przestrzeń nazw id) i musi być równa polu `name` w
+`<katalog>/.claude-plugin/marketplace.json`. Typ inny niż `local` jest błędem walidacji. Zasób
+`Plugin` nie ma polecenia `cwm plugin add`: manifest zapisuje się ręcznie w
+`registry/plugins/marketplace/<plugin>/plugin.yaml` (gotowy tekst wypisuje `cwm marketplace show
+<nazwa> <plugin>`), a jego id dopisuje do `plugins.enable` w `company.yaml` (albo `spec.plugins.enable`
+projektu). Dwa marketplace'y z pluginami o tej samej nazwie wymagają różnych id zasobów, np.
+`marketplace/acme-lint` i `marketplace/other-acme-lint`; wskazuje je `spec.source.plugin`, nie id.
 
 `registry/mcp/global/acme-docs/mcp.yaml`. Sekretów nie wpisuje się wprost: zmienna środowiskowa
 to odwołanie `envRef`. Transport `stdio` wymaga `command` (jeden plik wykonywalny, bez spacji) i
@@ -581,6 +600,48 @@ skill   global/code-review@1.0.0       rejestr       /home/user/.cwm/registry/sk
 ```
 
 Kody: `0`; `2` przy złej wartości `--kind`. Z `--json`: `{ ok, resources: [...], skippedFiles }`.
+
+### `cwm marketplace`
+
+```text
+cwm marketplace add <nazwa> <katalog>
+cwm marketplace list
+cwm marketplace remove <nazwa>
+cwm marketplace show <nazwa> [<plugin>]
+```
+
+Lokalne marketplace'y pluginów (ADR 0043): katalog z `.claude-plugin/marketplace.json`. Polecenia
+tylko czytają katalog marketplace'u; jedyny zapis to pole `marketplaces` w `~/.cwm/config.yaml`
+(przez writer `~/.cwm`, atomowo, tryb 0600, komentarze i reszta pliku zostają).
+
+- `add` zapisuje ścieżkę po `realpath` i odmawia, gdy marketplace nie przechodzi kontroli
+  (poniżej), nazwa różni się od `name` w `marketplace.json` albo jest już zarejestrowana.
+- `list` pokazuje stan każdego wpisu (`ok` albo powód błędu).
+- `remove` usuwa wpis z konfiguracji (katalog marketplace'u zostaje) i odmawia, gdy jakiś zasób
+  `Plugin` na niego wskazuje.
+- `show <nazwa>` wypisuje pluginy z katalogu i stan każdego (to samo rozwiązanie ścieżki co
+  `cwm start`, więc dowiązania i uprawnienia też są widoczne). `show <nazwa> <plugin>` dopisuje
+  gotowy manifest zasobu `Plugin`.
+
+**Kontrola marketplace'u** (przy `add`, `list`, `show` i `cwm start`): ścieżka bezwzględna; po
+`realpath` katalog należy do bieżącego użytkownika i nie jest zapisywalny dla grupy ani innych, a jego
+katalog nadrzędny ma właściciela root albo użytkownika i nie jest zapisywalny dla grupy ani innych
+(jak plik silnika; chyba że ma bit sticky). Tak samo `.claude-plugin/`, `marketplace.json` i każdy
+katalog na ścieżce do pluginu. `marketplace.json` jest czytany jako zwykły plik do 512 KiB (limit
+przed dekodowaniem), w UTF-8, bez zabronionych kluczy. Walidacja jest ostra: dozwolone pola
+korzenia to `$schema`, `name`, `owner`, `metadata`, `plugins`, `description`, `version`;
+`metadata.pluginRoot` jest odrzucane (zmieniałoby znaczenie `source`).
+
+**Wpis pluginu jest używalny tylko wtedy, gdy:** nazwa jest ASCII i nie zwija się (`foldName`:
+wielkość liter, Unicode) do tej samej nazwy co inny wpis; `source` to tekst `./sciezka` (bez `..`,
+bez ścieżki bezwzględnej, bez segmentów zaczynających się od `.`, bez samego korzenia); wpis nie
+deklaruje `hooks`, `mcpServers`, `lspServers`, `commands`, `agents`, `skills` ani `outputStyles` (silnik
+czyta je z `plugin.json` pluginu, nie z wpisu) i nie ma `strict: false`; nie ma nieznanych pól.
+Źródła obiektowe (`github`, `url`, `git`, `npm`) są odrzucane z powodem: CWM niczego nie pobiera.
+Kto potrzebuje takiego pluginu, klonuje go sam do katalogu marketplace'u i wpisuje `./sciezka`.
+
+Kody: `0`; `1` przy odmowie (marketplace nie przechodzi kontroli, nazwa zajęta, nieznany, w użyciu);
+`2` przy niepoprawnej nazwie. Z `--json` każde polecenie zwraca `{ ok, ... }`.
 
 ### `cwm resolve`
 
@@ -885,7 +946,7 @@ skróty zatwierdzeń liczone z tych samych bajtów, zatwierdzenie, zapis dokład
 odczyt kontrolny, `spawn`. Katalogiem silnika jest katalog projektu z manifestem (też przy
 wywołaniu z podkatalogu), nie `cwd`.
 
-**Zatwierdzenia.** Wymagają ich: każdy serwer MCP, plugin `local`, `Settings`, skill, agent i
+**Zatwierdzenia.** Wymagają ich: każdy serwer MCP, plugin `local` i `marketplace`, `Settings`, skill, agent i
 komenda z `allowed-tools`, `tools` albo wstawkami `!` (liczone z plików, nie z flag w manifeście)
 para (katalog projektu po `realpath`, firma, z listą zasobów włączonych przez projekt) oraz opcje
 uruchamiania firmy (`company:<id>`: `runtime.claude.path`, `env.passthrough`, `isolation`). Skrót
@@ -901,7 +962,7 @@ Zatwierdzenie serwera MCP ma klucz `mcp:<id>@<skrót-projektu>` tylko wtedy, gdy
 w każdym projekcie. Wygenerowany `mcp.json` ma bezwzględną ścieżkę pliku polecenia po `realpath`
 (tego, który został zahaszowany).
 
-**Skanowanie pluginu `local`.** `hooks/hooks.json`, `.mcp.json`, `.lsp.json` i
+**Skanowanie pluginu `local` i `marketplace`.** `hooks/hooks.json`, `.mcp.json`, `.lsp.json` i
 `.claude-plugin/plugin.json` są znajdowane bez rozróżniania wielkości liter. Odwołania `plugin.json`
 (`hooks`, `mcpServers`, `lspServers` jako ścieżka, lista ścieżek albo obiekt, oraz ścieżki
 `commands`, `agents`, `skills`, `outputStyles`) wchodzą do zatwierdzenia. Błędem, który przerywa
@@ -916,6 +977,20 @@ stdout nie są terminalem, albo `--json`, `--no-input`) start niczego nie zatwie
 kodem `1` i listą kluczy ze skrótami, chyba że wszystko jest już zatwierdzone. Nie ma `--yes`.
 Przed pytaniami `start` wypisuje ostrzeżenia planu oraz ostrzeżenia zasobów już zatwierdzonych.
 
+**Pluginy z marketplace'u** (`source.type: marketplace`, ADR 0043). `cwm start` czyta
+`marketplace.json` z zarejestrowanego katalogu (kontrola i limity: zob. `cwm marketplace`), wybiera
+wpis o nazwie z `source.plugin` i wyznacza katalog pluginu ze `source`: każdy składnik ścieżki musi
+być zwykłym katalogiem (dowiązanie, nawet w obrębie marketplace'u, to odmowa), a wynik po
+`realpath` leży w marketplace'ie. Dalej to ta sama droga co plugin `local`: drzewo (`readTree`,
+limity 500 plików i 10 MiB, dowiązanie w drzewie to błąd), migawka `plugins/<id>@<skrót>`, skan
+deklaracji wykonawczych (hooki, `.mcp.json` z `headersHelper`, `.lsp.json`, `plugin.json`),
+piny skryptów, zatwierdzenie. Pola zatwierdzenia dostają blok `marketplace` (nazwa marketplace'u,
+nazwa wpisu, tekst `source`, katalog marketplace'u i rozwiązana ścieżka pluginu po `realpath`), więc
+zmiana któregokolwiek z nich pyta ponownie, nawet gdy drzewo jest to samo. Dopisanie innych
+pluginów do `marketplace.json` nie zmienia skrótu. Skróty pluginów `local` się nie zmieniają.
+Ostrzeżenie (bez blokady): `version` w `plugin.json` albo we wpisie różni się od `version` zasobu.
+Po odczycie drzewa `start` sprawdza, że katalog pluginu nadal rozwiązuje się do tej samej ścieżki.
+
 **Profil** (`~/.cwm/runtime/<firma>/`, tryby 700/600, właściciel musi być bieżącym użytkownikiem):
 
 ```text
@@ -927,7 +1002,7 @@ sessions/<skrót projektu>/   pliki tego uruchomienia
   settings.json              jedyny plik --settings: Settings z enforce, klucze izolacji
   mcp.json                   serwery MCP jako cwm-<firma>-<nazwa>, env tylko jako ${NAZWA}
   plugin/                    plugin cwm-<firma> z zasobami mandatory (nazwy z przedrostkiem)
-plugins/<id>@<skrót>/        migawki pluginów local (kopia, nie oryginał)
+plugins/<id>@<skrót>/        migawki pluginów local i marketplace (kopia, nie oryginał)
 generated/manifest.json      lista plików CWM ze skrótami; sprzątanie tylko według niej
 generated/prev/              kopia plików sprzed ostatniej zmiany
 tmp/                         CLAUDE_CODE_TMPDIR
@@ -1024,6 +1099,6 @@ to `project:<sha256 ścieżki>` (ścieżka widoczna w `list`). Uszkodzony plik z
 
 Polecenia `sync`, `diff` i `run`, lockfile, `--follow-links` w imporcie, kopiowanie skryptów
 hooków do rejestru (skrypt poza rejestrem jest przypięty skrótem, ale nie skopiowany), pluginy
-`marketplace` i `git` w `cwm start`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
+`git` w `cwm start`, marketplace'y zdalne (git, http) i źródła obiektowe wpisów, polecenie `cwm plugin add`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
 zatwierdzeń, Windows w `cwm start` oraz import biblioteki aplikacji i pluginów. Zapis do
 konfiguracji silnika (`.claude/`, `CLAUDE.md`, `.mcp.json`) jest poza zakresem.

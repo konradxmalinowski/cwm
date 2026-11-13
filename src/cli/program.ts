@@ -8,6 +8,7 @@ import { registerCompany } from './commands/company';
 import { registerDoctor } from './commands/doctor';
 import { registerImport } from './commands/import';
 import { registerInit } from './commands/init';
+import { registerMarketplace } from './commands/marketplace';
 import { registerProject } from './commands/project';
 import { registerResolve } from './commands/resolve';
 import { registerResource } from './commands/resource';
@@ -40,6 +41,7 @@ export function buildProgram(): Command {
   registerCompany(program);
   registerProject(program);
   registerResource(program);
+  registerMarketplace(program);
   registerResolve(program);
   registerImport(program);
   registerApprovals(program);

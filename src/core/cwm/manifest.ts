@@ -10,6 +10,13 @@ export type OptionalAssetSet = Pick<
   'skills' | 'agents' | 'commands' | 'settings' | 'files'
 >;
 
+/** Lokalny marketplace pluginow: katalog z `.claude-plugin/marketplace.json` (ADR 0043). Inne typy nie istnieja. */
+export interface MarketplaceSource {
+  readonly type: 'local';
+  /** Sciezka bezwzgledna katalogu marketplace'u. */
+  readonly path: string;
+}
+
 export interface GlobalConfig {
   readonly apiVersion: typeof API_VERSION;
   readonly kind: 'GlobalConfig';
@@ -29,6 +36,8 @@ export interface GlobalConfig {
     readonly preserveNativeConfiguration: boolean;
     readonly overwriteNativeFiles: boolean;
   };
+  /** Opcjonalne: brak pola to brak marketplace'ow. Klucz to nazwa marketplace'u (jak `source.marketplace` pluginu). */
+  readonly marketplaces?: Readonly<Record<string, MarketplaceSource>>;
 }
 
 /** Opcje uruchamiania silnika dla firmy (`cwm start`). Rozszerzenie spoza specyfikacji. */
