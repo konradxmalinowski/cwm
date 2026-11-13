@@ -6,7 +6,7 @@ import { fail, ok, type Result } from './errors';
 import { API_VERSION, ID_SPACE_PATTERN } from './kinds';
 import { HASH64 } from './patterns';
 import type { PluginExecutables } from './plugin-scan';
-import type { Resource } from './resource';
+import type { HookGroup, Resource } from './resource';
 import { hasForbiddenKey } from './safe-keys';
 
 /** Zmiana wersji dokumentu skrotu uniewaznia wszystkie zatwierdzenia (APR-02). */
@@ -121,8 +121,13 @@ export interface ResourceFacts {
     readonly inlineSnippets: readonly string[];
     readonly tools: readonly string[];
     readonly model: string | null;
+    /** Hooki skilla z frontmattera (ADR 0042); skrypty tych hookow sa w `pins`. */
+    readonly hooks?: Readonly<Record<string, readonly HookGroup[]>>;
   };
 }
+
+const hasSkillHooks = (facts: ResourceFacts): boolean =>
+  Object.keys(facts.content?.hooks ?? {}).length > 0;
 
 /** Czy zasob w ogole wymaga zatwierdzenia. Skill, agent i komenda tylko z cechami z IMP-05. */
 export function needsApproval(resource: Resource, facts: ResourceFacts): boolean {
@@ -138,7 +143,10 @@ export function needsApproval(resource: Resource, facts: ResourceFacts): boolean
       const content = facts.content;
       return (
         content !== undefined &&
-        (content.allowedTools || content.inlineCommands || content.tools.length > 0)
+        (content.allowedTools ||
+          content.inlineCommands ||
+          content.tools.length > 0 ||
+          hasSkillHooks(facts))
       );
     }
     case 'workflow':
@@ -206,6 +214,13 @@ export function executionFields(
         tools: [...(content?.tools ?? [])],
         model: content?.model ?? null,
         sourceSha256: facts.sourceSha256 ?? null,
+        // Dodawane tylko gdy sa, zeby skroty zatwierdzonych zasobow bez hookow sie nie zmienily.
+        ...(hasSkillHooks(facts)
+          ? {
+              hooks: content?.hooks ?? {},
+              pins: (facts.pins ?? []).map((pin) => ({ path: pin.raw, sha256: pin.sha256 })),
+            }
+          : {}),
       };
     }
     case 'workflow':
@@ -243,6 +258,12 @@ export function approvalWarnings(resource: Resource, facts: ResourceFacts): stri
       warnings.push(
         'deklaracje pluginu w nieczytelnym JSON: silnik moze je zinterpretowac inaczej',
       );
+    }
+  }
+  if (resource.kind === 'skill' && hasSkillHooks(facts)) {
+    warnings.push('skill uruchamia hooki (polecenia powloki) przy uzyciu skilla');
+    for (const pin of facts.pins ?? []) {
+      if (pin.unpinnedReason !== null) warnings.push(`${pin.raw}: ${pin.unpinnedReason}`);
     }
   }
   if (resource.kind === 'settings') {

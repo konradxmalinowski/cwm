@@ -700,7 +700,7 @@ bajt w bajt), a treść pliku zostaje bez zmian. Agent zachowuje `name`, `descri
 Nazwa zasobu `Files` ma przedrostek rodzaju (`skills-`, `agents-`), a ścieżka w profilu jest
 dokładnie taka jak w źródle, bo agenci odwołują się do niej po nazwie. Pliki `.md` w `agents/<podkatalog>/`
 przechodzą `parseFilesMarkdown`, także w `skills/`: frontmatter jest odtwarzany z dozwolonych kluczy
-(nigdy surowy), a plik z `hooks`, `mcpServers`, `permissionMode`, `tools`, `allowed-tools`, `model`,
+(nigdy surowy), a plik z `hooks` (pliki wspólne nie mają zatwierdzonych hooków, w odróżnieniu od `Skill`), `mcpServers`, `permissionMode`, `tools`, `allowed-tools`, `model`,
 kluczem scalania YAML `<<` albo znacznikiem `...` jest pomijany z raportem. Wstawki `!` w treści dają
 zasobowi `Files` zatwierdzenie przy `cwm start` (pola w całości). Poza tym `Files` to dane: bez bitu
 wykonywania. `Files` nie może zawierać pliku `skill.md` w żadnej postaci (zwinięcie nazwy: NFKC, małe
@@ -730,8 +730,13 @@ znaki spoza `a-z0-9._-` zamienione na `-`).
 - trafienie klasyfikatora sekretów w `SKILL.md`, `AGENT.md` albo `COMMAND.md` pomija cały zasób.
   Pliki pomocnicze z trafieniem nie są pomijane po cichu, tylko trafiają do przeglądu (sekcja
   „Oznaczone pliki”),
-- agenci, skille i komendy z kluczem frontmattera `hooks`, `mcpServers` albo `permissionMode`
-  (cały zasób jest odrzucany),
+- agenci i komendy z kluczem frontmattera `hooks`, `mcpServers` albo `permissionMode` oraz skille z
+  `mcpServers` albo `permissionMode` (cały zasób jest odrzucany),
+- hooki skilla (`hooks` w `SKILL.md`, ADR 0042) są zachowane po walidacji tymi samymi regułami co
+  hooki Settings (tylko `type: command`, `timeout` 1..600, polecenie bez sekretu i znaków
+  sterujących, opcjonalny tekst `statusMessage`); raport pisze "hooki skilla: wymaga zatwierdzenia" i
+  podaje stan pinów skryptów. `cwm start` zawsze pyta o taki skill i pokazuje hooki oraz piny w
+  całości, a zmiana hooka albo skryptu pyta ponownie,
 - z `settings.json` wszystko poza `hooks`, `permissions`, `env`, `attribution` (`commit`, `pr`) oraz
   preferencjami `theme`, `tui`, `voice`, `voiceEnabled`, `preferredNotifChannel`,
   `enableWorkflows` (sprawdzane typy); klucze uruchamiające polecenia

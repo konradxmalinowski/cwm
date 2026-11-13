@@ -1,14 +1,18 @@
-import { childPath } from './check';
+import { Checker, childPath } from './check';
 import { fail, ok, type Result, type ValidationError } from './errors';
-import type { ContentFlags } from './resource';
+import type { ContentFlags, HookGroup } from './resource';
 import { hasForbiddenKey, nullObject } from './safe-keys';
+import { readHookEvents } from './settings-spec';
 
 /** Frontmatter i tresc plikow `.md` skilli, agentow i komend: niezaufane wejscie z natywnej konfiguracji. */
 export const MAX_FRONTMATTER_UNITS = 64 * 1024;
 
 export type ContentKind = 'skill' | 'agent' | 'command';
 
-/** Klucze, ktore frontmatter wykonuje albo ktorymi rozszerza uprawnienia (IMP-05). */
+/**
+ * Klucze, ktore frontmatter wykonuje albo ktorymi rozszerza uprawnienia (IMP-05). `hooks` jest
+ * odrzucane wszedzie poza skillem (ADR 0042), gdzie przechodzi walidacje i wymusza zatwierdzenie.
+ */
 export const FRONTMATTER_REJECTED_KEYS = ['hooks', 'mcpServers', 'permissionMode'] as const;
 
 const ALLOWED_KEYS: Record<ContentKind, readonly string[]> = {
@@ -24,6 +28,7 @@ const ALLOWED_KEYS: Record<ContentKind, readonly string[]> = {
     'metadata',
     'when_to_use',
     'version',
+    'hooks',
   ],
   agent: ['name', 'description', 'tools', 'model', 'color', 'memory'],
   command: [
@@ -187,6 +192,8 @@ export interface ContentAnalysis {
   readonly allowedToolsValue: readonly string[];
   /** Wstawki `!` w calosci (SEC-04). */
   readonly inlineSnippets: readonly string[];
+  /** Zwalidowane hooki skilla (zdarzenie -> grupy); pusta mapa, gdy ich nie ma albo rodzaj ich nie dopuszcza. */
+  readonly hooks: Readonly<Record<string, readonly HookGroup[]>>;
   /** Klucze spoza listy dozwolonych: trafiaja do raportu, nie do zasobu. */
   readonly unknownKeys: readonly string[];
   /**
@@ -240,7 +247,9 @@ export function analyzeContent(
   kind: ContentKind,
   frontmatter: unknown,
   rawText: string,
+  options: { readonly allowHooks?: boolean } = {},
 ): Result<ContentAnalysis> {
+  const allowHooks = kind === 'skill' && options.allowHooks !== false;
   const errors: ValidationError[] = [];
   const flagsOnly = (allowedTools: boolean): ContentFlags => ({
     allowedTools,
@@ -256,6 +265,7 @@ export function analyzeContent(
       allowedToolsValue: [],
       inlineSnippets: extractInlineCommands(rawText),
       unknownKeys: [],
+      hooks: nullObject<HookGroup[]>(),
       kept: nullObject<unknown>(),
     });
   }
@@ -273,6 +283,7 @@ export function analyzeContent(
   const map = frontmatter as Record<string, unknown>;
   const keys = Object.keys(map);
   for (const key of keys) {
+    if (allowHooks && key === 'hooks') continue;
     if (REJECTED_NORMALIZED.has(normalizeKey(key))) {
       errors.push({
         path: childPath('frontmatter', key),
@@ -281,6 +292,12 @@ export function analyzeContent(
     }
   }
   if (errors.length > 0) return fail(errors);
+
+  const hookChecker = new Checker();
+  const hooks = allowHooks
+    ? readHookEvents(hookChecker, map['hooks'], 'frontmatter.hooks', true)
+    : nullObject<HookGroup[]>();
+  if (hookChecker.errors.length > 0) return fail(hookChecker.errors);
 
   const toolsKey = kind === 'agent' ? 'tools' : 'allowed-tools';
   const toolsValue = map[toolsKey];
@@ -300,6 +317,9 @@ export function analyzeContent(
   const allowed = ALLOWED_KEYS[kind];
   const kept = nullObject<unknown>();
   for (const key of allowed) if (Object.hasOwn(map, key)) kept[key] = map[key];
+  // Hooki wracaja do zasobu wylacznie ze zwalidowanego modelu, nigdy z surowego frontmattera.
+  if (Object.keys(hooks).length > 0) kept['hooks'] = hooks;
+  else delete kept['hooks'];
   const droppedKeys = new Set(keys.filter((key) => !allowed.includes(key)));
   if (
     kind === 'agent' &&
@@ -318,6 +338,7 @@ export function analyzeContent(
     flags: flagsOnly(allowedTools),
     allowedToolsValue: kind === 'agent' ? [] : toolList(map['allowed-tools']),
     inlineSnippets: extractInlineCommands(rawText),
+    hooks,
     unknownKeys: [...droppedKeys].sort(),
   });
 }

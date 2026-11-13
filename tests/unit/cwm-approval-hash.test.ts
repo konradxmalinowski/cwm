@@ -11,6 +11,8 @@ import {
   extractInlineCommands,
   extractPluginExecutables,
   mcpCommandIsPath,
+  needsApproval,
+  approvalWarnings,
   projectApprovalKey,
   validateApprovalsFile,
   type McpServer,
@@ -425,5 +427,125 @@ describe('zatwierdzenie MCP bez sciezki nie zalezy od projektu (NEW-1) i mcp.jso
     expect(JSON.stringify(rel.document)).toContain('"command":"/work/a/bin/serve.sh"');
     const plain = buildMcpConfig('acme-a', [mcp]);
     expect(JSON.stringify(plain.document)).toContain('"command":"./bin/serve.sh"');
+  });
+});
+
+describe('hooki skilla w polach zatwierdzenia (ADR 0042)', () => {
+  const skill: Skill = {
+    kind: 'skill',
+    id: 'acme-a/careful',
+    version: '1.0.0',
+    source: 'SKILL.md',
+    visibility: 'shared',
+    engines: [],
+    dependencies: {
+      skills: [],
+      agents: [],
+      workflows: [],
+      plugins: [],
+      mcp: [],
+      settings: [],
+      commands: [],
+      files: [],
+    },
+  };
+  const plain = {
+    allowedTools: false,
+    allowedToolsValue: [],
+    inlineCommands: false,
+    inlineSnippets: [],
+    tools: [],
+    model: null,
+  };
+  const hooks = {
+    PreToolUse: [
+      {
+        matcher: 'Bash',
+        hooks: [{ type: 'command' as const, command: '/p/check.sh', timeout: 5 }],
+      },
+    ],
+  };
+  const sha = 's'.repeat(64);
+  const pin = (hash: string | null) => ({
+    raw: '/p/check.sh',
+    sha256: hash,
+    unpinnedReason: hash === null ? 'nieprzypiete: brak pliku' : null,
+  });
+
+  it('skill z hookami zawsze wymaga zatwierdzenia, bez hookow nie', () => {
+    expect(needsApproval(skill, { content: plain, sourceSha256: sha })).toBe(false);
+    expect(needsApproval(skill, { content: { ...plain, hooks }, sourceSha256: sha })).toBe(true);
+    expect(needsApproval(skill, { content: { ...plain, hooks: {} }, sourceSha256: sha })).toBe(
+      false,
+    );
+  });
+
+  it('pola niosa pelne hooki i piny, a ich zmiana zmienia skrot', () => {
+    const base = { content: { ...plain, hooks }, sourceSha256: sha, pins: [pin('a'.repeat(64))] };
+    const fields = executionFields(skill, base);
+    expect(fields).toMatchObject({
+      hooks,
+      pins: [{ path: '/p/check.sh', sha256: 'a'.repeat(64) }],
+    });
+    const key = (f: unknown) => canonicalJson(f);
+    const changedScript = executionFields(skill, { ...base, pins: [pin('b'.repeat(64))] });
+    const changedHook = executionFields(skill, {
+      ...base,
+      content: {
+        ...plain,
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: 'Bash',
+              hooks: [{ type: 'command' as const, command: '/p/check.sh', timeout: 6 }],
+            },
+          ],
+        },
+      },
+    });
+    const status = executionFields(skill, {
+      ...base,
+      content: {
+        ...plain,
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: 'Bash',
+              hooks: [
+                {
+                  type: 'command' as const,
+                  command: '/p/check.sh',
+                  timeout: 5,
+                  statusMessage: 'x',
+                },
+              ],
+            },
+          ],
+        },
+      },
+    });
+    expect(key(changedScript)).not.toBe(key(fields));
+    expect(key(changedHook)).not.toBe(key(fields));
+    expect(key(status)).not.toBe(key(fields));
+  });
+
+  it('skill bez hookow zachowuje dotychczasowe pola (skrot zatwierdzonych bez zmian)', () => {
+    const fields = executionFields(skill, {
+      content: { ...plain, inlineCommands: true, inlineSnippets: ['ls'] },
+      sourceSha256: sha,
+    });
+    expect(fields).not.toHaveProperty('hooks');
+    expect(fields).not.toHaveProperty('pins');
+  });
+
+  it('nieprzypiete sciezki skilla sa ostrzezeniem na ekranie zatwierdzenia', () => {
+    const warnings = approvalWarnings(skill, {
+      content: { ...plain, hooks },
+      sourceSha256: sha,
+      pins: [pin(null)],
+    });
+    expect(warnings.some((w) => w.includes('/p/check.sh') && w.includes('nieprzypiete'))).toBe(
+      true,
+    );
   });
 });

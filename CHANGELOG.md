@@ -88,7 +88,21 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
     `voiceEnabled`, `preferredNotifChannel`, `enableWorkflows`. `skipDangerousModePermissionPrompt`
     jest nadal odrzucany.
 
+- Hooki w frontmatterze skilla (ADR 0042): skill może
+  deklarować `hooks` (także `statusMessage`), ale tylko za zatwierdzeniem. Walidacja jak w Settings,
+  profil dostaje hooki odtworzone ze zwalidowanego modelu, `cwm start` zawsze pyta o taki skill i
+  pokazuje hooki oraz piny skryptów w całości, a `cwm import claude` je zachowuje z adnotacją
+  "hooki skilla: wymaga zatwierdzenia". Agenci, komendy i pliki wspólne nadal odrzucają `hooks`;
+  `permissionMode` i `mcpServers` są odrzucane także w skillu.
+- Piny skryptów hooków (skille, Settings, pluginy) są liczone po zebraniu całego planu `cwm start`.
+  Wcześniej skrypt zapisywany przez zasób przetwarzany później był pinowany starą kopią z profilu,
+  więc jego zmiana mogła przejść bez ponownego pytania. Zatwierdzenia z pinem w profilu CWM zapytają
+  raz ponownie.
+
 ### Changed
+
+- Zsyntetyzowana nazwa agenta (gdy żaden klucz frontmattera nie przeżyje) przechodzi kontrolę
+  duplikatów nazw agentów przy `cwm start`.
 
 - Nowa nazwa produktu: CWM - Claude Workspace Manager (dawniej Universal AI Skills Manager).
   Nazwa techniczna to `cwm`: pakiet npm, pliki wydania `cwm-<wersja>-...`, zmienne środowiskowe
