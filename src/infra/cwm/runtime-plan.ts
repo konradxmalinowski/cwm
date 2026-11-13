@@ -179,6 +179,7 @@ function contentFacts(parsed: Parsed, sourceSha256: string): ResourceFacts {
       inlineSnippets: parsed.inlineSnippets,
       tools: parsed.tools,
       model: parsed.model,
+      hooks: parsed.hooks,
     },
     sourceSha256,
   };
@@ -273,6 +274,15 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
       }),
     );
   };
+
+  // Piny hookow licza sie po zebraniu calego planu: skrypt moze pochodzic z zasobu przetworzonego
+  // pozniej, a zatwierdzenie ma obejmowac bajty, ktore plan zapisze, nie stara kopie z dysku.
+  const pendingPins: Array<{
+    resource: Resource;
+    facts: ResourceFacts;
+    commands: readonly string[];
+    exclude?: (raw: string) => boolean;
+  }> = [];
 
   const summary = {
     profile: { skills: 0, agents: 0, commands: 0, files: 0, settings: false },
@@ -399,7 +409,13 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         }
         counters.skills += 1;
         if (!inPlugin) profileNames.skills.push(name);
-        subject(resource, contentFacts(parsed, treeSha256(finals)));
+        const skillFacts = contentFacts(parsed, treeSha256(finals));
+        const skillCommands = Object.values(parsed.hooks).flatMap((groups) =>
+          groups.flatMap((group) => group.hooks.map((hook) => hook.command)),
+        );
+        if (skillCommands.length > 0) {
+          pendingPins.push({ resource, facts: skillFacts, commands: skillCommands });
+        } else subject(resource, skillFacts);
         break;
       }
       case 'agent':
@@ -512,8 +528,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         break;
       }
       case 'settings': {
-        const { pins, dropped } = await pinHookCommands(hookCommands(resource), input.homeDir);
-        subject(resource, { pins: pinInfos(pins, dropped) });
+        pendingPins.push({ resource, facts: {}, commands: hookCommands(resource) });
         break;
       }
       case 'mcp': {
@@ -565,14 +580,16 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         }
         const exec = extractPluginExecutables(tree.files);
         for (const text of exec.errors) out.errors.push(`${label}: ${text}`);
-        const { pins, dropped } = await pinHookCommands(exec.hookCommands, input.homeDir);
-        // Sciezki pod ${CLAUDE_PLUGIN_ROOT} sa w drzewie, wiec obejmuje je lista plikow.
-        const outside = pins.filter((pin) => !pin.token.raw.includes('CLAUDE_PLUGIN_ROOT'));
-        subject(resource, {
-          treeSha256: treeHash,
-          files: tree.files.map((f) => ({ path: f.rel, sha256: sha256Hex(f.bytes) })),
-          pluginExec: exec,
-          pins: pinInfos(outside, dropped),
+        pendingPins.push({
+          resource,
+          facts: {
+            treeSha256: treeHash,
+            files: tree.files.map((f) => ({ path: f.rel, sha256: sha256Hex(f.bytes) })),
+            pluginExec: exec,
+          },
+          commands: exec.hookCommands,
+          // Sciezki pod ${CLAUDE_PLUGIN_ROOT} sa w drzewie, wiec obejmuje je lista plikow.
+          exclude: (raw) => raw.includes('CLAUDE_PLUGIN_ROOT'),
         });
         break;
       }
@@ -692,6 +709,23 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
   const registryRefs = workspace.registry.entries.flatMap((entry) =>
     refsOfResource(entry.resource),
   );
+
+  for (const pending of pendingPins) {
+    const { pins, dropped } = await pinHookCommands(pending.commands, input.homeDir);
+    const kept =
+      pending.exclude === undefined
+        ? pins
+        : pins.filter((pin) => !pending.exclude?.(pin.token.raw));
+    const infos = pinInfos(kept, dropped).map((info) => {
+      // Sciezka do pliku tego uruchomienia: liczy sie tresc, ktora trafi na dysk, nie stara kopia.
+      const rel = info.raw.startsWith(`${baseDir}/`) ? info.raw.slice(baseDir.length + 1) : null;
+      const planned = rel === null ? undefined : out.files.get(foldPath(rel));
+      return planned === undefined
+        ? info
+        : { raw: info.raw, sha256: planned.sha256, unpinnedReason: null };
+    });
+    subject(pending.resource, { ...pending.facts, pins: infos });
+  }
 
   const files = [...out.files.values()].sort((a, b) => (a.rel < b.rel ? -1 : 1));
   for (const file of files) {

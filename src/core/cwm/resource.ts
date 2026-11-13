@@ -152,6 +152,8 @@ export interface HookCommand {
   readonly type: 'command';
   readonly command: string;
   readonly timeout?: number;
+  /** Tylko hooki skilla (frontmatter): tekst pokazywany przy uruchomieniu hooka. */
+  readonly statusMessage?: string;
 }
 
 export interface HookGroup {

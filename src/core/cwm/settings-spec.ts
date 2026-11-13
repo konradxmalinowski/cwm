@@ -118,8 +118,33 @@ export function hookCommandProblem(command: string): string | null {
   return null;
 }
 
-function readHook(c: Checker, element: unknown, path: string): HookCommand | null {
-  const obj = c.object(element, path, ['type', 'command', 'timeout'], ['type', 'command']);
+/** Tekst `statusMessage` hooka skilla: te same zasady co polecenie (dlugosc, znaki sterujace, sekret). */
+export function hookStatusMessageProblem(text: string): string | null {
+  if (text.length === 0) return 'statusMessage jest puste.';
+  if (text.length > MAX_HOOK_COMMAND_LENGTH) {
+    return `statusMessage moze miec najwyzej ${MAX_HOOK_COMMAND_LENGTH} znakow.`;
+  }
+  if (CONTROL_CHARS.test(text)) {
+    return 'statusMessage nie moze zawierac znakow sterujacych ani formatujacych (takze nowej linii).';
+  }
+  if (textHasSecret(text)) return 'statusMessage wyglada na zawierajace sekret.';
+  return null;
+}
+
+function readHook(
+  c: Checker,
+  element: unknown,
+  path: string,
+  statusMessage: boolean,
+): HookCommand | null {
+  const obj = c.object(
+    element,
+    path,
+    statusMessage
+      ? ['type', 'command', 'timeout', 'statusMessage']
+      : ['type', 'command', 'timeout'],
+    ['type', 'command'],
+  );
   if (!obj) return null;
   const typePath = childPath(path, 'type');
   const type = field(obj, 'type');
@@ -145,11 +170,32 @@ function readHook(c: Checker, element: unknown, path: string): HookCommand | nul
     timeoutValue === undefined
       ? null
       : c.integer(timeoutValue, childPath(path, 'timeout'), MIN_HOOK_TIMEOUT, MAX_HOOK_TIMEOUT);
+  let status: string | null = null;
+  const statusValue = field(obj, 'statusMessage');
+  if (statusMessage && statusValue !== undefined) {
+    const statusPath = childPath(path, 'statusMessage');
+    if (typeof statusValue !== 'string') c.add(statusPath, 'Oczekiwano tekstu.');
+    else {
+      const problem = hookStatusMessageProblem(statusValue);
+      if (problem === null) status = statusValue;
+      else c.add(statusPath, problem);
+    }
+  }
   if (type !== 'command' || command === null) return null;
-  return { type: 'command', command, ...(timeout === null ? {} : { timeout }) };
+  return {
+    type: 'command',
+    command,
+    ...(timeout === null ? {} : { timeout }),
+    ...(status === null ? {} : { statusMessage: status }),
+  };
 }
 
-function readHookGroup(c: Checker, element: unknown, path: string): HookGroup | null {
+function readHookGroup(
+  c: Checker,
+  element: unknown,
+  path: string,
+  statusMessage: boolean,
+): HookGroup | null {
   const obj = c.object(element, path, ['matcher', 'hooks'], ['hooks']);
   if (!obj) return null;
   const matcherValue = field(obj, 'matcher');
@@ -159,7 +205,7 @@ function readHookGroup(c: Checker, element: unknown, path: string): HookGroup | 
   const hooks = c.list(
     field(obj, 'hooks'),
     childPath(path, 'hooks'),
-    (el, p) => readHook(c, el, p),
+    (el, p) => readHook(c, el, p, statusMessage),
     () => String(index++),
   );
   const rawHooks = field(obj, 'hooks');
@@ -169,20 +215,29 @@ function readHookGroup(c: Checker, element: unknown, path: string): HookGroup | 
   return hooks.length === 0 ? null : { ...(matcher === null ? {} : { matcher }), hooks };
 }
 
-function readHooks(c: Checker, value: unknown): Record<string, HookGroup[]> {
+/**
+ * Wspolny walidator hookow: Settings (`spec.hooks`) i frontmatter skilla (`frontmatter.hooks`, z
+ * `statusMessage`). Te same reguly typu, matchera, limitu czasu, polecenia i nazwy zdarzenia.
+ */
+export function readHookEvents(
+  c: Checker,
+  value: unknown,
+  base: string,
+  statusMessage: boolean,
+): Record<string, HookGroup[]> {
   const result = nullObject<HookGroup[]>();
   if (value === undefined) return result;
   if (!isPlainObject(value)) {
-    c.add('spec.hooks', 'Oczekiwano obiektu.');
+    c.add(base, 'Oczekiwano obiektu.');
     return result;
   }
   const events = Object.keys(value);
   if (events.length > MAX_EVENTS) {
-    c.add('spec.hooks', `Najwyzej ${MAX_EVENTS} zdarzen.`);
+    c.add(base, `Najwyzej ${MAX_EVENTS} zdarzen.`);
     return result;
   }
   for (const event of events) {
-    const path = childPath('spec.hooks', event);
+    const path = childPath(base, event);
     if (FORBIDDEN_KEYS.has(event)) {
       c.add(path, 'Zabroniony klucz.');
       continue;
@@ -195,7 +250,7 @@ function readHooks(c: Checker, value: unknown): Record<string, HookGroup[]> {
     const groups = c.list(
       field(value, event),
       path,
-      (el, p) => readHookGroup(c, el, p),
+      (el, p) => readHookGroup(c, el, p, statusMessage),
       () => String(index++),
     );
     if (groups.length > 0) result[event] = groups;
@@ -386,7 +441,7 @@ export function readSettings(c: Checker, spec: PlainObject, id: string, version:
     kind: 'settings',
     id,
     version,
-    hooks: readHooks(c, field(spec, 'hooks')),
+    hooks: readHookEvents(c, field(spec, 'hooks'), 'spec.hooks', false),
     permissions: readPermissions(c, field(spec, 'permissions')),
     env: readEnv(c, field(spec, 'env')),
     enforce:

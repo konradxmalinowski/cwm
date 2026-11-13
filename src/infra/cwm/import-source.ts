@@ -16,6 +16,7 @@ import {
   validateCleanupPath,
   type ContentFlags,
   type ContentKind,
+  type HookGroup,
 } from '../../core/cwm';
 import { isPathInside } from '../../core/model/path-containment';
 import {
@@ -27,7 +28,7 @@ import {
 import { readBounded } from '../fs/bounded-read';
 import { lstatOrNull } from '../fs/stat';
 import { errnoCode } from '../fs/store-error';
-import { pinHookCommands, describeUnpinned } from './hook-pins';
+import { pinHookCommands, describeUnpinned, type PinnedPath } from './hook-pins';
 import {
   IMPORT_LIMITS,
   type Candidate,
@@ -118,6 +119,8 @@ export interface ParsedContent {
   readonly tools: readonly string[];
   readonly model: string | null;
   readonly unknownKeys: readonly string[];
+  /** Zwalidowane hooki skilla (puste dla agenta, komendy i plikow Files). */
+  readonly hooks: Readonly<Record<string, readonly HookGroup[]>>;
   /** Bajty do zapisu: frontmatter odtworzony z dozwolonych kluczy, tresc bez zmian (IMP-05 pkt 1). */
   readonly content: Uint8Array;
 }
@@ -132,6 +135,7 @@ export function parseContent(
    * (pliki Files) naglowek jest pomijany w calosci.
    */
   resourceName?: string,
+  options: { readonly allowHooks?: boolean } = {},
 ): ParsedContent | { readonly ok: false; readonly reason: string } {
   let text: string;
   try {
@@ -155,7 +159,7 @@ export function parseContent(
   }
   const frame = frontmatterFrameProblem(text, split);
   if (frame !== null) return { ok: false, reason: frame };
-  const analysis = analyzeContent(kind, frontmatter, text);
+  const analysis = analyzeContent(kind, frontmatter, text, options);
   if (!analysis.ok) return { ok: false, reason: describeProblems(analysis.errors) };
   const { flags, tools, model, unknownKeys } = analysis.value;
   let kept: Record<string, unknown> = analysis.value.kept;
@@ -182,15 +186,18 @@ export function parseContent(
     }
     content = new TextEncoder().encode(rebuilt);
   }
+  const keptName = kept['name'];
   return {
     ok: true,
-    name: analysis.value.name,
+    // Nazwa z zapisanego naglowka, takze zsyntetyzowana: to ona decyduje o agencie w silniku.
+    name: typeof keptName === 'string' && keptName !== '' ? keptName : analysis.value.name,
     flags,
     allowedToolsValue: analysis.value.allowedToolsValue,
     inlineSnippets: analysis.value.inlineSnippets,
     tools,
     model,
     unknownKeys,
+    hooks: analysis.value.hooks,
     content,
   };
 }
@@ -242,7 +249,9 @@ export function parseFilesMarkdown(root: 'skills' | 'agents', bytes: Uint8Array)
       return { ok: false, reason: 'frontmatter zamkniety znacznikiem konca dokumentu (...)' };
     }
   }
-  const parsed = parseContent(root === 'agents' ? 'agent' : 'skill', bytes);
+  const parsed = parseContent(root === 'agents' ? 'agent' : 'skill', bytes, undefined, {
+    allowHooks: false,
+  });
   if (!parsed.ok) return { ok: false, reason: parsed.reason };
   if (parsed.flags.allowedTools || parsed.tools.length > 0 || parsed.model !== null) {
     return { ok: false, reason: 'frontmatter z kluczem wykonawczym (tools, allowed-tools, model)' };
@@ -817,6 +826,31 @@ async function scanSkill(
   const files = walked.files.map((file) =>
     file === main ? { ...file, rel: SOURCE_FILE.skill, bytes: parsed.content } : file,
   );
+  const skillCommands = Object.values(parsed.hooks).flatMap((groups) =>
+    groups.flatMap((group) => group.hooks.map((hook) => hook.command)),
+  );
+  const hookNotes: ReportItem[] = [];
+  let hookPins: PinnedPath[] = [];
+  if (skillCommands.length > 0) {
+    hookNotes.push({ item: label, reason: 'hooki skilla: wymaga zatwierdzenia' });
+    const pinned = await pinHookCommands(skillCommands, homedir());
+    hookPins = pinned.pins;
+    if (pinned.dropped > 0) {
+      hookNotes.push({
+        item: `${label}: hooki`,
+        reason: `${pinned.dropped} sciezek poza limitem przypinania (nieprzypiete i nieoznaczone)`,
+      });
+    }
+    for (const pin of pinned.pins) {
+      hookNotes.push({
+        item: `${label}: hook ${pin.token.raw}`,
+        reason:
+          pin.status.state === 'pinned'
+            ? `przypiete sha256:${pin.status.sha256.slice(0, 12)}`
+            : describeUnpinned(pin.status.reason),
+      });
+    }
+  }
   return {
     kind: 'skill',
     rawName,
@@ -831,9 +865,10 @@ async function scanSkill(
     model: parsed.model,
     spec: null,
     envRefs: [],
-    pins: [],
+    pins: hookPins,
     notes: [
       ...(name.changed ? [{ item: label, reason: `nazwa znormalizowana do "${name.name}"` }] : []),
+      ...hookNotes,
       ...unknownKeyNotes(label, parsed.unknownKeys),
       ...linkNote(label, walked.followed),
     ],
