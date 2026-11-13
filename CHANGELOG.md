@@ -98,6 +98,25 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
   Wcześniej skrypt zapisywany przez zasób przetwarzany później był pinowany starą kopią z profilu,
   więc jego zmiana mogła przejść bez ponownego pytania. Zatwierdzenia z pinem w profilu CWM zapytają
   raz ponownie.
+- Pluginy z lokalnego marketplace'u w `cwm start` (Etap D, ADR 0043, `docs/CLI.md`): zasób `Plugin`
+  z `source.type: marketplace` jest rozwiązywany z katalogu zarejestrowanego w opcjonalnym polu
+  `marketplaces` w `~/.cwm/config.yaml` (stare pliki pozostają poprawne). Nowe polecenia
+  `cwm marketplace add`, `list`, `remove` i `show`. Plan czyta `.claude-plugin/marketplace.json`
+  (limit 512 KiB, ostra walidacja), wymaga `source` w postaci `./sciezka` wewnątrz katalogu
+  marketplace'u (bez `..`, dowiązań, źródeł `github`/`url`/`git`/`npm`), odrzuca nazwy spoza ASCII i
+  kolizje po `foldName`, a katalog marketplace'u musi należeć do użytkownika i nie być zapisywalny
+  dla grupy ani innych. Dalej plugin przechodzi tę samą drogę co `local` (migawka, skan, piny,
+  zatwierdzenie); pola zatwierdzenia dostają nazwę marketplace'u, wpisu, `source` i rozwiązaną
+  ścieżkę, więc ich zmiana pyta ponownie. Skróty pluginów `local` się nie zmieniają. Rozjazd
+  `version` w `plugin.json` i zasobie to ostrzeżenie. Nie ma `cwm plugin add`: manifest zasobu
+  zapisuje się ręcznie (gotowy tekst wypisuje `cwm marketplace show <nazwa> <plugin>`).
+  - Poprawka bezpieczeństwa (także pluginy `local`): polecenie hooka, `command`, `args`,
+    `headersHelper` i `cwd` serwera MCP/LSP z `CLAUDE_PLUGIN_ROOT` i `..` (także zakodowanym) jest
+    błędem skanu; wcześniej taki skrypt poza migawką nie był pinowany skrótem. Ścieżki
+    bezwzględne i `~` w `command`, `args` i `headersHelper` serwerów pluginu są teraz pinowane, więc
+    zatwierdzenia pluginów z takimi ścieżkami zapytają raz ponownie (skróty pozostałych bez zmian).
+    Drzewa pluginów odrzucają pliki z wieloma twardymi dowiązaniami. `cwm marketplace` ogranicza
+    długość `source`, odrzuca znaki sterujące i escapuje teksty z pliku.
 
 ### Changed
 

@@ -705,18 +705,21 @@ Dokumentacja użytkownika (`README.md`, `docs/INSTALACJA.md`, `docs/ODZYSKIWANIE
 Kolejność etapów pochodzi z planu właściciela (`plans/2026-11-11-cwm-core.md`). Etapy nie mają
 jeszcze kryteriów akceptacji w stylu Etapów 1 do 10; powstaną przy planowaniu każdego z nich.
 
-| Krok | Zakres | Stan na 2026-11-12 |
+| Krok | Zakres | Stan na 2026-11-13 |
 |---|---|---|
 | S1 | Spike: jak Claude Code ładuje konfigurację, co przenosi `CLAUDE_CONFIG_DIR` | Zrobione, ADR 0036 |
-| Model i resolver | Typy manifestów i zasobów, walidatory, `resolve`, `validatePolicy`, parser YAML (ADR 0037) | Zrobione na gałęzi `feat/cwm-core`, niescalone do `main`, bez testów (decyzja właściciela), podłączone tylko do CLI, nie do aplikacji desktopowej |
-| Profile i manifesty firm | Odczyt `~/.cwm` (globalny manifest, firmy, zasoby) z limitem bajtów przed dekodowaniem, implementacja `ResourceRegistry` | Zrobione na gałęzi `feat/cwm-cli` w ramach CLI fundament, niescalone |
-| Konfiguracje projektów | Odczyt `project.yaml`, projekty zagnieżdżone | Zrobione na gałęzi `feat/cwm-cli` w ramach CLI fundament, niescalone |
-| CLI fundament | `cwm init`, `company`, `project`, `resource list`, `resolve`, `doctor` na odczycie `~/.cwm` (ADR 0038, `docs/CLI.md`); bez `start`, `sync`, `diff`, `run` i bez zapisu do konfiguracji silnika | Zrobione na gałęzi `feat/cwm-cli`, niescalone do `main`, bez testów (decyzja właściciela) |
-| Etap A: rodzaje Settings i Command, `cwm import claude` | Nowe rodzaje zasobów (hooki, uprawnienia, `env`; komendy), scalanie `Settings` w resolverze, import skilli, agentów, komend i `settings.json` z natywnego katalogu do rejestru z planem, raportem i potwierdzeniem na terminalu (ADR 0039, `docs/CLI.md`); wyniki weryfikacji silnika V-01 do V-08 w ADR 0036 | Zrobione na gałęzi `feat/cwm-start`, niescalone do `main`; testy tylko dla wykrywania sekretów w `env` (decyzja właściciela) |
-| Etap B: zatwierdzanie, profil, `cwm start` | Zatwierdzanie zasobów z polami wykonawczymi w `~/.cwm/approvals/` (skrót pól, ponowne pytanie po zmianie), generowanie profilu w `~/.cwm/runtime/<firma>/`, `cwm start` uruchamiający Claude Code z `CLAUDE_CONFIG_DIR`. Wymaga przeliczenia `contentFlags` i skrótów skryptów hooków z plików (ADR 0039); testy dla czterech czystych funkcji (skrót zatwierdzenia, ścieżki sprzątania, środowisko procesu, argumenty silnika) | Następny, osobny PR i ADR |
+| Model i resolver | Typy manifestów i zasobów, walidatory, `resolve`, `validatePolicy`, parser YAML (ADR 0037) | Zrobione i scalone do `main` (PR #3), bez testów (decyzja właściciela), podłączone tylko do CLI, nie do aplikacji desktopowej |
+| Profile i manifesty firm | Odczyt `~/.cwm` (globalny manifest, firmy, zasoby) z limitem bajtów przed dekodowaniem, implementacja `ResourceRegistry` | Zrobione i scalone do `main` (PR #4) w ramach CLI fundament |
+| Konfiguracje projektów | Odczyt `project.yaml`, projekty zagnieżdżone | Zrobione i scalone do `main` (PR #4) w ramach CLI fundament |
+| CLI fundament | `cwm init`, `company`, `project`, `resource list`, `resolve`, `doctor` na odczycie `~/.cwm` (ADR 0038, `docs/CLI.md`); bez `start`, `sync`, `diff`, `run` i bez zapisu do konfiguracji silnika | Zrobione i scalone do `main` (PR #4), bez testów (decyzja właściciela) |
+| Etap A: rodzaje Settings i Command, `cwm import claude` | Nowe rodzaje zasobów (hooki, uprawnienia, `env`; komendy), scalanie `Settings` w resolverze, import skilli, agentów, komend i `settings.json` z natywnego katalogu do rejestru z planem, raportem i potwierdzeniem na terminalu (ADR 0039, `docs/CLI.md`); wyniki weryfikacji silnika V-01 do V-08 w ADR 0036 | Zrobione i scalone do `main` (PR #5); testy tylko dla wykrywania sekretów w `env` (decyzja właściciela) |
+| Etap B: zatwierdzanie, profil, `cwm start` | Zatwierdzanie zasobów z polami wykonawczymi w `~/.cwm/approvals/` (skrót pól, ponowne pytanie po zmianie), generowanie profilu w `~/.cwm/runtime/<firma>/`, `cwm start` uruchamiający Claude Code z `CLAUDE_CONFIG_DIR`. Wymaga przeliczenia `contentFlags` i skrótów skryptów hooków z plików (ADR 0039); testy dla czterech czystych funkcji (skrót zatwierdzenia, ścieżki sprzątania, środowisko procesu, argumenty silnika) Zrobione i scalone do `main` (PR #6, ADR 0040); testy dla czterech czystych funkcji, jak zaplanowano |
+| Etap C: import prawdziwej konfiguracji | Wspólne pliki (`Files`), dowiązania w obrębie `--from`, przegląd plików z trafieniem klasyfikatora sekretów, przepisywanie odwołań do natywnego katalogu w kopiach (ADR 0041, `docs/CLI.md`) | Zrobione i scalone do `main` (PR #7) |
+| Hooki w frontmatterze skilla | `hooks` skilla tylko za zatwierdzeniem, z pinami skryptów liczonymi po zebraniu całego planu (ADR 0042) | Zrobione i scalone do `main` (PR #8) |
+| Etap D: pluginy z lokalnego marketplace'u | Pole `marketplaces` w `config.yaml`, `cwm marketplace add\|list\|remove\|show`, plugin `source.type: marketplace` w `cwm start` z kontrolą katalogu, ścieżki `source` i zatwierdzeniem jak dla `local` (ADR 0043, `docs/CLI.md`); bez pobierania z sieci i bez `cwm plugin add` | Zrobione na gałęzi `feat/cwm-marketplace`, niescalone do `main`; test tylko w istniejącym pliku skrótów zatwierdzeń |
 | CLI `cwm`, dalsze polecenia | Lockfile i polecenia, które zmieniają stan silnika | Planowane |
-| Adapter runtime | Profil Claude Code z `CLAUDE_CONFIG_DIR` na podstawie ADR 0036 | Planowane |
-| Pluginy i MCP | Zapis do konfiguracji silnika z ekranem zatwierdzania `EXECUTION_RELEVANT_FIELDS` i przeglądem bezpieczeństwa (ADR 0037, ADR 0020) | Planowane |
+| Adapter runtime | Profil Claude Code z `CLAUDE_CONFIG_DIR` na podstawie ADR 0036 | Zrobione w Etapie B (`cwm start`) |
+| Pluginy i MCP | Zatwierdzanie pól wykonawczych (`EXECUTION_RELEVANT_FIELDS`) działa w `cwm start` dla `local` i `marketplace`; zostają pluginy `git` i zapis do natywnej konfiguracji silnika z przeglądem bezpieczeństwa (ADR 0037, ADR 0020) | Częściowo (Etapy B i D); reszta planowana |
 | Dyspozytor workflow | Wybór workflow na podstawie `routing` | Planowane |
 
 ---
