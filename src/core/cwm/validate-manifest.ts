@@ -1,5 +1,5 @@
 import { TOOL_IDS } from '../model/item';
-import { Checker, childPath, field } from './check';
+import { Checker, childPath, field, isPlainObject } from './check';
 import { fail, ok, type Result } from './errors';
 import { ALL_SET_KEYS, API_VERSION, ID_SPACE_PATTERN, isSharedNamespace } from './kinds';
 import { CWM_OWNED_ENV } from './patterns';
@@ -8,10 +8,12 @@ import type {
   CompanyManifest,
   CompanyRuntime,
   GlobalConfig,
+  MarketplaceSource,
   ProjectImport,
   ProjectManifest,
 } from './manifest';
 import { readBlock, readFields } from './read-set';
+import { FORBIDDEN_KEYS, nullObject } from './safe-keys';
 
 const WORD_PATTERN = /^[a-z][a-z-]{0,31}$/;
 const ASSET_KEYS = ['skills', 'agents', 'workflows', 'commands', 'settings', 'files'] as const;
@@ -59,7 +61,7 @@ export function validateGlobalConfig(input: unknown): Result<GlobalConfig> {
     c,
     input,
     'GlobalConfig',
-    ['defaults', 'resources', 'runtime'],
+    ['defaults', 'resources', 'runtime', 'marketplaces'],
     ['defaults', 'runtime'],
   );
   if (!root) return fail(c.errors);
@@ -82,6 +84,8 @@ export function validateGlobalConfig(input: unknown): Result<GlobalConfig> {
   const word = (key: string): string =>
     (defaults && c.string(field(defaults, key), childPath('defaults', key), WORD_PATTERN)) ?? '';
 
+  const marketplaces = readMarketplaces(c, field(root, 'marketplaces'));
+
   const value: GlobalConfig = {
     apiVersion: API_VERSION,
     kind: 'GlobalConfig',
@@ -101,8 +105,75 @@ export function validateGlobalConfig(input: unknown): Result<GlobalConfig> {
       preserveNativeConfiguration: flag('preserveNativeConfiguration'),
       overwriteNativeFiles: flag('overwriteNativeFiles'),
     },
+    ...(marketplaces === null ? {} : { marketplaces }),
   };
   return c.errors.length > 0 ? fail(c.errors) : ok(value);
+}
+
+const MAX_MARKETPLACES = 64;
+
+/** Sciezka bezwzgledna (POSIX) bez segmentow `.` i `..`: marketplace to katalog wskazany jawnie. */
+function absolutePath(c: Checker, value: unknown, path: string): string | null {
+  const text = c.string(value, path);
+  if (text === null) return null;
+  const segments = text.split('/').slice(1);
+  if (
+    !text.startsWith('/') ||
+    text.includes('\\') ||
+    segments.some((segment) => segment === '.' || segment === '..')
+  ) {
+    c.add(path, 'Sciezka ma byc bezwzgledna, bez "." i ".." oraz bez ukosnikow wstecznych.');
+    return null;
+  }
+  return text;
+}
+
+/**
+ * Opcjonalna mapa `marketplaces` (ADR 0043): nazwa -> `{ type: local, path }`. Brak pola to brak
+ * marketplace'ow (null), wiec stare pliki zostaja poprawne. Nazwa to male litery ASCII, jak
+ * przestrzen nazw id; typ inny niz `local` jest odrzucany z jasnym komunikatem.
+ */
+function readMarketplaces(
+  c: Checker,
+  value: unknown,
+): Readonly<Record<string, MarketplaceSource>> | null {
+  if (value === undefined) return null;
+  if (!isPlainObject(value)) {
+    c.add('marketplaces', 'Oczekiwano obiektu.');
+    return null;
+  }
+  const names = Object.keys(value);
+  if (names.length > MAX_MARKETPLACES) {
+    c.add('marketplaces', `Najwyzej ${MAX_MARKETPLACES} marketplace'ow.`);
+    return null;
+  }
+  const result = nullObject<MarketplaceSource>();
+  for (const name of names) {
+    const at = childPath('marketplaces', name);
+    if (FORBIDDEN_KEYS.has(name)) {
+      c.add(at, 'Zabroniony klucz.');
+      continue;
+    }
+    if (!ID_SPACE_PATTERN.test(name)) {
+      c.add(
+        at,
+        "Nazwa marketplace'u: male litery ASCII, cyfry i -, od litery lub cyfry, do 63 znakow.",
+      );
+      continue;
+    }
+    const entry = c.object(value[name], at, ['type', 'path'], ['type', 'path']);
+    if (!entry) continue;
+    if (field(entry, 'type') !== 'local') {
+      c.add(
+        childPath(at, 'type'),
+        'Obslugiwany jest tylko typ "local" (marketplace\'y git i http nie istnieja w tym etapie).',
+      );
+      continue;
+    }
+    const path = absolutePath(c, field(entry, 'path'), childPath(at, 'path'));
+    if (path !== null) result[name] = { type: 'local', path };
+  }
+  return result;
 }
 
 function readCompanyRuntime(c: Checker, value: unknown): CompanyRuntime {

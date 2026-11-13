@@ -10,6 +10,7 @@ export * from './errors';
 export * from './hook-paths';
 export * from './kinds';
 export * from './manifest';
+export * from './marketplace';
 export * from './merge-settings';
 export * from './names';
 export * from './patterns';

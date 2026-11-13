@@ -16,6 +16,21 @@ export type EngineLookup =
 
 const STICKY = 0o1000;
 
+/**
+ * Katalog nadrzedny wpisu (po `realpath`): wlasciciel root albo biezacy uzytkownik, bez zapisu dla
+ * grupy i innych (chyba ze z bitem sticky). Wspolne dla pliku silnika i katalogu marketplace'u:
+ * kto moze zapisywac w katalogu nadrzednym, moze podmienic wpis.
+ */
+export async function parentRejection(real: string, uid: number): Promise<string | null> {
+  const parent = await lstatLoose(dirname(real));
+  if (parent === null || !parent.isDirectory()) return 'brak katalogu nadrzednego';
+  if (parent.uid !== 0 && parent.uid !== uid) return 'katalog nadrzedny ma innego wlasciciela';
+  if ((parent.mode & 0o022) !== 0 && (parent.mode & STICKY) === 0) {
+    return 'katalog nadrzedny zapisywalny dla grupy lub innych';
+  }
+  return null;
+}
+
 /** Powod odrzucenia pliku albo null, gdy plik jest akceptowalny (SPN-01 pkt 1). */
 async function rejection(
   real: string,
@@ -30,12 +45,7 @@ async function rejection(
     if (info.uid !== 0 && info.uid !== uid)
       return 'wlasciciel to ktos inny niz root i biezacy uzytkownik';
     if ((info.mode & 0o022) !== 0) return 'plik zapisywalny dla grupy lub innych';
-    const parent = await lstatLoose(dirname(real));
-    if (parent === null || !parent.isDirectory()) return 'brak katalogu nadrzednego';
-    if (parent.uid !== 0 && parent.uid !== uid) return 'katalog nadrzedny ma innego wlasciciela';
-    if ((parent.mode & 0o022) !== 0 && (parent.mode & STICKY) === 0) {
-      return 'katalog nadrzedny zapisywalny dla grupy lub innych';
-    }
+    return parentRejection(real, uid);
   }
   return null;
 }

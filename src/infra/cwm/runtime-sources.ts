@@ -49,6 +49,7 @@ export function treeSha256(files: readonly TreeFile[]): string {
 export async function readTree(
   root: string,
   skip: (rel: string) => boolean = () => false,
+  options: { readonly rejectHardlinks?: boolean } = {},
 ): Promise<TreeRead> {
   const files: TreeFile[] = [];
   const seen = new Set<string>();
@@ -82,6 +83,10 @@ export async function readTree(
       const read = await readChecked(path, TREE_LIMITS.fileBytes, { strict: true });
       if (info === null || read.kind !== 'ok')
         return { ok: false, message: `nieczytelny plik: ${rel}` };
+      // Plik z wieloma twardymi dowiazaniami moze byc zmieniony przez inna sciezke po zatwierdzeniu.
+      if (options.rejectHardlinks === true && info.nlink > 1) {
+        return { ok: false, message: `plik z wieloma twardymi dowiazaniami: ${rel}` };
+      }
       total += read.bytes.length;
       if (total > TREE_LIMITS.bytes) return { ok: false, message: 'drzewo wieksze niz 10 MiB' };
       files.push({ rel, bytes: read.bytes, executable: (info.mode & 0o100) !== 0 });
