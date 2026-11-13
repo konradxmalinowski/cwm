@@ -586,3 +586,104 @@ describe('drugi frontmatter (krytyczne: tresc nie moze stac sie frontmatterem si
     expect(parseContent('skill', enc('---\nname: a\n---\n# Tytul\n---\nx\n')).ok).toBe(true);
   });
 });
+
+describe('hooki w frontmatterze skilla (ADR 0042)', () => {
+  const enc = (text: string): Uint8Array => new TextEncoder().encode(text);
+  const hook = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    PreToolUse: [
+      {
+        matcher: 'Bash',
+        hooks: [{ type: 'command', command: '~/.claude/skills/acme-careful/check.sh', ...extra }],
+      },
+    ],
+  });
+  const skill = (hooks: unknown) => analyzeContent('skill', { name: 'acme-careful', hooks }, 'x');
+
+  it('skill przyjmuje hooki, a model wraca do zasobu tylko ze zwalidowanej postaci', () => {
+    const result = skill(hook({ timeout: 10, statusMessage: 'Sprawdzam polecenie' }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(Object.keys(result.value.hooks)).toEqual(['PreToolUse']);
+      expect(result.value.kept['hooks']).toEqual(result.value.hooks);
+      expect(result.value.unknownKeys).toEqual([]);
+    }
+  });
+
+  it('te same reguly co Settings: typ, timeout, polecenie, sekret, zdarzenie, klucze', () => {
+    const bad: unknown[] = [
+      hook({ type: 'http' }),
+      hook({ type: 'prompt' }),
+      hook({ timeout: 0 }),
+      hook({ timeout: 601 }),
+      hook({ timeout: 1.5 }),
+      hook({ command: 'x\ny' }),
+      hook({ command: 'x'.repeat(4097) }),
+      hook({ command: `curl -H "Authorization: Bearer ${OPENAI_LIKE}" x` }),
+      hook({ statusMessage: 'a\nb' }),
+      hook({ statusMessage: OPENAI_LIKE }),
+      hook({ statusMessage: 5 }),
+      hook({ extra: 1 }),
+      { '1bad': [{ hooks: [{ type: 'command', command: 'x' }] }] },
+      { Stop: [{ hooks: [] }] },
+      { Stop: 'x' },
+      'x',
+      null,
+    ];
+    for (const value of bad) {
+      expect(skill(value).ok, JSON.stringify(value)).toBe(false);
+    }
+  });
+
+  it('statusMessage nie jest dozwolone w Settings', () => {
+    const manifest = {
+      apiVersion: 'cwm.dev/v1',
+      kind: 'Settings',
+      metadata: { id: 'acme-a/guard', version: '1.0.0' },
+      spec: {
+        hooks: {
+          Stop: [{ hooks: [{ type: 'command', command: 'x', statusMessage: 'y' }] }],
+        },
+      },
+    };
+    expect(validateResource(manifest).ok).toBe(false);
+  });
+
+  it('agent, komenda i Files nadal odrzucaja hooki, a skill nadal permissionMode i mcpServers', () => {
+    for (const kind of ['agent', 'command'] as const) {
+      expect(analyzeContent(kind, { name: 'a', hooks: hook() }, 'x').ok).toBe(false);
+    }
+    const text =
+      '---\nname: a\nhooks:\n  Stop:\n    - hooks:\n        - type: command\n          command: x\n---\nbody';
+    expect(parseContent('skill', enc(text)).ok).toBe(true);
+    expect(parseContent('agent', enc(text)).ok).toBe(false);
+    expect(parseContent('command', enc(text)).ok).toBe(false);
+    expect(parseFilesMarkdown('skills', enc(text)).ok).toBe(false);
+    expect(parseFilesMarkdown('agents', enc(text)).ok).toBe(false);
+    expect(analyzeContent('skill', { name: 'a', permissionMode: 'plan' }, 'x').ok).toBe(false);
+    expect(analyzeContent('skill', { name: 'a', mcpServers: {} }, 'x').ok).toBe(false);
+    expect(analyzeContent('skill', { name: 'a', Hooks: hook() }, 'x').ok).toBe(false);
+  });
+
+  it('frontmatter jest odtwarzany z modelu: obce klucze w hooku nie przechodza, tresc bez zmian', () => {
+    const text =
+      '---\nname: acme-careful\nfoo: bar\nhooks:\n  PreToolUse:\n    - matcher: Bash\n      hooks:\n        - type: command\n          command: ./check.sh\n          timeout: 5\n          statusMessage: Sprawdzam\n---\n# Tresc\n';
+    const parsed = parseContent('skill', enc(text), 'acme-careful');
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      const out = new TextDecoder().decode(parsed.content);
+      expect(out).not.toContain('foo');
+      expect(out).toContain('command: ./check.sh');
+      expect(out).toContain('# Tresc');
+      expect(parsed.unknownKeys).toEqual(['foo']);
+      const again = parseContent('skill', parsed.content, 'acme-careful');
+      expect(again.ok && again.content).toEqual(parsed.content);
+    }
+  });
+
+  it('zsyntetyzowana nazwa trafia do wyniku (kontrola duplikatow nazw agentow)', () => {
+    const named = parseContent('agent', enc('---\nfoo: bar\n---\nbody\n'), 'acme-x');
+    expect(named.ok && named.name).toBe('acme-x');
+    const own = parseContent('agent', enc('---\nname: acme-y\n---\nbody\n'), 'acme-x');
+    expect(own.ok && own.name).toBe('acme-y');
+  });
+});
