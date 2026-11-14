@@ -1,11 +1,11 @@
 # CLI `cwm`
 
-last_updated: 2026-11-12
+last_updated: 2026-11-14
 
 `cwm` zakłada i sprawdza dane CWM w `~/.cwm`: firmy, projekty i zasoby (skille, agenci, komendy,
 workflowy, ustawienia, pluginy, serwery MCP). Składa też z nich konfigurację projektu, a
 `cwm import claude` kopiuje do rejestru skille, agentów, komendy i ustawienia z natywnego katalogu
-Claude Code. `cwm start` generuje profil firmy w `~/.cwm/runtime` i uruchamia silnik (ADR 0040);
+Claude Code, a `cwm sync` odświeża rejestr z tych samych katalogów. `cwm start` generuje profil firmy w `~/.cwm/runtime` i uruchamia silnik (ADR 0040);
 żadne polecenie nie zapisuje w `.claude/`, `CLAUDE.md` ani `.mcp.json`, a natywny katalog jest
 czytany tylko do odczytu.
 Decyzje i ograniczenia: [ADR 0038](adr/0038-fundament-cli-cwm.md) (fundament),
@@ -437,7 +437,7 @@ i tabulator zostają.
 | Kod | Znaczenie |
 |---|---|
 | `0` | sukces; także `-h` i `-V` |
-| `1` | błąd walidacji, polityki albo stanu na dysku (brak `cwm init`, firma już istnieje, błąd w manifeście, przerwane pytanie, nieoczekiwany błąd); dla `import claude` także zmiany do zapisania bez terminala (zob. niżej); dla `start` niezatwierdzone zasoby bez terminala, brak zmiennej `envRef`, trwająca sesja firmy z innym profilem, odmowa zatwierdzenia; po uruchomieniu silnika `start` zwraca jego kod wyjścia |
+| `1` | błąd walidacji, polityki albo stanu na dysku (brak `cwm init`, firma już istnieje, błąd w manifeście, przerwane pytanie, nieoczekiwany błąd); dla `import claude` i `sync` także zmiany do zapisania bez terminala (zob. niżej), a dla `sync` zablokowane usunięcie (zasób obowiązkowy albo wymagany) i źródło, którego nie da się przejrzeć; dla `start` niezatwierdzone zasoby bez terminala, brak zmiennej `envRef`, trwająca sesja firmy z innym profilem, odmowa zatwierdzenia; po uruchomieniu silnika `start` zwraca jego kod wyjścia |
 | `2` | błędne użycie: nieznane polecenie lub opcja, brak wymaganego argumentu, niepoprawne id, zła wartość `--store`, `CWM_HOME` niebezwzględny; dla `import claude` brak `--company` i `--global` bez terminala albo oba naraz; dla `start` niedozwolone argumenty silnika po `--`, dla `approvals revoke` zły zestaw selektorów |
 
 `cwm` bez argumentów i `cwm help` wypisują pomoc, ale kończą się kodem `2`. Do pomocy z kodem `0`
@@ -959,6 +959,56 @@ terminala, użytkownik odmówił albo zapis któregoś zasobu się nie udał; `2
 Po imporcie `cwm doctor` i `cwm resource list` widzą nowe zasoby. Z zasobem włączonym w firmie
 `cwm resolve` wypisuje jego id w `resolved.skills`, `resolved.commands`, `resolved.files` albo `resolved.settings`.
 
+### `cwm sync`
+
+```text
+cwm sync [--source <katalog>] [--dry-run]
+```
+
+Odświeża rejestr z natywnych katalogów, z których zasoby zaimportowano (ADR 0045). Źródłem jest
+`spec.nativeDir` zasobów `skill`, `agent`, `command` i `files`; zasoby są grupowane po (katalog,
+przestrzeń nazw: `global` albo firma), a każda grupa przechodzi ten sam skan, plan i pakiety co
+`cwm import claude`. `Settings` nie ma pochodzenia w rejestrze, więc sync go nie dotyka
+(`cwm import claude`). Katalog natywny jest tylko czytany.
+
+- **Zmienione i nowe zasoby:** status `zmieniony` i `nowy`, jak w imporcie; nowe trafiają do pakietów,
+  ale nie do `resources.optional` ani `resources.enable` (komunikat po zapisie).
+- **Pliki oznaczone jako możliwy sekret:** wracają do zasobu tylko wtedy, gdy są już w rejestrze z tym
+  samym skrótem pliku (były dołączone przy imporcie i źródło ich nie zmieniło). Plik zmieniony od
+  dołączenia wymaga nowej decyzji (domyślnie pominięty, plan to mówi, bo plik znika z zasobu; jego
+  kopia zostaje w `.<nazwa>.old-*` do następnego zapisu albo usunięcia zasobu). Pliki dołączone bez
+  pytania są wypisane z powodem oznaczenia. Nowe
+  pliki oznaczone: wybór na terminalu, domyślnie żaden; twardego sekretu nie da się dołączyć.
+- **Zasoby bez źródła** (brak katalogu albo wpisu w katalogu): sekcja `Do usuniecia z rejestru` z
+  miejscami, z których usunięcie też wytnie zasób. Po zgodzie znikają: katalog zasobu w rejestrze, wpisy
+  w `resources.mandatory/optional` (`config.yaml`), `resources.enable`, `disableOptional` i `exports`
+  (`company.yaml`; komentarze i reszta pliku zostają), członkostwo w pakietach (pusty pakiet znika)
+  razem z zaufanymi skrótami, oraz wpisy w `approvals/<firma>.yaml`. Zasób pominięty przez skan z
+  raportem (kolizja nazw, trafienie w `SKILL.md`) nie jest usuwany, bo jego źródło istnieje; zerwane
+  dowiązanie jest zniknięciem źródła. Źródło przejrzane niepełnie (skrócony, pominięty, nieczytelny
+  albo niebędący katalogiem obszar `skills`, `agents`, `commands`) niczego nie usuwa. Zasób, którego
+  źródło istnieje w innej grupie, zostaje z ostrzeżeniem; zasób zgłoszony przez dwa źródła jest błędem
+  obu (kod `1`). Usunięcie kasuje też kopie `.<nazwa>.old-*` i `.<nazwa>.import-*` obok katalogu zasobu.
+- **Odmowa:** zasób z `mandatory` albo wymagany przez aktywny zasób (`mandatory`, `optional`, `enable`
+  firmy lub projektu z `~/.cwm`) nie jest usuwany; błąd wymienia zależnego albo `config.yaml`. Zależny
+  usuwany w tym samym planie nie blokuje. Zablokowane usunięcie odrzuca cały plan (kod `1`, nic nie
+  zapisano). Manifest projektu z `~/.cwm` wymieniający usuwany zasób daje ostrzeżenie; projekty
+  lokalne (`<projekt>/.cwm`) nie są przeszukiwane.
+- **Jedno potwierdzenie** na terminalu dla całego planu (zapis, usunięcia, zgoda pakietów). Wybór
+  oznaczonych plików (wielokrotny, domyślnie żaden) poprzedza je jak w imporcie.
+- **Bez terminala** (`--json`, `--no-input`, wyjście nieinteraktywne) nic nie jest zapisywane; gdy plan
+  ma zmiany, kod `1` (`ok: false`). `--dry-run` pokazuje plan i kończy się kodem `0`.
+- `--source <katalog>`: tylko zasoby zaimportowane z tego katalogu (porównanie po `realpath`; katalog
+  może już nie istnieć). Brak zasobów z tego źródła to błąd `1`.
+
+Zapis idzie pod mutexem `runtime/global` w kolejności: zasoby i pakiety, czyszczenie odwołań (config, firmy, pakiety, zatwierdzenia),
+na końcu katalogi usuwanych zasobów; przerwany sync dokończy kolejne uruchomienie. Źródło, którego nie
+da się przejrzeć (nie jest katalogiem, leży w katalogu danych CWM, przekroczono limity), jest błędem
+tej grupy: jej zasoby zostają bez zmian, a polecenie kończy się kodem `1`. `--json` wypisuje
+`{ ok, dryRun, written, error, sources[], removals[], warnings[], blocked }`; każde źródło ma pola
+planu importu (`items`, `skipped`, `flagged`, `packs`) oraz `state` (`ok`, `missing`, `error`),
+`autoIncluded` i `changedFlagged`.
+
 ### `cwm start`
 
 ```text
@@ -1176,7 +1226,7 @@ Uszkodzony plik zatwierdzeń oznacza „nic nie jest zatwierdzone”
 
 ## Czego jeszcze nie ma
 
-Polecenia `sync`, `diff` i `run`, lockfile, `--follow-links` w imporcie, kopiowanie skryptów
+Polecenia `diff` i `run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), lockfile, `--follow-links` w imporcie, kopiowanie skryptów
 hooków do rejestru (skrypt poza rejestrem jest przypięty skrótem, ale nie skopiowany), pluginy
 `git` w `cwm start`, marketplace'y zdalne (git, http) i źródła obiektowe wpisów, polecenie `cwm plugin add`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
 zatwierdzeń, Windows w `cwm start` oraz import biblioteki aplikacji i pluginów. Zapis do
