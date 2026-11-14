@@ -30,7 +30,8 @@ import {
 import { readTextWithin } from './read';
 import { readTree, type TreeFile } from './runtime-sources';
 import { parseManifestYaml } from './yaml-manifest';
-import { join } from 'node:path';
+import { lstat, realpath } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 export type MemberTrustState = 'approved' | 'new' | 'changed';
 
@@ -73,6 +74,22 @@ const treeOf = (item: PlanItem): TreeFile[] =>
  * Plan pakietow przy imporcie: grupowanie zasobow planu (takze bez zmian), pola kazdego czlonka
  * wyprowadzone z bajtow, ktore import zapisze, i porownanie z zaufanymi skrotami. Nic nie jest zapisywane.
  */
+/**
+ * Zrodlo do grupowania: dla skilla, ktorego katalog jest zwyklym katalogiem z dowiazanym SKILL.md
+ * (np. skille jednego repozytorium dowiazane plik po pliku), katalog celu dowiazania. Tylko do
+ * nazwy pakietu; tresc i skroty liczone sa jak dotad z kopii w rejestrze.
+ */
+async function groupingSource(kind: PackKind, source: string | null): Promise<string | null> {
+  if (kind !== 'skill' || source === null) return source;
+  const manifest = join(source, 'SKILL.md');
+  try {
+    if (!(await lstat(manifest)).isSymbolicLink()) return source;
+    return dirname(await realpath(manifest));
+  } catch {
+    return source;
+  }
+}
+
 export async function buildPackPlan(
   layout: CwmLayout,
   plan: ImportPlan,
@@ -90,20 +107,20 @@ export async function buildPackPlan(
     }
     resources.set(memberKey(resource.kind, resource.id), { item, resource });
   }
+  const inputs = await Promise.all(
+    [...resources.values()].map(async ({ item, resource }) => ({
+      kind: resource.kind,
+      id: resource.id,
+      sourceReal: await groupingSource(resource.kind, item.source),
+    })),
+  );
   const groups = splitLargePacks(
-    groupForPacks(
-      [...resources.values()].map(({ item, resource }) => ({
-        kind: resource.kind,
-        id: resource.id,
-        sourceReal: item.source,
-      })),
-      {
-        namespace: targetNamespace(plan.target),
-        company: plan.target.scope === 'company',
-        from,
-        existing: defs.membership,
-      },
-    ),
+    groupForPacks(inputs, {
+      namespace: targetNamespace(plan.target),
+      company: plan.target.scope === 'company',
+      from,
+      existing: defs.membership,
+    }),
   );
   const trusts = await loadPackTrusts(layout, groups.keys());
   const derivedAll = new Map<string, DerivedMember>();

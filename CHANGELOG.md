@@ -12,6 +12,10 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- Grupowanie pakietów przy imporcie rozpoznaje skille, których katalog zawiera dowiązany `SKILL.md`
+  (skille jednego repozytorium dowiązane plik po pliku), i łączy je w pakiet nazwany katalogiem
+  celu dowiązania. Wcześniej trafiały do ogólnego pakietu `skills`.
+
 - Pakiety zasobów i zgoda przy imporcie (ADR 0044, `docs/CLI.md`, gałąź `feat/cwm-packs`, jeszcze
   niescalona): `cwm import claude` grupuje zasoby w pakiety (wspólny katalog źródłowy po dowiązaniu,
   wspólny przedrostek nazwy, reszta według rodzaju, import do firmy to jeden pakiet o nazwie firmy),
