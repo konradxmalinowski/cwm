@@ -17,12 +17,10 @@ import {
   formatJson,
   makeSubject,
   mcpCommandIsPath,
-  nativeDirPattern,
   mcpEnvRefs,
   needsApproval,
   projectApprovalKey,
   refKey,
-  rewriteNativeConfigRefs,
   settingsEnvRefs,
   validateCleanupPath,
   type ApprovalSubject,
@@ -30,14 +28,25 @@ import {
   type EffectiveConfiguration,
   type MarketplaceFacts,
   type McpServer,
-  type PinInfo,
+  type PackMemberFacts,
   type Resource,
   type ResourceFacts,
 } from '../../core/cwm';
-import { describeUnpinned, pinHookCommands } from './hook-pins';
+import { pinHookCommands, pinInfos } from './hook-pins';
 import { parseContent, parseFilesMarkdown } from './import-source';
 import { companyDir, resourceFileName, type CwmLayout } from './layout';
 import { directoryUnchanged, resolveMarketplacePlugin, versionWarnings } from './marketplace';
+import { createNativeRewriter } from './native-rewrite';
+import {
+  bindMember,
+  contentSignature,
+  deriveMember,
+  isPackResource,
+  memberFiles,
+  normalizedSignature,
+  type DerivedContent,
+  type PackResource,
+} from './pack-derive';
 import { realpathLoose } from './paths';
 import { readTextWithin } from './read';
 import { runtimeCompanyDir } from './runtime-fs';
@@ -60,6 +69,8 @@ export interface PlannedFile {
   readonly bytes: Uint8Array;
   readonly executable: boolean;
   readonly sha256: string;
+  /** Klucz zasobu (`rodzaj:id`), z ktorego pochodzi plik; brak dla plikow generowanych (settings, mcp). */
+  readonly owner?: string;
 }
 
 export interface PlanInput {
@@ -72,6 +83,8 @@ export interface PlanInput {
   readonly projectStore: 'local' | 'home';
   readonly homeDir: string;
   readonly userArgs: readonly string[];
+  /** Czlonkostwo w pakietach: klucz zasobu (`rodzaj:id`) -> id pakietu (ADR 0044). */
+  readonly packMembership?: ReadonlyMap<string, string>;
 }
 
 export interface PlanSummary {
@@ -107,6 +120,8 @@ export interface RuntimePlan {
   /** Migawki pluginow `local` tego uruchomienia (`<slug>@<skrot>`). */
   readonly pluginSnapshots: readonly string[];
   readonly subjects: readonly ApprovalSubject[];
+  /** Pola czlonkow pakietow wyprowadzone z rejestru (niezalezne od firmy), do oceny zaufanych skrotow. */
+  readonly packMembers: readonly PackMemberFacts[];
   readonly ownEnvRefs: readonly string[];
   readonly settingsEnvRefs: Readonly<Record<string, string>>;
   readonly otherCompanyRefs: readonly string[];
@@ -153,13 +168,19 @@ class Collector {
   readonly notes: string[] = [];
 
   /** Klucz bez rozroznienia wielkosci liter i w NFC: APFS i NTFS traktuja takie sciezki jak jedna. */
-  add(rel: string, bytes: Uint8Array, executable = false): void {
+  add(rel: string, bytes: Uint8Array, executable = false, owner?: string): void {
     const key = foldPath(rel);
     if (this.files.has(key)) {
       this.errors.push(`Dwa zasoby zapisywalyby ten sam plik: ${rel}.`);
       return;
     }
-    this.files.set(key, { rel, bytes, executable, sha256: sha256Hex(bytes) });
+    this.files.set(key, {
+      rel,
+      bytes,
+      executable,
+      sha256: sha256Hex(bytes),
+      ...(owner === undefined ? {} : { owner }),
+    });
   }
 }
 
@@ -202,25 +223,6 @@ function parseOrReport(
     return null;
   }
   return parsed;
-}
-
-function pinInfos(
-  pins: Awaited<ReturnType<typeof pinHookCommands>>['pins'],
-  dropped: number,
-): PinInfo[] {
-  const infos = pins.map((pin): PinInfo => ({
-    raw: pin.token.raw,
-    sha256: pin.status.state === 'pinned' ? pin.status.sha256 : null,
-    unpinnedReason: pin.status.state === 'pinned' ? null : describeUnpinned(pin.status.reason),
-  }));
-  if (dropped > 0) {
-    infos.push({
-      raw: `(+${dropped} sciezek)`,
-      sha256: null,
-      unpinnedReason: 'ponad limit przypinania',
-    });
-  }
-  return infos;
 }
 
 function hookCommands(resource: Resource): string[] {
@@ -315,37 +317,10 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
   };
 
   // Odwolania do natywnego `~/.claude` w kopiach: sesja czyta profil, nie prawdziwy katalog natywny.
-  const nativeDir = join(input.homeDir, '.claude');
-  const homeDirs = [nativeDir, await realpathLoose(nativeDir)];
-  const patterns = new Map<string, RegExp>();
-  const patternFor = (origin: string | undefined): RegExp => {
-    const key = origin ?? '';
-    let pattern = patterns.get(key);
-    if (pattern === undefined) {
-      pattern = nativeDirPattern(origin === undefined ? homeDirs : [...homeDirs, origin]);
-      patterns.set(key, pattern);
-    }
-    return pattern;
-  };
+  const profileDir = join(baseDir, 'claude');
+  const nativeRewriter = await createNativeRewriter(input.homeDir, profileDir);
   const rewriter = {
-    /**
-     * Zmienione bajty i liczba odwolan (katalog domowy oraz katalog natywny zapisany w zasobie);
-     * pliki wykonywalne i nietekstowe zostaja bez zmian.
-     */
-    apply(file: TreeFile, origin?: string): { file: TreeFile; count: number } {
-      if (file.executable) return { file, count: 0 };
-      let text: string;
-      try {
-        text = new TextDecoder('utf-8', { fatal: true }).decode(file.bytes);
-      } catch {
-        return { file, count: 0 };
-      }
-      if (text.includes('\0')) return { file, count: 0 };
-      const result = rewriteNativeConfigRefs(text, patternFor(origin), join(baseDir, 'claude'));
-      return result.count === 0
-        ? { file, count: 0 }
-        : { file: { ...file, bytes: encoder.encode(result.text) }, count: result.count };
-    },
+    apply: (file: TreeFile, origin?: string) => nativeRewriter.apply(file, origin),
     note(label: string, count: number): void {
       if (count === 0) return;
       summary.rewrittenReferences += count;
@@ -353,6 +328,30 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         `${label}: przepisano ${count} odwolan do natywnego katalogu konfiguracji na sciezke profilu.`,
       );
     },
+  };
+
+  /** Czlonkowie pakietow: bajty z rejestru sprzed przepisywania i tresc, ktora policzyl plan. */
+  const packInputs: Array<{
+    resource: PackResource;
+    pack: string;
+    files: TreeFile[];
+    planContent?: DerivedContent;
+  }> = [];
+  const packOf = (resource: Resource): string | undefined =>
+    input.packMembership?.get(refKey(resource));
+  const trackPack = (
+    resource: Resource,
+    files: readonly TreeFile[],
+    content?: DerivedContent,
+  ): void => {
+    const pack = packOf(resource);
+    if (pack === undefined || !isPackResource(resource)) return;
+    packInputs.push({
+      resource,
+      pack,
+      files: memberFiles(resource, files),
+      ...(content === undefined ? {} : { planContent: content }),
+    });
   };
 
   for (const entry of effective.resources) {
@@ -411,11 +410,17 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         }
         taken.add(`${base}/skills/${name}`);
         for (const file of finals) {
-          out.add(`${base}/skills/${name}/${file.rel}`, file.bytes, file.executable);
+          out.add(
+            `${base}/skills/${name}/${file.rel}`,
+            file.bytes,
+            file.executable,
+            refKey(resource),
+          );
         }
         counters.skills += 1;
         if (!inPlugin) profileNames.skills.push(name);
         const skillFacts = contentFacts(parsed, treeSha256(finals));
+        trackPack(resource, tree.files, skillFacts.content);
         const skillCommands = Object.values(parsed.hooks).flatMap((groups) =>
           groups.flatMap((group) => group.hooks.map((hook) => hook.command)),
         );
@@ -449,13 +454,19 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           break;
         }
         taken.add(`${base}/${folder}/${name}`);
-        out.add(`${base}/${folder}/${name}.md`, parsed.content);
+        out.add(`${base}/${folder}/${name}.md`, parsed.content, false, refKey(resource));
         if (resource.kind === 'agent') counters.agents += 1;
         else counters.commands += 1;
         if (!inPlugin) {
           (resource.kind === 'agent' ? profileNames.agents : profileNames.commands).push(name);
         }
-        subject(resource, contentFacts(parsed, sha256Hex(parsed.content)));
+        const agentFacts = contentFacts(parsed, sha256Hex(parsed.content));
+        trackPack(
+          resource,
+          [{ rel: stripDot(resource.source), bytes, executable: false }],
+          agentFacts.content,
+        );
+        subject(resource, agentFacts);
         break;
       }
       case 'files': {
@@ -527,13 +538,15 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         rewriter.note(label, rewritten);
         // Dane, nie polecenia: takze zasob obowiazkowy trafia do profilu pod zwykla sciezka (bez przedrostka pluginu).
         for (const file of finals) {
-          out.add(`claude/${resource.root}/${file.rel}`, file.bytes, false);
+          out.add(`claude/${resource.root}/${file.rel}`, file.bytes, false, refKey(resource));
         }
         summary.profile.files += 1;
+        trackPack(resource, tree.files, facts);
         subject(resource, { content: facts, sourceSha256: treeSha256(finals) });
         break;
       }
       case 'settings': {
+        trackPack(resource, []);
         pendingPins.push({ resource, facts: {}, commands: hookCommands(resource) });
         break;
       }
@@ -603,7 +616,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         const treeHash = treeSha256(tree.files);
         const slug = `${slugOf(resource.id)}@${treeHash.slice(0, 16)}`;
         for (const file of tree.files) {
-          out.add(`plugins/${slug}/${file.rel}`, file.bytes, file.executable);
+          out.add(`plugins/${slug}/${file.rel}`, file.bytes, file.executable, refKey(resource));
         }
         pluginDirs.push(join(baseDir, 'plugins', slug));
         pluginSnapshots.push(slug);
@@ -773,6 +786,55 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     subject(pending.resource, { ...pending.facts, pins: infos });
   }
 
+  // Pola czlonkow pakietow z tych samych bajtow rejestru, ktore przeczytal plan (ADR 0044).
+  const derivedMembers: Array<{
+    derived: Awaited<ReturnType<typeof deriveMember>>;
+    blockers: string[];
+  }> = [];
+  for (const item of packInputs) {
+    const derived = await deriveMember({
+      pack: item.pack,
+      resource: item.resource,
+      files: item.files,
+      homeDir: input.homeDir,
+    });
+    const blockers = [...derived.facts.blockers];
+    if (
+      item.planContent !== undefined &&
+      derived.content !== null &&
+      normalizedSignature(item.planContent, profileDir) !== contentSignature(derived.content)
+    ) {
+      blockers.push(
+        'tresc zasobu po przepisaniu odwolan rozni sie od wyprowadzonej z rejestru (pola zalezne od profilu)',
+      );
+    }
+    // Polecenie hooka z prawdziwa sciezka profilu firmy wpisana wprost zalezy od firmy: pin liczony
+    // z pliku na dysku moglby byc starszy niz bajty, ktore plan zapisze (ADR 0044).
+    const pinned = derived.facts.fields.exec?.['pins'];
+    if (
+      Array.isArray(pinned) &&
+      (pinned as { path?: unknown }[]).some(
+        (pin) =>
+          typeof pin.path === 'string' &&
+          (pin.path === baseDir || pin.path.startsWith(`${baseDir}/`)),
+      )
+    ) {
+      blockers.push('polecenie hooka wskazuje wprost katalog profilu firmy (zalezne od firmy)');
+    }
+    derivedMembers.push({ derived, blockers });
+  }
+  const treeByKey = new Map(
+    derivedMembers.map(({ derived }) => [derived.facts.key, derived.facts.fields.tree]),
+  );
+  const packMembers: PackMemberFacts[] = derivedMembers.map(({ derived, blockers }) => ({
+    ...bindMember(
+      derived,
+      (rel) => out.files.get(foldPath(`claude/${rel}`))?.owner ?? null,
+      (key) => treeByKey.get(key) ?? null,
+    ),
+    blockers: [...blockers],
+  }));
+
   const files = [...out.files.values()].sort((a, b) => (a.rel < b.rel ? -1 : 1));
   for (const file of files) {
     const check = validateCleanupPath(file.rel);
@@ -795,6 +857,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     pluginDirs,
     pluginSnapshots: pluginSnapshots.sort(),
     subjects: subjects.sort((a, b) => (a.key < b.key ? -1 : 1)),
+    packMembers,
     ownEnvRefs: ownRefs,
     settingsEnvRefs: envRefs,
     otherCompanyRefs: foreignEnvRefs(registryRefs, ownRefs),

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 
-import { extractHookPathTokens, type HookPathToken } from '../../core/cwm';
+import { extractHookPathTokens, type HookPathToken, type PinInfo } from '../../core/cwm';
 import { readChecked } from '../fs/bounded-read';
 
 /** Skrypt hooka wiekszy niz to nie jest przypinany (IMP-08). */
@@ -78,4 +78,21 @@ export async function pinHookCommands(
     }
   }
   return { pins, dropped };
+}
+
+/** Piny w postaci pol zatwierdzenia; powyzej limitu dopisywany jest wpis o pominietych sciezkach. */
+export function pinInfos(pins: readonly PinnedPath[], dropped: number): PinInfo[] {
+  const infos = pins.map((pin): PinInfo => ({
+    raw: pin.token.raw,
+    sha256: pin.status.state === 'pinned' ? pin.status.sha256 : null,
+    unpinnedReason: pin.status.state === 'pinned' ? null : describeUnpinned(pin.status.reason),
+  }));
+  if (dropped > 0) {
+    infos.push({
+      raw: `(+${dropped} sciezek)`,
+      sha256: null,
+      unpinnedReason: 'ponad limit przypinania',
+    });
+  }
+  return infos;
 }

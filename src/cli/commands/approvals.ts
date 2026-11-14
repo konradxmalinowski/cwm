@@ -6,11 +6,18 @@ import {
   isSafeSegment,
   listApprovalCompanies,
   liveSessions,
+  dropPackRecords,
+  listTrustedPackIds,
+  trustedExecKeys,
   loadApprovals,
+  loadPackTrust,
   loadWorkspace,
   peekRuntimeRoot,
   revokeApprovals,
+  revokePackTrust,
+  splitPackId,
 } from '../../infra/cwm';
+import { packTrustDigest } from '../../core/cwm';
 import {
   CliError,
   contextOf,
@@ -63,12 +70,40 @@ async function listCommand(ctx: Context, options: { company?: string }): Promise
       });
     }
   }
-  if (ctx.json) return printJson({ ok: corrupt.length === 0, approvals: rows, corrupt });
-  if (rows.length === 0) print('Brak zatwierdzen.');
+  const packRows: { pack: string; hash: string; approvedAt: string; members: number }[] = [];
+  if (options.company === undefined) {
+    for (const id of await listTrustedPackIds(ctx.layout)) {
+      const loaded = await loadPackTrust(ctx.layout, id);
+      if (loaded.state === 'corrupt') corrupt.push(`pakiet ${id}: ${loaded.message}`);
+      if (loaded.state !== 'ok') continue;
+      packRows.push({
+        pack: id,
+        hash: packTrustDigest(loaded.file),
+        approvedAt:
+          loaded.file.members
+            .map((m) => m.approvedAt)
+            .sort()
+            .pop() ?? '',
+        members: loaded.file.members.length,
+      });
+    }
+  }
+  if (ctx.json) {
+    return printJson({ ok: corrupt.length === 0, approvals: rows, packs: packRows, corrupt });
+  }
+  if (rows.length === 0 && packRows.length === 0) print('Brak zatwierdzen.');
   else {
     print(
       table([
         ['FIRMA', 'KLUCZ', 'SHA256', 'WERSJA', 'DATA', 'SCIEZKA'],
+        ...packRows.map((r) => [
+          '(wszystkie)',
+          `pack:${r.pack}`,
+          r.hash.slice(0, 12),
+          '-',
+          r.approvedAt,
+          `${r.members} zasobow`,
+        ]),
         ...rows.map((r) => [
           r.company,
           r.key,
@@ -102,16 +137,42 @@ async function revokeCommand(
   if (key === undefined && options.company === undefined && options.all !== true) {
     throw usageError('Podaj <klucz>, --company <id> albo --all.');
   }
+  const packKey = key?.startsWith('pack:') === true ? key.slice('pack:'.length) : null;
+  if (packKey !== null) {
+    if (options.company !== undefined) {
+      throw usageError('Zgoda pakietu nie nalezy do firmy: bez --company.');
+    }
+    if (splitPackId(packKey) === null)
+      throw usageError('Niepoprawne id pakietu (pack:<przestrzen>/<nazwa>).');
+  }
   await requireInitialized(ctx.layout);
 
-  const { outcomes, corrupt } = await revokeApprovals(ctx.layout, {
-    ...(key === undefined ? {} : { key }),
-    ...(options.company === undefined ? {} : { company: options.company }),
-    ...(options.all === true ? { all: true } : {}),
-  });
+  // Zgoda pakietu jest wspolna dla firm: odwolanie dotyka profili wszystkich firm.
+  const revokedPacks: string[] = [];
+  if (packKey !== null) {
+    if (await revokePackTrust(ctx.layout, packKey)) revokedPacks.push(`pack:${packKey}`);
+  } else if (options.all === true) {
+    for (const id of await listTrustedPackIds(ctx.layout)) {
+      if (await revokePackTrust(ctx.layout, id)) revokedPacks.push(`pack:${id}`);
+    }
+  }
+  // Zasob zatwierdzony przez pakiet zostaje zatwierdzony po odwolaniu samego wpisu firmy (F2):
+  // `revoke <klucz>` usuwa tez jego zaufany wpis w pakiecie, a `--company` ostrzega.
+  const droppedFrom: string[] = [];
+  if (key !== undefined && packKey === null && options.company === undefined) {
+    droppedFrom.push(...(await dropPackRecords(ctx.layout, [key])));
+  }
+  const { outcomes, corrupt } =
+    packKey !== null
+      ? { outcomes: [], corrupt: [] as string[] }
+      : await revokeApprovals(ctx.layout, {
+          ...(key === undefined ? {} : { key }),
+          ...(options.company === undefined ? {} : { company: options.company }),
+          ...(options.all === true ? { all: true } : {}),
+        });
   const affected = new Set(outcomes.map((o) => o.company));
   if (options.company !== undefined) affected.add(options.company);
-  if (options.all === true) {
+  if (options.all === true || revokedPacks.length > 0 || droppedFrom.length > 0) {
     const workspace = await loadWorkspace(ctx.layout);
     for (const id of workspace.companyIds) affected.add(id);
   }
@@ -145,12 +206,38 @@ async function revokeCommand(
   const incomplete = invalidated.some((item) => item.kept.length > 0);
   const failed = corrupt.length > 0 || incomplete;
   if (ctx.json) {
-    printJson({ ok: !failed, revoked: outcomes, invalidated, corrupt });
+    printJson({
+      ok: !failed,
+      revoked: outcomes,
+      revokedPacks,
+      revokedFromPacks: droppedFrom,
+      invalidated,
+      corrupt,
+    });
     if (failed) throw new CliError('', 1);
     return;
   }
-  const total = outcomes.reduce((sum, o) => sum + o.removed.length, 0);
+  const total =
+    outcomes.reduce((sum, o) => sum + o.removed.length, 0) +
+    revokedPacks.length +
+    droppedFrom.length;
+  for (const id of droppedFrom) print(`  (pakiet) zaufany wpis ${key ?? ''} usuniety z ${id}`);
+  if (packKey === null && key === undefined && options.all !== true) {
+    const covered = await trustedExecKeys(ctx.layout);
+    if (covered.length > 0) {
+      warn(
+        `Uwaga: ${covered.length} zasobow z polami wykonawczymi nadal objetych zgoda pakietow (np. ${covered.slice(0, 5).join(', ')}). Odwolaj: cwm approvals revoke pack:<id> albo <klucz zasobu>.`,
+      );
+    }
+  }
+  if (packKey === null && key !== undefined && options.company !== undefined) {
+    const covered = (await trustedExecKeys(ctx.layout)).filter((k) => k === key);
+    if (covered.length > 0) {
+      warn(`Uwaga: ${key} nadal objety zgoda pakietu; odwolaj bez --company albo pack:<id>.`);
+    }
+  }
   print(total === 0 ? 'Brak pasujacych zatwierdzen.' : `Odwolano zatwierdzen: ${total}.`);
+  for (const pack of revokedPacks) print(`  (pakiet) ${pack}`);
   for (const outcome of outcomes) {
     for (const removed of outcome.removed) print(`  ${outcome.company}: ${removed}`);
   }
@@ -180,11 +267,11 @@ async function revokeCommand(
 export function registerApprovals(program: Command): void {
   const approvals = program
     .command('approvals')
-    .description('Zatwierdzenia zasobow z polami wykonawczymi (~/.cwm/approvals)');
+    .description('Zatwierdzenia zasobow z polami wykonawczymi i pakietow (~/.cwm/approvals)');
 
   approvals
     .command('list')
-    .description('Wypisuje zatwierdzenia (klucz, skrot, wersja, data)')
+    .description('Wypisuje zatwierdzenia (klucz, skrot, wersja, data) i zgody pakietow (pack:<id>)')
     .option('--company <id>', 'tylko jedna firma')
     .action(async (options: { company?: string }, command: Command) =>
       listCommand(contextOf(command), options),
@@ -193,7 +280,7 @@ export function registerApprovals(program: Command): void {
   approvals
     .command('revoke [klucz]')
     .description(
-      'Odwoluje zatwierdzenie (klucz), wszystkie firmy (--company) albo wszystko (--all) i uniewaznia wygenerowany profil',
+      'Odwoluje zatwierdzenie (klucz, takze pack:<id>), wszystkie firmy (--company) albo wszystko (--all) i uniewaznia wygenerowany profil',
     )
     .option('--company <id>', 'firma, ktorej zatwierdzenia odwolac (z kluczem: tylko ta firma)')
     .option('--all', 'odwoluje wszystkie zatwierdzenia wszystkich firm')
