@@ -12,6 +12,10 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- Zatwierdzanie zbiorcze w `cwm start`: po wypisaniu wszystkich zasobów jedno pytanie zatwierdza
+  nowe zasoby bez ostrzeżeń. Zasoby zmienione i z ostrzeżeniem (np. skille z hookami) nadal pytają
+  osobno. Wcześniej przy pierwszym starcie z zaimportowaną konfiguracją trzeba było odpowiedzieć na
+  kilkadziesiąt pytań.
 - Polecenie `cwm` (CLI, gałąź `feat/cwm-cli`, jeszcze niescalona; ADR 0038, `docs/CLI.md`):
   `init`, `company add` i `company list`, `project create`, `project attach` i `project list`,
   `resource list`, `resolve` i `doctor`. Czyta i waliduje dane w `~/.cwm` (albo `CWM_HOME`),
