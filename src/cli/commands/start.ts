@@ -53,7 +53,7 @@ import {
   warn,
   type Context,
 } from '../context';
-import { promptConfirm } from '../prompts';
+import { promptConfirm, promptSelect } from '../prompts';
 import { resolveRecord } from '../resolve-flow';
 import { requireInitialized } from './shared';
 
@@ -192,7 +192,27 @@ async function confirmPending(
       print(`Ostrzezenie (zatwierdzone ${labelOf(item.subject)}): ${text}`);
     }
   }
-  for (const item of pending) {
+  // Zbiorczo tylko nowe zasoby bez ostrzezen; zmienione i ostrzegane zawsze pytaja osobno.
+  const bulk = pending.filter(
+    (item) => item.status === 'new' && item.subject.warnings.length === 0,
+  );
+  const single = pending.filter((item) => !bulk.includes(item));
+  let asked = pending;
+  if (bulk.length > 1) {
+    for (const item of pending) renderSubject(item);
+    print('');
+    const all = `Zatwierdz wszystkie ${bulk.length} nowe zasoby bez ostrzezen (wypisane wyzej)`;
+    const each = 'Pytaj o kazdy zasob osobno';
+    const stop = 'Przerwij';
+    const choice = await promptSelect(safeText(`Zasobow do zatwierdzenia: ${pending.length}.`), [
+      all,
+      each,
+      stop,
+    ]);
+    if (choice === stop) throw failure('Przerwano, nic nie zapisano.');
+    if (choice === all) asked = single;
+  }
+  for (const item of asked) {
     renderSubject(item);
     const yes = await promptConfirm(safeText(`Zatwierdzic ${labelOf(item.subject)}?`));
     if (!yes) {
