@@ -1075,6 +1075,11 @@ klucze izolacji (`syncClaudeAiPlugins: false`, `syncClaudeAiSkills: false`,
 `disableClaudeAiConnectors: true`), ustawiane domyślnie w pliku `--settings`;
 `runtime.isolation: false` w manifeście firmy je pomija (izolacja jest domyślnie włączona).
 
+Przy więcej niż jednym nowym zasobie bez ostrzeżeń `cwm start` wypisuje najpierw wszystkie zasoby
+do zatwierdzenia z polami w całości, a potem pyta raz: zatwierdzić wszystkie nowe zasoby bez
+ostrzeżeń, pytać o każdy osobno albo przerwać. Zasoby zmienione i zasoby z ostrzeżeniem (np. skill
+z hookami, manifest projektu) zawsze dostają osobne pytanie, także po wyborze zatwierdzenia zbiorczego.
+
 ### `cwm approvals`
 
 ```text
