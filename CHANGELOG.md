@@ -12,6 +12,18 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- Pakiety zasobów i zgoda przy imporcie (ADR 0044, `docs/CLI.md`, gałąź `feat/cwm-packs`, jeszcze
+  niescalona): `cwm import claude` grupuje zasoby w pakiety (wspólny katalog źródłowy po dowiązaniu,
+  wspólny przedrostek nazwy, reszta według rodzaju, import do firmy to jeden pakiet o nazwie firmy),
+  pokazuje na ekranie importu pola wykonawcze w całości (w tym hooki skilli i piny skryptów), a
+  potwierdzenie importu zatwierdza pakiety. `cwm start` nie pyta o zasoby, których zaufany skrót
+  (definicja, drzewo z rejestru i pola wykonawcze niezależne od firmy) nadal pasuje; gdy pakiet się
+  zmienił, także po ręcznej edycji rejestru, pyta raz na pakiet z listą zmian (dodane, usunięte,
+  zmienione z polami było/jest). Zasób, którego pól nie da się wyprowadzić niezależnie od firmy,
+  nadal wymaga zgody firmy. Ponowny `cwm import` niezmienionego źródła tworzy pakiety i zgodę bez
+  kopiowania zasobów. Nowe: `cwm pack list|show|rename|move`, klucze `pack:<id>` w
+  `cwm approvals list|revoke`, katalogi `~/.cwm/packs/` i `~/.cwm/approvals/packs/`. Zasoby poza
+  pakietami (firma, projekt, MCP, pluginy) i zatwierdzanie zbiorcze z PR #10 działają jak dotąd.
 - Zatwierdzanie zbiorcze w `cwm start`: po wypisaniu wszystkich zasobów jedno pytanie zatwierdza
   nowe zasoby bez ostrzeżeń. Zasoby zmienione i z ostrzeżeniem (np. skille z hookami) nadal pytają
   osobno. Wcześniej przy pierwszym starcie z zaimportowaną konfiguracją trzeba było odpowiedzieć na
