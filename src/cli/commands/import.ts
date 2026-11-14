@@ -1,10 +1,13 @@
 import { stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 
 import type { Command } from 'commander';
 
 import {
   applyImportPlan,
+  applyPackPlan,
   buildImportPlan,
+  buildPackPlan,
   companyDir,
   isSafeSegment,
   listCompanyIds,
@@ -14,6 +17,7 @@ import {
   WriteDeniedError,
   type ImportPlan,
   type ImportTarget,
+  type PackImportPlan,
   type PlanFlagged,
   type PlanItem,
   type ReportItem,
@@ -30,6 +34,7 @@ import {
   warn,
   type Context,
 } from '../context';
+import { renderExec } from '../pack-render';
 import { promptConfirm, promptMultiSelect, promptSelect } from '../prompts';
 import { requireInitialized } from './shared';
 
@@ -164,6 +169,79 @@ function renderPlan(plan: ImportPlan, from: string): void {
   }
 }
 
+const TRUST_LABEL = { approved: 'zatwierdzony', new: 'nowy', changed: 'zmieniony' } as const;
+const DEFINITION_LABEL = { new: 'nowy', changed: 'zmieniony', same: 'bez zmian' } as const;
+
+/** Zasoby z polami wykonawczymi, ktorych zgoda przy imporcie jest jeszcze do udzielenia. */
+function approvalCount(packs: PackImportPlan): number {
+  return packs.packs
+    .flatMap((pack) => pack.members)
+    .filter((member) => member.derived.facts.required && member.trust !== 'approved').length;
+}
+
+/** Pakiety i pola wykonawcze ich czlonkow w calosci: potwierdzenie importu jest zgoda (ADR 0044). */
+function renderPacks(packs: PackImportPlan): void {
+  if (packs.packs.length === 0 && packs.problems.length === 0) return;
+  print('');
+  print(
+    'Pakiety (potwierdzenie importu zatwierdza je; cwm start nie pyta o zasoby, ktorych tresc i pola wykonawcze sie nie zmienily).',
+  );
+  print(
+    '/cwm-pack-profile w polach to katalog profilu firmy, na ktory cwm start przepisuje odwolania do ~/.claude.',
+  );
+  for (const pack of packs.packs) {
+    const required = pack.members.filter((member) => member.derived.facts.required);
+    const plain = pack.members.length - required.length;
+    print('');
+    print(
+      `  ${pack.id}: ${pack.members.length} zasobow, definicja ${DEFINITION_LABEL[pack.definition]}${pack.pending ? '' : ', zgoda aktualna'}`,
+    );
+    if (pack.corrupt !== null) {
+      print(`    UWAGA: ${pack.corrupt} Zgody tego pakietu nie da sie zapisac.`);
+    }
+    if (plain > 0) print(`    ${plain} zasobow bez pol wykonawczych (tylko skrot drzewa)`);
+    for (const member of required) {
+      print(
+        `    ${member.key} [${TRUST_LABEL[member.trust]}] sha256:${member.derived.facts.fields.tree.slice(0, 12)}`,
+      );
+      renderExec(member.derived.facts, '      ');
+      for (const text of member.derived.facts.blockers) {
+        print(
+          `      UWAGA: zgoda pakietu go nie obejmie (${text}); cwm start zapyta o zgode firmy`,
+        );
+      }
+      for (const rel of member.derived.profileRels) {
+        const bound = member.derived.facts.fields.bindings.find((b) => b.rel === rel);
+        const who =
+          bound === undefined
+            ? 'wlasny plik zasobu'
+            : bound.owner === null
+              ? 'wlasciciel ustalany przy starcie (cwm start zapyta, jesli go nie ma w pakiecie)'
+              : `wlasciciel ${bound.owner}`;
+        print(`      skrypt hooka w profilu: ${rel}: ${who}`);
+      }
+    }
+  }
+  for (const problem of packs.problems.slice(0, REPORT_LIMIT)) print(`  Pakiety: ${problem}`);
+}
+
+function packsJson(packs: PackImportPlan) {
+  return packs.packs.map((pack) => ({
+    id: pack.id,
+    definition: pack.definition,
+    pending: pack.pending,
+    members: pack.members.map((member) => ({
+      key: member.key,
+      status: member.status,
+      trust: member.trust,
+      required: member.derived.facts.required,
+      tree: member.derived.facts.fields.tree,
+      exec: member.derived.facts.fields.exec,
+      warnings: member.derived.facts.warnings,
+    })),
+  }));
+}
+
 function planJson(plan: ImportPlan, from: string) {
   return {
     from,
@@ -205,39 +283,44 @@ async function importClaude(ctx: Context, options: ImportOptions): Promise<void>
     ),
   );
   let plan = await build(included);
+  const buildPacks = (current: ImportPlan): Promise<PackImportPlan> =>
+    buildPackPlan(ctx.layout, current, scan.from, homedir());
+  let packs = await buildPacks(plan);
   let pending = plan.items.filter((item) => item.status !== 'unchanged');
+  let packsPending = packs.packs.filter((pack) => pack.pending);
+  const withPacks = (): ReturnType<typeof planJson> & { packs: ReturnType<typeof packsJson> } => ({
+    ...planJson(plan, scan.from),
+    packs: packsJson(packs),
+  });
 
   if (options.dryRun === true) {
-    if (ctx.json)
-      return printJson({ ok: true, dryRun: true, written: false, ...planJson(plan, scan.from) });
+    if (ctx.json) return printJson({ ok: true, dryRun: true, written: false, ...withPacks() });
     renderPlan(plan, scan.from);
-    return print('\nTryb --dry-run: nic nie zapisano.');
+    renderPacks(packs);
+    return print('\nTryb --dry-run: nic nie zapisano (ani zasobow, ani zgody pakietow).');
   }
 
-  if (pending.length > 0 && !ctx.interactive) {
+  if ((pending.length > 0 || packsPending.length > 0) && !ctx.interactive) {
     // Bez terminala nie ma kto zatwierdzic planu, a --yes nie istnieje: plan idzie na wyjscie, kod 1.
     const message =
-      'Bez terminala import niczego nie zapisuje (plan wymaga zatwierdzenia). Uzyj --dry-run, by go zobaczyc.';
+      'Bez terminala import niczego nie zapisuje (plan i zgoda pakietow wymagaja zatwierdzenia). Uzyj --dry-run, by go zobaczyc.';
     if (ctx.json) {
-      printJson({
-        ok: false,
-        dryRun: false,
-        written: false,
-        error: message,
-        ...planJson(plan, scan.from),
-      });
+      printJson({ ok: false, dryRun: false, written: false, error: message, ...withPacks() });
       process.exitCode = 1;
       return;
     }
     renderPlan(plan, scan.from);
+    renderPacks(packs);
     throw failure(message);
   }
 
-  // Tu --json oznacza brak zmian do zapisania: z oczekujacymi zmianami zakonczylismy wyzej (ok:false, kod 1).
+  // Tu nie ma niczego do zapisania (ani zasobow, ani zgody pakietow).
   if (ctx.json) {
-    return printJson({ ok: true, dryRun: false, written: false, ...planJson(plan, scan.from) });
+    return printJson({ ok: true, dryRun: false, written: false, ...withPacks() });
   }
   renderPlan(plan, scan.from);
+  renderPacks(packs);
+  if (!ctx.interactive) return print('\nBrak zmian do zapisania.');
 
   const choices = plan.flagged.filter((f) => !f.hard && !f.included);
   if (choices.length > 0) {
@@ -249,18 +332,26 @@ async function importClaude(ctx: Context, options: ImportOptions): Promise<void>
     if (picked.length > 0) {
       included = new Set([...included, ...picked]);
       plan = await build(included);
+      packs = await buildPacks(plan);
       pending = plan.items.filter((item) => item.status !== 'unchanged');
+      packsPending = packs.packs.filter((pack) => pack.pending);
       print('\nPlan po dolaczeniu wybranych plikow:');
       renderPlan(plan, scan.from);
+      renderPacks(packs);
     }
   }
-  if (pending.length === 0) return print('\nBrak zmian do zapisania.');
+  if (pending.length === 0 && packsPending.length === 0) return print('\nBrak zmian do zapisania.');
 
+  const approving = approvalCount(packs);
+  const packText = `${packsPending.length} pakietow (${approving} zasobow z polami wykonawczymi do zatwierdzenia)`;
   const written = pending.filter((item) => item.status === 'new').length;
   const replaced = pending.length - written;
   print('');
   const accepted = await promptConfirm(
-    `Zapisac ${pending.length} zasobow do rejestru (${written} nowych, ${replaced} zmienionych)?`,
+    pending.length === 0
+      ? `Utworzyc i zatwierdzic ${packText}? Zasoby w rejestrze zostaja bez zmian.`
+      : `Zapisac ${pending.length} zasobow do rejestru (${written} nowych, ${replaced} zmienionych)` +
+          (packsPending.length === 0 ? '?' : ` i zatwierdzic ${packText}?`),
   );
   if (!accepted) throw failure('Przerwano, nic nie zapisano.');
 
@@ -272,12 +363,27 @@ async function importClaude(ctx: Context, options: ImportOptions): Promise<void>
       for (const warning of result.warnings) warn(`  uwaga: ${warning}`);
     } else warn(`Blad zapisu ${result.kind} ${result.id}: ${result.message ?? 'nieznany'}`);
   }
+  let packFailure: string | null = null;
+  try {
+    for (const outcome of await applyPackPlan(ctx.layout, packs, homedir())) {
+      print(`Pakiet ${outcome.id}: zatwierdzono ${outcome.approved} zasobow`);
+      for (const key of outcome.skipped) {
+        warn(
+          `  bez zgody pakietu (tresc w rejestrze rozni sie od planu albo zapis sie nie udal): ${key}`,
+        );
+      }
+    }
+  } catch (error: unknown) {
+    packFailure = `Nie zapisano zgody pakietow: ${describeWriteError(error)}`;
+    warn(packFailure);
+  }
   print('');
   print(
     'Zasoby sa w rejestrze, ale nieaktywne: dodaj ich id do resources.optional (config.yaml) albo resources.enable (company.yaml), by weszly do konfiguracji.',
   );
   if (failed.length > 0)
     throw failure(`Nie zapisano ${failed.length} z ${results.length} zasobow.`);
+  if (packFailure !== null) throw failure(packFailure);
 }
 
 export function registerImport(program: Command): void {

@@ -66,6 +66,8 @@ cwm init
       workflows/<nazwa>/workflow.yaml
       projects/<id>.yaml          manifesty projektów z `--store home`
   approvals/<firma>.yaml          zatwierdzenia zasobów z polami wykonawczymi (tworzy `cwm start`)
+  approvals/packs/<przestrzeń>/<nazwa>.json   zaufane skróty pakietów (tworzy `cwm import`, odnawia `cwm start`)
+  packs/<przestrzeń>/<nazwa>.yaml definicje pakietów: lista zasobów (tworzy `cwm import`, zob. `cwm pack`)
   runtime/<firma>/                profil i pliki uruchomienia (tworzy `cwm start`, zob. niżej)
   sources/  cache/  locks/        zarezerwowane, na razie puste
 ```
@@ -907,8 +909,28 @@ Skróty w przykładzie są obcięte do 8 znaków; polecenie wypisuje pełne 64.
    frontmattera, `envRef`, skrypty hooków), potem wszystko, co pominięto. Tekst pokazuje 40
    wpisów, resztę da `--json`.
 
-Po potwierdzeniu (`Zapisac N zasobow do rejestru (X nowych, Y zmienionych)?`, domyślnie "nie")
-`cwm` wypisuje `Zapisano <rodzaj> <id>` dla każdego zasobu i przypomina, że zasoby są
+**Pakiety (ADR 0044).** Po tabeli planu `cwm` pokazuje sekcję „Pakiety”: zasoby są grupowane
+automatycznie (import do firmy: jeden pakiet o nazwie firmy; import globalny: wspólny katalog źródłowy po
+`realpath` dowiązania, potem wspólny przedrostek nazwy, np. `antislop` i `antislop-ui`, a reszta według
+rodzaju: `skills`, `agents`, `commands`, `files`, `settings`). Dla każdego zasobu z polami wykonawczymi
+ekran pokazuje pola **w całości**: `allowed-tools`, `tools`, `model`, wstawki `!`, hooki skilla i piny
+skryptów (sha256 albo powód braku pinu) oraz ostrzeżenia. `/cwm-pack-profile` w polach to katalog profilu
+firmy, na który `cwm start` przepisuje odwołania do `~/.claude`. Zasoby bez pól wykonawczych są tylko
+policzone (zapisuje się skrót ich drzewa).
+
+Po potwierdzeniu (`Zapisac N zasobow do rejestru (X nowych, Y zmienionych) i zatwierdzic M pakietow (K zasobow z polami wykonawczymi do zatwierdzenia)?`, domyślnie "nie")
+`cwm` zapisuje zasoby, definicje pakietów i zaufane skróty członków; potwierdzenie jest więc też zgodą
+na pakiety. Każdy członek jest po zapisie wyprowadzany jeszcze raz z plików na dysku i musi dać skrót z
+zatwierdzonego planu; inaczej nie dostaje zgody (komunikat po zapisie). `cwm start` nie pyta potem o
+zasoby, których zaufany skrót nadal pasuje (zob. niżej).
+
+**Migracja rejestru bez pakietów.** Ponowny `cwm import` tego samego, niezmienionego źródła ma status
+`bez zmian` i nie kopiuje zasobów, ale pyta `Utworzyc i zatwierdzic M pakietow ... Zasoby w rejestrze zostaja bez zmian.`
+i zapisuje same definicje i zaufane skróty. Bez terminala nic z tego nie jest zapisywane, a import kończy się kodem `1`
+(`ok: false` w `--json`), tak samo jak przy oczekujących zasobach.
+
+Po zapisie `cwm`
+wypisuje `Zapisano <rodzaj> <id>` dla każdego zasobu i przypomina, że zasoby są
 nieaktywne: id trzeba dopisać do `resources.optional` w `config.yaml` albo do `resources.enable` w
 `company.yaml`. Zapis idzie z zatwierdzonego planu, nie z ponownego odczytu źródła. Błąd zapisu
 jednego zasobu nie przerywa pozostałych, ale daje kod `1`.
@@ -917,11 +939,14 @@ jednego zasobu nie przerywa pozostałych, ale daje kod `1`.
 Zmieniony zasób zastępuje katalog, a poprzednia wersja zostaje obok jako `.<nazwa>.old-*` (jedna
 kopia, pomijana przy odczycie rejestru). Zasoby `bez zmian` nie są zapisywane.
 
-**Bez terminala** (`--json`, `--no-input` albo wyjście nieinteraktywne) import niczego nie zapisuje.
+**Bez terminala** (`--json`, `--no-input` albo wyjście nieinteraktywne) import niczego nie zapisuje
+(ani zasobów, ani definicji pakietów, ani zgód).
 Gdy plan ma coś do zapisania, `cwm` wypisuje go i kończy się kodem `1`; nie ma opcji `--yes`.
 Plan do obejrzenia daje `--dry-run` (kod `0`).
 
-**`--json`.** Obiekt `{ ok, dryRun, written, from, target, namespace, items[], skipped[], flagged[] }`, gdzie
+**`--json`.** Obiekt `{ ok, dryRun, written, from, target, namespace, items[], skipped[], flagged[], packs[] }`
+gdzie `packs[]` to `{ id, definition, pending, members[] }` z `members[]`
+`{ key, status, trust, required, tree, exec, warnings }`, a
 `items[]` mają `kind`, `id`, `status`, `changes`, `flags`, `notes`, `source`, `sha256`,
 `skipped[]` to pary `{ item, reason }`, a `flagged[]` wpisy `{ label, path, reason, line, hard, included }`. Przy zmianach do zapisania bez terminala `ok` to `false`, a
 obiekt ma dodatkowo pole `error`.
@@ -1080,11 +1105,55 @@ do zatwierdzenia z polami w całości, a potem pyta raz: zatwierdzić wszystkie 
 ostrzeżeń, pytać o każdy osobno albo przerwać. Zasoby zmienione i zasoby z ostrzeżeniem (np. skill
 z hookami, manifest projektu) zawsze dostają osobne pytanie, także po wyborze zatwierdzenia zbiorczego.
 
+**Pakiety (ADR 0044).** Skill, agent, komenda, `Files` i `Settings`, które należą do pakietu, nie
+dostają pytania, gdy ich zaufany skrót z `cwm import` nadal pasuje: ten sam skrót definicji, drzewa
+z rejestru i pól wykonawczych niezależnych od firmy (`allowed-tools`, `tools`, `model`, wstawki `!`,
+hooki, piny skryptów spoza profilu). Odwołania do `~/.claude` w tych polach są porównywane po zamianie
+ścieżki profilu firmy na znacznik, a plan musi dać to samo, co wyprowadzenie z rejestru. Skrypt hooka,
+który po przepisaniu leży w profilu, musi pochodzić z zasobu tego samego lub innego pakietu o zgodnym
+zaufanym skrócie drzewa (zmiana skryptu w `Files` pyta o skill, który go uruchamia). `--dry-run` pisze
+przy takim zasobie `zatwierdzone ...; pakiet <id> zatwierdzony <data>`. Zgoda zapisana per firma
+(`approvals/<firma>.yaml`) ma pierwszeństwo.
+
+Skrypt hooka dostarczany przez inny zasób jest zapisany jako powiązanie (właściciel i skrót jego drzewa); inny właściciel, właściciel spoza pakietu albo z innego pakietu wymaga zgody. Ekran importu pisze „właściciel ustalany przy starcie”, gdy plan importu go nie zna.
+
+Gdy zasób pakietu jest nowy albo zmieniony (także po ręcznej edycji plików w rejestrze), `cwm start`
+pyta **raz na pakiet**: wypisuje dodane zasoby z polami w całości, zmienione z polami `bylo`/`jest`
+(dla drzewa także listę zmienionych plików), zasób ze zmienionym skryptem hooka i zasoby usunięte z rejestru,
+a potem `Zatwierdzic zmiany w pakiecie <id> (N zasobow)?`. Odmowa przerywa start i nic nie zapisuje;
+zgody są zapisywane na końcu, razem ze zwykłymi zatwierdzeniami. Do zaufanych skrótów trafiają tylko
+zasoby pokazane w pytaniu. Zasób, którego pól nie da się wyprowadzić niezależnie od firmy (skrypt hooka
+bez właściciela w pakiecie, polecenie hooka ze ścieżką profilu wpisaną wprost, niezgodność planu z
+rejestrem), jest w tym pytaniu oznaczony `WYMAGA ZGODY FIRMY` z powodem i zatwierdzany jak dotąd
+w `approvals/<firma>.yaml`. Bez terminala niezatwierdzone zasoby pakietów kończą start kodem `1` (z nazwą
+pakietu). `--json` w `--dry-run` ma przy takich zasobach pola `pack`, `packState`, `packChanges`,
+`packBlockers`. Uszkodzony plik zaufanych skrótów pakietu przerywa start.
+
+### `cwm pack`
+
+```text
+cwm pack list
+cwm pack show <id>
+cwm pack rename <id> <nowa-nazwa>
+cwm pack move <rodzaj:id> <pakiet>
+```
+
+Pakiety zasobów (ADR 0044): grupy zatwierdzane razem przy `cwm import claude`. Id pakietu to
+`<przestrzeń>/<nazwa>` (`global/gstack`, `acme-a/acme-a`), a zasób może należeć najwyżej do jednego.
+`list` wypisuje pakiety, liczbę zasobów, liczbę zatwierdzonych i datę ostatniej zgody. `show` czyta
+rejestr i dla każdego zasobu pokazuje stan wobec zaufanego skrótu (`zatwierdzony`, `zmieniony od zgody`,
+`bez zgody`, `brak w rejestrze`) oraz źródło zgody (`import` albo `start`). `rename` zmienia nazwę
+(zgoda zostaje, bo skrót członka nie zawiera nazwy pakietu); `move` przenosi zasób do pakietu z tej
+samej przestrzeni nazw (pakiet docelowy powstaje, jeśli go nie ma), ale **zgoda nie przechodzi razem z zasobem**:
+`cwm start` zapyta raz o pakiet docelowy. Definicje to zwykłe pliki YAML w `~/.cwm/packs/`; nie edytuj
+zaufanych skrótów w `~/.cwm/approvals/packs/`, bo ich skrót jest sprawdzany przy odczycie.
+
 ### `cwm approvals`
 
 ```text
 cwm approvals list [--company <id>]
 cwm approvals revoke <klucz> [--company <id>]
+cwm approvals revoke pack:<przestrzeń>/<nazwa>
 cwm approvals revoke --company <id>
 cwm approvals revoke --all
 ```
@@ -1097,7 +1166,12 @@ kopię w `generated/revoked/` i usuwa z pliku klucze `hooks`, `permissions`, `en
 nie da się usunąć, kończy się kodem `1`. **Działająca sesja nie traci wczytanych hooków ani serwerów
 MCP**; trzeba ją zamknąć. Zatwierdzenia są zapisywane pod blokadą firmy; przy zapisie znikają wpisy
 zasobów, których nie ma w rejestrze, i projektów, których katalogu nie ma. Klucz pary projekt-firma
-to `project:<sha256 ścieżki>` (ścieżka widoczna w `list`). Uszkodzony plik zatwierdzeń oznacza „nic nie jest zatwierdzone”
+to `project:<sha256 ścieżki>` (ścieżka widoczna w `list`). Zgody pakietów mają klucz `pack:<id>` i
+są wspólne dla firm: `list` pokazuje je w kolumnie `FIRMA` jako `(wszystkie)`, a `revoke pack:<id>`
+usuwa zaufane skróty pakietu i unieważnia profile wszystkich firm (z `--company` jest błędem użycia).
+`revoke <klucz zasobu>` bez `--company` usuwa też zaufany wpis zasobu z pakietów; z `--company` (albo `revoke --company <id>`) wypisuje ostrzeżenie o zasobach nadal objętych zgodą pakietów.
+`revoke --all` odwołuje też wszystkie pakiety. Zgody firm na te same zasoby są osobne i zostają.
+Uszkodzony plik zatwierdzeń oznacza „nic nie jest zatwierdzone”
 (kod `1`).
 
 ## Czego jeszcze nie ma

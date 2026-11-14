@@ -124,6 +124,29 @@ export async function writeScopedFile(
   await writeFileAtomic(target, new TextEncoder().encode(text), { mode: FILE_MODE });
 }
 
+/** Usuwa zwykly plik pod korzeniem zapisu; false, gdy go nie ma. Dowiazanie i katalog to odmowa. */
+export async function removeScopedFile(scope: WriteScope, file: string): Promise<boolean> {
+  const target = await checkTarget(scope, file);
+  const info = await lstatLoose(target);
+  if (info === null) return false;
+  if (!info.isFile())
+    throw new WriteDeniedError(`Cel usuniecia nie jest zwyklym plikiem: ${target}`);
+  await rm(target);
+  return true;
+}
+
+/** Zmienia nazwe zwyklego pliku pod korzeniem zapisu; cel nie moze istniec, katalog celu musi istniec. */
+export async function renameScopedFile(scope: WriteScope, from: string, to: string): Promise<void> {
+  const source = await checkTarget(scope, from);
+  const target = await checkTarget(scope, to);
+  const info = await lstatLoose(source);
+  if (info === null || !info.isFile())
+    throw new WriteDeniedError('Zrodlo zmiany nazwy nie istnieje.');
+  if ((await lstatLoose(target)) !== null)
+    throw new WriteDeniedError('Cel zmiany nazwy juz istnieje.');
+  await rename(source, target);
+}
+
 export interface ScopedTreeFile {
   /** Sciezka wzgledna wewnatrz katalogu zasobu (separator `/`), bez `..`. */
   readonly rel: string;

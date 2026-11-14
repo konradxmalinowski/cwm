@@ -9,13 +9,21 @@ import {
   diffFields,
   executionFields,
   extractInlineCommands,
+  evaluatePackMembers,
   extractPluginExecutables,
+  groupForPacks,
+  mapStrings,
   mcpCommandIsPath,
   needsApproval,
   approvalWarnings,
+  packMemberHash,
   projectApprovalKey,
   validateApprovalsFile,
+  validatePackTrustFile,
+  type MemberFields,
   type McpServer,
+  type PackMemberFacts,
+  type PackTrustFile,
   type Plugin,
   type Skill,
 } from '../../src/core/cwm';
@@ -650,5 +658,188 @@ describe('hooki skilla w polach zatwierdzenia (ADR 0042)', () => {
     expect(warnings.some((w) => w.includes('/p/check.sh') && w.includes('nieprzypiete'))).toBe(
       true,
     );
+  });
+});
+
+describe('pakiety zasobow: zaufane skroty czlonkow (ADR 0044)', () => {
+  const tree = 'a'.repeat(64);
+  const fields = (over: Partial<MemberFields> = {}): MemberFields => ({
+    def: 'b'.repeat(64),
+    tree,
+    files: [{ path: 'SKILL.md', sha256: 'c'.repeat(16) }],
+    filesMore: 0,
+    exec: { allowedToolsValue: ['Read'], pins: [] },
+    bindings: [],
+    ...over,
+  });
+  const member = (
+    key: string,
+    f: MemberFields,
+    extra: Partial<PackMemberFacts> = {},
+  ): PackMemberFacts => ({
+    pack: 'global/acme',
+    key,
+    kind: key.startsWith('files:') ? 'files' : 'skill',
+    id: key.slice(key.indexOf(':') + 1),
+    fields: f,
+    required: f.exec !== null,
+    warnings: [],
+    deps: [],
+    blockers: [],
+    ...extra,
+  });
+  const trustOf = (...members: PackMemberFacts[]): Map<string, PackTrustFile> =>
+    new Map([
+      [
+        'global/acme',
+        {
+          pack: 'global/acme',
+          members: members.map((m) => ({
+            key: m.key,
+            hash: packMemberHash(m.key, m.fields),
+            approvedAt: '2026-11-14T10:00:00.000Z',
+            via: 'import' as const,
+            fields: m.fields,
+          })),
+        },
+      ],
+    ]);
+
+  it('skrot czlonka zalezy od kazdego pola, ale nie od nazwy pakietu', () => {
+    const base = packMemberHash('skill:global/x', fields());
+    expect(packMemberHash('skill:global/x', fields())).toBe(base);
+    expect(packMemberHash('skill:global/y', fields())).not.toBe(base);
+    expect(packMemberHash('skill:global/x', fields({ tree: 'd'.repeat(64) }))).not.toBe(base);
+    expect(packMemberHash('skill:global/x', fields({ def: null }))).not.toBe(base);
+    expect(
+      packMemberHash(
+        'skill:global/x',
+        fields({ exec: { allowedToolsValue: ['Read', 'Bash'], pins: [] } }),
+      ),
+    ).not.toBe(base);
+  });
+
+  it('plik zaufanych skrotow z niezgodnym skrotem czlonka jest odrzucany', () => {
+    const f = fields();
+    const document = (hash: string): unknown => ({
+      apiVersion: 'cwm.dev/v1',
+      kind: 'PackApprovals',
+      pack: 'global/acme',
+      members: [
+        {
+          key: 'skill:global/x',
+          hash,
+          approvedAt: '2026-11-14T10:00:00.000Z',
+          via: 'import',
+          fields: f,
+        },
+      ],
+    });
+    expect(validatePackTrustFile(document(packMemberHash('skill:global/x', f))).ok).toBe(true);
+    expect(validatePackTrustFile(document('e'.repeat(64))).ok).toBe(false);
+  });
+
+  it('czlonek o zgodnym skrocie jest objety zgoda, zmiana drzewa albo pol pyta', () => {
+    const a = member('skill:global/a', fields());
+    const trust = trustOf(a);
+    expect(evaluatePackMembers([a], trust).get(a.key)?.state).toBe('covered');
+    const edited = member(a.key, fields({ tree: 'd'.repeat(64) }));
+    const verdict = evaluatePackMembers([edited], trust).get(a.key);
+    expect(verdict?.state).toBe('pending');
+    expect(verdict?.state === 'pending' && verdict.reason).toBe('changed');
+    const added = member('skill:global/b', fields());
+    const unknown = evaluatePackMembers([a, added], trust).get(added.key);
+    expect(unknown?.state === 'pending' && unknown.reason).toBe('new');
+  });
+
+  it('czlonek bez pol wykonawczych nie ma werdyktu, ale skrypt hooka z niego jest sprawdzany', () => {
+    const script = member('files:global/bin', fields({ def: null, exec: null }));
+    const hook = member('skill:global/hook', fields(), {
+      deps: [{ rel: 'skills/bin/x.sh', owner: script.key }],
+    });
+    const trust = trustOf(script, hook);
+    expect(evaluatePackMembers([script, hook], trust).has(script.key)).toBe(false);
+    expect(evaluatePackMembers([script, hook], trust).get(hook.key)?.state).toBe('covered');
+    const changed = member(script.key, fields({ def: null, exec: null, tree: 'd'.repeat(64) }));
+    const verdict = evaluatePackMembers([changed, hook], trust).get(hook.key);
+    expect(verdict?.state).toBe('pending');
+    expect(verdict?.state === 'pending' && verdict.changes.map((c) => c.name)).toEqual([
+      `zasob ze skryptem hooka: ${script.key}`,
+    ]);
+  });
+
+  it('wlasciciel skryptu z innego pakietu nie spelnia zaleznosci, a powiazanie wchodzi do skrotu', () => {
+    const owner = member('files:global/helper', fields({ exec: null }), { pack: 'global/other' });
+    const hook = member('skill:global/hook', fields(), {
+      deps: [{ rel: 'skills/helper/run.sh', owner: owner.key }],
+    });
+    const trust = new Map([...trustOf(hook), ...trustOf(owner).entries()]);
+    const verdict = evaluatePackMembers([owner, hook], trust).get(hook.key);
+    expect(verdict?.state === 'pending' && verdict.reason).toBe('blocked');
+    const bound = fields({
+      bindings: [{ rel: 'skills/helper/run.sh', owner: owner.key, ownerTree: 'f'.repeat(64) }],
+    });
+    expect(packMemberHash(hook.key, bound)).not.toBe(packMemberHash(hook.key, fields()));
+    expect(
+      packMemberHash(
+        hook.key,
+        fields({ bindings: [{ rel: 'skills/helper/run.sh', owner: null, ownerTree: null }] }),
+      ),
+    ).not.toBe(packMemberHash(hook.key, bound));
+  });
+
+  it('skrypt hooka spoza pakietow albo bez wlasciciela blokuje zgode pakietu', () => {
+    const outside = member('skill:global/h1', fields(), {
+      deps: [{ rel: 'skills/x.sh', owner: 'files:global/poza' }],
+    });
+    const unowned = member('skill:global/h2', fields(), {
+      deps: [{ rel: 'skills/y.sh', owner: null }],
+    });
+    const trust = trustOf(outside, unowned);
+    for (const item of [outside, unowned]) {
+      const verdict = evaluatePackMembers([outside, unowned], trust).get(item.key);
+      expect(verdict?.state === 'pending' && verdict.reason).toBe('blocked');
+    }
+  });
+
+  it('czlonek z niedeterministycznymi polami (blocker) nigdy nie jest objety zgoda', () => {
+    const a = member('skill:global/a', fields(), { blockers: ['pola zalezne od profilu'] });
+    const verdict = evaluatePackMembers([a], trustOf(a)).get(a.key);
+    expect(verdict?.state === 'pending' && verdict.reason).toBe('blocked');
+  });
+
+  it('mapStrings przeksztalca teksty w glab, a reszte zostawia', () => {
+    expect(mapStrings({ a: ['x/p', 1, null], b: { c: 'p' } }, (t) => t.replace('p', 'Q'))).toEqual({
+      a: ['x/Q', 1, null],
+      b: { c: 'Q' },
+    });
+  });
+
+  it('grupowanie: katalog zrodlowy po dowiazaniu, wspolny przedrostek, reszta wedlug rodzaju', () => {
+    const from = '/h/.claude';
+    const groups = groupForPacks(
+      [
+        { kind: 'skill', id: 'global/qa', sourceReal: `${from}/skills/repo/qa` },
+        { kind: 'skill', id: 'global/ship', sourceReal: `${from}/skills/repo/ship` },
+        { kind: 'skill', id: 'global/antislop', sourceReal: `${from}/skills/antislop` },
+        { kind: 'skill', id: 'global/antislop-ui', sourceReal: `${from}/skills/antislop-ui` },
+        { kind: 'skill', id: 'global/notes', sourceReal: `${from}/skills/notes` },
+        { kind: 'agent', id: 'global/rev', sourceReal: `${from}/agents/rev.md` },
+      ],
+      { namespace: 'global', company: false, from, existing: new Map() },
+    );
+    expect(Object.fromEntries(groups)).toEqual({
+      'global/repo': ['skill:global/qa', 'skill:global/ship'],
+      'global/antislop': ['skill:global/antislop', 'skill:global/antislop-ui'],
+      'global/skills': ['skill:global/notes'],
+      'global/agents': ['agent:global/rev'],
+    });
+    const company = groupForPacks([{ kind: 'skill', id: 'acme/a', sourceReal: null }], {
+      namespace: 'acme',
+      company: true,
+      from,
+      existing: new Map(),
+    });
+    expect([...company.keys()]).toEqual(['acme/acme']);
   });
 });

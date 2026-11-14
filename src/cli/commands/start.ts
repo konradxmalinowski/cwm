@@ -9,11 +9,18 @@ import {
   buildEngineArgv,
   checkPassThroughArgs,
   diffFields,
+  evaluatePackMembers,
+  packMemberHash,
+  removedMembers,
   statusOf,
   type ApprovalsFile,
   type ApprovalSubject,
   type ChildEnv,
   type FieldChange,
+  type MemberFields,
+  type PackMemberFacts,
+  type PackTrustFile,
+  type PackVerdict,
 } from '../../core/cwm';
 import {
   acquireMutex,
@@ -23,12 +30,15 @@ import {
   EXPECTED_ENGINE_VERSION,
   liveSessions,
   loadApprovals,
+  loadPackDefs,
+  loadPackTrusts,
   makeScratchDir,
   loadWorkspace,
   openRuntimeRoot,
   peekRuntimeRoot,
   queryEngineVersion,
   recordApprovals,
+  recordPackTrust,
   removeScratchDir,
   removeSessionMarker,
   resolveEngineBinary,
@@ -54,6 +64,7 @@ import {
   type Context,
 } from '../context';
 import { promptConfirm, promptSelect } from '../prompts';
+import { renderChanges, renderExec } from '../pack-render';
 import { resolveRecord } from '../resolve-flow';
 import { requireInitialized } from './shared';
 
@@ -69,7 +80,11 @@ interface PendingItem {
   readonly subject: ApprovalSubject;
   readonly status: Status;
   readonly changes: readonly FieldChange[];
+  /** Zasob nalezy do pakietu: ocena wobec zaufanego skrotu pakietu (ADR 0044). */
+  readonly verdict?: PackVerdict;
 }
+
+const isPackPending = (item: PendingItem): boolean => item.verdict?.state === 'pending';
 
 /** Odmowa z kodem 1: w trybie JSON jako dokument, inaczej jako komunikat na stderr. */
 function refuse(ctx: Context, message: string, extra: Record<string, unknown> = {}): never {
@@ -128,17 +143,26 @@ function sessionConflicts(live: readonly SessionMarker[], plan: RuntimePlan): st
   return out;
 }
 
-function classify(subjects: readonly ApprovalSubject[], file: ApprovalsFile): PendingItem[] {
+function classify(
+  subjects: readonly ApprovalSubject[],
+  file: ApprovalsFile,
+  verdicts: ReadonlyMap<string, PackVerdict>,
+): PendingItem[] {
   return subjects.map((subject) => {
     const status = statusOf(subject, file);
-    if (status.state === 'changed') {
-      return {
-        subject,
-        status: 'changed',
-        changes: diffFields(status.previous.fields, subject.fields),
-      };
-    }
-    return { subject, status: status.state, changes: [] };
+    const verdict = verdicts.get(subject.key);
+    // Zgoda per firma obowiazuje jak dotad; zgoda pakietu dochodzi tylko tam, gdzie tamtej brak.
+    if (status.state === 'approved') return { subject, status: 'approved', changes: [] };
+    if (verdict?.state === 'covered') return { subject, status: 'approved', changes: [], verdict };
+    const base: PendingItem =
+      status.state === 'changed'
+        ? {
+            subject,
+            status: 'changed',
+            changes: diffFields(status.previous.fields, subject.fields),
+          }
+        : { subject, status: 'new', changes: [] };
+    return verdict === undefined ? base : { ...base, verdict };
   });
 }
 
@@ -174,12 +198,117 @@ function renderSubject(item: PendingItem): void {
   for (const text of subject.warnings) print(`  UWAGA: ${text}`);
 }
 
+/** Opis zasobu w zmianach pakietu: dodany, zmieniony albo wymagajacy zgody tylko dla tej firmy. */
+function renderPackItem(item: PendingItem, plan: RuntimePlan): void {
+  const verdict = item.verdict;
+  if (verdict?.state !== 'pending') return;
+  const key = item.subject.key;
+  const facts = plan.packMembers.find((f) => f.key === key);
+  const head =
+    verdict.reason === 'blocked'
+      ? 'WYMAGA ZGODY FIRMY'
+      : verdict.reason === 'new'
+        ? 'DODANY'
+        : 'ZMIENIONY';
+  print('');
+  print(`  ${head}: ${key}`);
+  for (const text of verdict.blockers) print(`    powod: ${text}`);
+  if (verdict.reason === 'new' || verdict.reason === 'blocked') {
+    if (facts !== undefined) renderExec(facts, '    ');
+  }
+  renderChanges(verdict.changes, '    ');
+}
+
+/**
+ * Jedno pytanie na pakiet z lista zmian (ADR 0044). Zwraca zasoby, ktorych zgoda nie moze trafic do
+ * pakietu (pola zalezne od firmy), zeby zapisac je jak zwykle zatwierdzenia tej firmy.
+ */
+interface PackWrite {
+  readonly id: string;
+  readonly members: readonly { readonly key: string; readonly fields: MemberFields }[];
+}
+
+async function confirmPacks(
+  workspace: Workspace,
+  plan: RuntimePlan,
+  items: readonly PendingItem[],
+  trust: ReadonlyMap<string, PackTrustFile>,
+): Promise<{ companyOnly: ApprovalSubject[]; writes: PackWrite[] }> {
+  const companyOnly: ApprovalSubject[] = [];
+  const writes: PackWrite[] = [];
+  const pending = new Map<string, Map<string, MemberFields>>();
+  const packs = [...new Set(items.map((item) => (item.verdict as { pack: string }).pack))].sort();
+  for (const id of packs) {
+    const own = items.filter((item) => (item.verdict as { pack: string }).pack === id);
+    const file = trust.get(id);
+    const last = file?.members
+      .map((m) => m.approvedAt)
+      .sort()
+      .pop();
+    print('');
+    print(
+      `PAKIET ${id}: ${last === undefined ? 'nigdy nie zatwierdzony' : `ostatnia zgoda ${last}`}; do decyzji: ${own.length}.`,
+    );
+    for (const item of own) renderPackItem(item, plan);
+    const removed = removedMembers(file, (key) => {
+      const colon = key.indexOf(':');
+      const kind = key.slice(0, colon) as 'skill';
+      return workspace.registry.candidates({ kind, id: key.slice(colon + 1) }).length > 0;
+    });
+    for (const key of removed) print(`  USUNIETY z rejestru: ${key}`);
+    print('');
+    const yes = await promptConfirm(
+      safeText(`Zatwierdzic zmiany w pakiecie ${id} (${own.length} zasobow)?`),
+    );
+    if (!yes) throw failure(`Nie zatwierdzono pakietu ${id}. Start przerwany, nic nie zapisano.`);
+    const blocked = new Set(
+      own
+        .filter((item) => item.verdict?.state === 'pending' && item.verdict.reason === 'blocked')
+        .map((item) => item.subject.key),
+    );
+    for (const item of own) if (blocked.has(item.subject.key)) companyOnly.push(item.subject);
+    // Zgode dostaja tylko zasoby pokazane w tym pytaniu (i skrypty hookow z ich listy zmian):
+    // reszta pakietu zostaje, jak byla, zeby niezauwazona zmiana nie trafila do zaufanych skrotow.
+    const members = plan.packMembers.filter(
+      (f) =>
+        f.pack === id &&
+        !blocked.has(f.key) &&
+        f.blockers.length === 0 &&
+        own.some((item) => item.subject.key === f.key),
+    );
+    // Zasob ze skryptem hooka musi miec zaufany skrot tez w swoim pakiecie, inaczej pytanie wracaloby.
+    const queue = (f: PackMemberFacts): void => {
+      const record = trust.get(f.pack)?.members.find((m) => m.key === f.key);
+      if (record?.hash === packMemberHash(f.key, f.fields)) return;
+      const bucket = pending.get(f.pack) ?? new Map<string, MemberFields>();
+      bucket.set(f.key, f.fields);
+      pending.set(f.pack, bucket);
+    };
+    for (const f of members) {
+      queue(f);
+      for (const dep of f.deps) {
+        const owner = plan.packMembers.find((m) => m.key === dep.owner);
+        // Tylko wlasciciel bez pol wykonawczych: ten z polami ma wlasne pytanie w swoim pakiecie.
+        if (owner !== undefined && owner.blockers.length === 0 && !owner.required) queue(owner);
+      }
+    }
+  }
+  for (const [pack, bucket] of pending) {
+    writes.push({
+      id: pack,
+      members: [...bucket].map(([key, fields]) => ({ key, fields })),
+    });
+  }
+  return { companyOnly, writes };
+}
+
 async function confirmPending(
   ctx: Context,
   workspace: Workspace,
   plan: RuntimePlan,
   pending: readonly PendingItem[],
   all: readonly PendingItem[],
+  trust: ReadonlyMap<string, PackTrustFile>,
 ): Promise<void> {
   print(
     `Zasoby firmy ${plan.company} wymagaja zatwierdzenia (kod, hooki, uprawnienia, serwery MCP).`,
@@ -192,19 +321,27 @@ async function confirmPending(
       print(`Ostrzezenie (zatwierdzone ${labelOf(item.subject)}): ${text}`);
     }
   }
+  // Zasoby z pakietow: jedno pytanie na pakiet z lista zmian (ADR 0044).
+  const ordinary = pending.filter((item) => !isPackPending(item));
+  const { companyOnly, writes } = await confirmPacks(
+    workspace,
+    plan,
+    pending.filter(isPackPending),
+    trust,
+  );
   // Zbiorczo tylko nowe zasoby bez ostrzezen; zmienione i ostrzegane zawsze pytaja osobno.
-  const bulk = pending.filter(
+  const bulk = ordinary.filter(
     (item) => item.status === 'new' && item.subject.warnings.length === 0,
   );
-  const single = pending.filter((item) => !bulk.includes(item));
-  let asked = pending;
+  const single = ordinary.filter((item) => !bulk.includes(item));
+  let asked = ordinary;
   if (bulk.length > 1) {
-    for (const item of pending) renderSubject(item);
+    for (const item of ordinary) renderSubject(item);
     print('');
     const all = `Zatwierdz wszystkie ${bulk.length} nowe zasoby bez ostrzezen (wypisane wyzej)`;
     const each = 'Pytaj o kazdy zasob osobno';
     const stop = 'Przerwij';
-    const choice = await promptSelect(safeText(`Zasobow do zatwierdzenia: ${pending.length}.`), [
+    const choice = await promptSelect(safeText(`Zasobow do zatwierdzenia: ${ordinary.length}.`), [
       all,
       each,
       stop,
@@ -221,10 +358,11 @@ async function confirmPending(
       );
     }
   }
+  for (const write of writes) await recordPackTrust(ctx.layout, write.id, write.members, 'start');
   const result = await recordApprovals(
     ctx.layout,
     plan.company,
-    pending.map((item) => item.subject),
+    [...ordinary.map((item) => item.subject), ...companyOnly],
     {
       hasResource: (kind, id) => workspace.registry.candidates({ kind, id }).length > 0,
       projectExists: async (path) =>
@@ -237,10 +375,28 @@ async function confirmPending(
   for (const key of result.pruned) warn(`Usunieto nieaktualne zatwierdzenie: ${key}`);
 }
 
+/** Etykieta stanu: zasob zmieniony wzgledem zgody pakietu to ZMIENIONY, nawet gdy firma nie miala jego zgody. */
+const stateLabel = (item: PendingItem): 'new' | 'changed' =>
+  item.verdict?.state === 'pending'
+    ? item.verdict.reason === 'changed'
+      ? 'changed'
+      : 'new'
+    : item.status === 'changed'
+      ? 'changed'
+      : 'new';
+
+/** Przyrostek z pakietem do list (bez terminala, --dry-run). */
+function packNote(item: PendingItem): string {
+  const v = item.verdict;
+  if (v === undefined) return '';
+  if (v.state === 'covered') return `; pakiet ${v.pack} zatwierdzony ${v.approvedAt}`;
+  return `; pakiet ${v.pack}${v.reason === 'blocked' ? ', wymaga zgody firmy' : ''}`;
+}
+
 function pendingMessage(pending: readonly PendingItem[]): string {
   const lines = pending.map(
     (item) =>
-      `  ${labelOf(item.subject)} sha256:${item.subject.hash} (${item.status === 'new' ? 'nowe' : 'zmienione'})`,
+      `  ${labelOf(item.subject)} sha256:${item.subject.hash} (${stateLabel(item) === 'new' ? 'nowe' : 'zmienione'}${packNote(item)})`,
   );
   return [
     'Niezatwierdzone zasoby (bez terminala nie ma pytania):',
@@ -285,6 +441,15 @@ function renderDryRun(
         status: item.status,
         warnings: item.subject.warnings,
         changes: item.changes,
+        ...(item.verdict === undefined
+          ? {}
+          : {
+              pack: item.verdict.pack,
+              packState: item.verdict.state === 'covered' ? 'covered' : item.verdict.reason,
+              ...(item.verdict.state === 'covered'
+                ? { packApprovedAt: item.verdict.approvedAt, packVia: item.verdict.via }
+                : { packChanges: item.verdict.changes, packBlockers: item.verdict.blockers }),
+            }),
         ...(item.status === 'approved' ? {} : { fields: item.subject.fields }),
       })),
       files: byArea,
@@ -307,10 +472,18 @@ function renderDryRun(
   print('');
   print('Zatwierdzenia:');
   for (const item of items) {
-    const label = { approved: 'zatwierdzone', new: 'NOWE', changed: 'ZMIENIONE' }[item.status];
+    const label = {
+      approved: 'zatwierdzone',
+      new: 'NOWE',
+      changed: 'ZMIENIONE',
+    }[item.status === 'approved' ? 'approved' : stateLabel(item)];
     print(
-      `  ${label.padEnd(12)} ${labelOf(item.subject)} sha256:${item.subject.hash.slice(0, 12)}`,
+      `  ${label.padEnd(12)} ${labelOf(item.subject)} sha256:${item.subject.hash.slice(0, 12)}${packNote(item)}`,
     );
+    if (item.verdict?.state === 'pending') {
+      for (const text of item.verdict.blockers) print(`    powod: ${text}`);
+      for (const change of item.verdict.changes) print(`    zmiana pola pakietu: ${change.name}`);
+    }
     if (item.status !== 'approved') {
       for (const change of item.changes) print(`    zmiana pola: ${change.name}`);
       for (const text of item.subject.warnings) print(`    UWAGA: ${text}`);
@@ -365,6 +538,7 @@ async function startCommand(
     refuse(ctx, 'Manifest firmy jest bledny; napraw go (cwm doctor).');
   const company = companyLoaded.value;
 
+  const packDefs = await loadPackDefs(ctx.layout);
   const plan = await buildRuntimePlan({
     layout: ctx.layout,
     workspace,
@@ -374,6 +548,7 @@ async function startCommand(
     projectStore: record.store,
     homeDir: homedir(),
     userArgs: engineArgs,
+    packMembership: packDefs.membership,
   });
   if (plan.errors.length > 0) refuse(ctx, plan.errors.join('\n'), { errors: plan.errors });
 
@@ -418,14 +593,29 @@ async function startCommand(
     );
   }
   const existing = approvals.state === 'ok' ? approvals.file : null;
-  const items = classify(plan.subjects, existing ?? { company: plan.company, entries: [] });
+  const packs = await loadPackTrusts(
+    ctx.layout,
+    plan.packMembers.map((member) => member.pack),
+  );
+  if (packs.corrupt.size > 0) {
+    refuse(
+      ctx,
+      `${[...packs.corrupt].map(([id, message]) => `Pakiet ${id}: ${message}`).join('\n')} Nic z tych pakietow nie jest zatwierdzone; napraw lub usun plik zaufanych skrotow.`,
+    );
+  }
+  const verdicts = evaluatePackMembers(plan.packMembers, packs.trust);
+  const items = classify(
+    plan.subjects,
+    existing ?? { company: plan.company, entries: [] },
+    verdicts,
+  );
   const pending = items.filter((item) => item.status !== 'approved');
 
   const peek = await peekRuntimeRoot(ctx.layout, plan.company);
   const live = peek === null ? [] : await liveSessions(peek, false);
   const conflicts = sessionConflicts(live, plan);
 
-  const warnings = [...plan.warnings];
+  const warnings = [...plan.warnings, ...packDefs.problems.map((text) => `Pakiety: ${text}`)];
   if (version === null) warnings.push('Nie udalo sie ustalic wersji silnika (claude --version).');
   else if (version !== EXPECTED_ENGINE_VERSION) {
     warnings.push(
@@ -480,10 +670,11 @@ async function startCommand(
           key: p.subject.key,
           id: p.subject.id,
           sha256: p.subject.hash,
+          ...(p.verdict === undefined ? {} : { pack: p.verdict.pack }),
         })),
       });
     }
-    await confirmPending(ctx, workspace, plan, pending, items);
+    await confirmPending(ctx, workspace, plan, pending, items, packs.trust);
   }
 
   for (const text of warnings) warn(`Ostrzezenie: ${text}`);
