@@ -219,3 +219,36 @@ export async function revokeApprovals(
   }
   return { outcomes, corrupt };
 }
+
+/**
+ * Usuwa wpisy zatwierdzen wskazanych zasobow (klucze `rodzaj:id`) ze wszystkich firm: kazdy plik
+ * pod mutexem firmy, jeden zapis na plik. Uszkodzony plik jest zglaszany, nie nadpisywany.
+ * Zwraca firmy, z ktorych cos usunieto, i firmy z uszkodzonym plikiem.
+ */
+export async function dropApprovalKeys(
+  layout: CwmLayout,
+  keys: readonly string[],
+): Promise<{ touched: string[]; corrupt: string[] }> {
+  const drop = new Set(keys);
+  const touched: string[] = [];
+  const corrupt: string[] = [];
+  for (const company of await listApprovalCompanies(layout)) {
+    const root: RuntimeRoot | null = await peekRuntimeRoot(layout, company);
+    const release = root === null ? null : await acquireMutex(root);
+    try {
+      const loaded = await loadApprovals(layout, company);
+      if (loaded.state === 'missing') continue;
+      if (loaded.state === 'corrupt') {
+        corrupt.push(company);
+        continue;
+      }
+      const rest = loaded.file.entries.filter((entry) => !drop.has(entry.key));
+      if (rest.length === loaded.file.entries.length) continue;
+      await saveApprovals(layout, { company, entries: rest });
+      touched.push(company);
+    } finally {
+      await release?.();
+    }
+  }
+  return { touched, corrupt };
+}

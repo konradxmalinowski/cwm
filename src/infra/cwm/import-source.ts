@@ -636,13 +636,24 @@ function nameOf(raw: string, label: string, skipped: ReportItem[]) {
 
 /** `skills/`, `agents/` i `commands/` pod --from musza byc zwyklymi katalogami, nie dowiazaniami (SEC-001). */
 async function topLevelDir(from: string, name: string, skipped: ReportItem[]): Promise<boolean> {
-  const info = await lstatOrNull(join(from, name));
+  let info;
+  try {
+    info = await lstatOrNull(join(from, name));
+  } catch {
+    // Obszar, ktorego nie da sie sprawdzic (EACCES, EPERM), nie jest nieobecny: sync nic z niego nie usunie.
+    skipped.push({ item: name, reason: 'obszar nieczytelny' });
+    return false;
+  }
   if (info === null) return false;
   if (info.isSymbolicLink()) {
     skipped.push({ item: name, reason: 'dowiazanie symboliczne pominiete' });
     return false;
   }
-  return info.isDirectory();
+  if (!info.isDirectory()) {
+    skipped.push({ item: name, reason: 'obszar nie jest katalogiem' });
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -727,7 +738,10 @@ async function scanSkills(
   const found: Candidate[] = [];
   if (!(await topLevelDir(from, 'skills', skipped))) return found;
   const listing = await listOrNull(join(from, 'skills')).catch(() => null);
-  if (listing === null) return found;
+  if (listing === null) {
+    skipped.push({ item: 'skills', reason: 'obszar nieczytelny' });
+    return found;
+  }
   if (listing.truncated)
     skipped.push({ item: 'skills', reason: 'za duzo wpisow, reszta pominieta' });
   const alias = aliasChecker(aliases);
@@ -1067,7 +1081,10 @@ async function scanMarkdownDir(
   const found: Candidate[] = [];
   if (!(await topLevelDir(from, subdir, skipped))) return found;
   const listing = await listOrNull(join(from, subdir)).catch(() => null);
-  if (listing === null) return found;
+  if (listing === null) {
+    skipped.push({ item: subdir, reason: 'obszar nieczytelny' });
+    return found;
+  }
   if (listing.truncated) skipped.push({ item: subdir, reason: 'za duzo wpisow, reszta pominieta' });
   const alias = aliasChecker(aliases);
   for (const entry of [...listing.entries].sort(byName)) {

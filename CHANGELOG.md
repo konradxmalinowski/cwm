@@ -12,6 +12,15 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- `cwm sync` (ADR 0045, `docs/CLI.md`): odświeża rejestr z natywnych katalogów zapisanych w
+  `spec.nativeDir` zasobów, tym samym skanem, planem i pakietami co `cwm import claude`. Zmienione i
+  nowe zasoby, oznaczone pliki wracają tylko gdy są już w rejestrze z tym samym skrótem, a zasoby,
+  których źródło zniknęło, są usuwane z rejestru, `config.yaml`, `company.yaml`, pakietów, ich
+  zaufanych skrótów i zatwierdzeń (komentarze w YAML zostają). Zasób z `mandatory` albo wymagany
+  przez aktywny zasób odrzuca cały plan z nazwą zależnego. Jedno potwierdzenie na terminalu; bez
+  terminala nic się nie zapisuje i kod `1`; `--dry-run`, `--json`, `--source <katalog>`. Źródło
+  natywne nie jest zmieniane.
+
 - Grupowanie pakietów przy imporcie rozpoznaje skille, których katalog zawiera dowiązany `SKILL.md`
   (skille jednego repozytorium dowiązane plik po pliku), i łączy je w pakiet nazwany katalogiem
   celu dowiązania. Wcześniej trafiały do ogólnego pakietu `skills`.
