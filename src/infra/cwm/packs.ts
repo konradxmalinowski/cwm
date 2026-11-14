@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'node:path';
 
 import {
@@ -276,16 +277,24 @@ async function writeTrust(layout: CwmLayout, file: PackTrustFile): Promise<void>
   await writeScopedFile(scope, target, text);
 }
 
-/** Pod mutexem globalnym: czyta, scala i zapisuje. Nie rzuca, gdy zaden zapis nie jest potrzebny. */
-async function withTrustLock<T>(layout: CwmLayout, run: () => Promise<T>): Promise<T> {
+const lockHeld = new AsyncLocalStorage<true>();
+
+/**
+ * Pod mutexem globalnym (`runtime/global`). Wywolanie zagniezdzone w tym samym przeplywie nie bierze
+ * zamka drugi raz, wiec dluzsza operacja (`cwm sync`) moze trzymac go przez calosc.
+ */
+export async function withGlobalLock<T>(layout: CwmLayout, run: () => Promise<T>): Promise<T> {
+  if (lockHeld.getStore() === true) return run();
   const root = await openRuntimeRoot(layout, LOCK_COMPANY);
   const release = await acquireMutex(root);
   try {
-    return await run();
+    return await lockHeld.run(true, run);
   } finally {
     await release();
   }
 }
+
+const withTrustLock = withGlobalLock;
 
 export interface TrustedMember {
   readonly key: string;
@@ -378,25 +387,66 @@ export async function renamePack(layout: CwmLayout, from: string, to: string): P
   });
 }
 
+/** Wywolywane pod mutexem: usuwa zaufane wpisy zasobow ze wszystkich pakietow. */
+async function dropTrustLocked(layout: CwmLayout, keys: readonly string[]): Promise<string[]> {
+  const scope = homeScope(layout.home);
+  const touched: string[] = [];
+  for (const id of await listTrustedPackIds(layout)) {
+    const loaded = await loadPackTrust(layout, id);
+    if (loaded.state === 'corrupt') throw new WriteDeniedError(`Pakiet ${id}: ${loaded.message}`);
+    if (loaded.state !== 'ok') continue;
+    const rest = loaded.file.members.filter((m) => !keys.includes(m.key));
+    if (rest.length === loaded.file.members.length) continue;
+    if (rest.length === 0) await removeScopedFile(scope, packTrustFile(layout, id));
+    else await writeTrust(layout, { pack: id, members: rest });
+    touched.push(id);
+  }
+  return touched;
+}
+
 /** Usuwa zaufane wpisy zasobu ze wszystkich pakietow (pod mutexem). Zwraca id pakietow, z ktorych usunieto. */
 export async function dropPackRecords(
   layout: CwmLayout,
   keys: readonly string[],
 ): Promise<string[]> {
-  const scope = homeScope(layout.home);
+  return withTrustLock(layout, () => dropTrustLocked(layout, keys));
+}
+
+export interface PackMembersRemoval {
+  /** Pakiety, z ktorych usunieto czlonkow (definicja przepisana). */
+  readonly changed: readonly string[];
+  /** Pakiety, ktore zostaly puste i znikly (definicja i zaufane skroty). */
+  readonly emptied: readonly string[];
+  /** Pakiety, z ktorych zniknely zaufane wpisy. */
+  readonly trusted: readonly string[];
+}
+
+/**
+ * Usuwa zasoby z pakietow (definicje i zaufane skroty) pod jednym mutexem. Pusty pakiet znika.
+ * Zaufane wpisy usuwane sa zawsze, takze dla zasobu, ktory nie byl juz wymieniony w definicji.
+ */
+export async function removePackMembers(
+  layout: CwmLayout,
+  keys: readonly string[],
+): Promise<PackMembersRemoval> {
+  const drop = new Set(keys);
   return withTrustLock(layout, async () => {
-    const touched: string[] = [];
-    for (const id of await listTrustedPackIds(layout)) {
-      const loaded = await loadPackTrust(layout, id);
-      if (loaded.state === 'corrupt') throw new WriteDeniedError(`Pakiet ${id}: ${loaded.message}`);
-      if (loaded.state !== 'ok') continue;
-      const rest = loaded.file.members.filter((m) => !keys.includes(m.key));
-      if (rest.length === loaded.file.members.length) continue;
-      if (rest.length === 0) await removeScopedFile(scope, packTrustFile(layout, id));
-      else await writeTrust(layout, { pack: id, members: rest });
-      touched.push(id);
+    const defs = await loadPackDefs(layout);
+    const changed: string[] = [];
+    const emptied: string[] = [];
+    for (const [id, manifest] of defs.packs) {
+      const rest = manifest.spec.members.filter((m) => !drop.has(memberKey(m.kind, m.id)));
+      if (rest.length === manifest.spec.members.length) continue;
+      if (rest.length === 0) {
+        await removePackDef(layout, id);
+        emptied.push(id);
+      } else {
+        await savePackDef(layout, newPack(id, rest));
+        changed.push(id);
+      }
     }
-    return touched;
+    const trusted = await dropTrustLocked(layout, keys);
+    return { changed, emptied, trusted };
   });
 }
 

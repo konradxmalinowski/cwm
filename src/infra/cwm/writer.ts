@@ -135,6 +135,42 @@ export async function removeScopedFile(scope: WriteScope, file: string): Promise
   return true;
 }
 
+/**
+ * Usuwa katalog zasobu pod korzeniem zapisu razem z zawartoscia, a takze jego kopie obok:
+ * `.<nazwa>.old-*` (poprzednie wersje z `replaceScopedTree`, mogly zawierac dolaczone pliki
+ * oznaczone) i `.<nazwa>.import-*` (przerwany zapis). Inaczej pozniejszy import o tej samej nazwie
+ * odzyskalby stara tresc jako "przerwana zamiane". Cel musi byc zwyklym katalogiem (dowiazanie i
+ * plik to odmowa), rodzenstwo bedace dowiazaniem jest odlaczane bez wchodzenia w cel, a sam korzen
+ * zapisu nigdy nie jest usuwany. Ta sama kontrola sciezki co przy zapisie.
+ */
+export async function removeScopedTree(scope: WriteScope, dir: string): Promise<boolean> {
+  if (resolve(dir) === scope.root) throw new WriteDeniedError('Nie usuwam korzenia zapisu.');
+  const target = await checkTarget(scope, dir);
+  const info = await lstatLoose(target);
+  if (info !== null && !info.isDirectory()) {
+    throw new WriteDeniedError(`Cel usuniecia nie jest katalogiem: ${target}`);
+  }
+  const parent = dirname(target);
+  const name = basename(target);
+  const siblings = (await readdir(parent).catch(() => [] as string[])).filter(
+    (entry) => entry.startsWith(`.${name}.old-`) || entry.startsWith(`.${name}.import-`),
+  );
+  for (const entry of siblings) {
+    const path = join(parent, entry);
+    const sibling = await lstatLoose(path);
+    if (sibling === null) continue;
+    if (sibling.isDirectory()) {
+      await rm(await checkTarget(scope, path), { recursive: true });
+    } else {
+      // Plik albo dowiazanie o takiej nazwie: odlaczamy sam wpis, nigdy nie idziemy za dowiazaniem.
+      await rm(path);
+    }
+  }
+  if (info === null) return siblings.length > 0;
+  await rm(target, { recursive: true });
+  return true;
+}
+
 /** Zmienia nazwe zwyklego pliku pod korzeniem zapisu; cel nie moze istniec, katalog celu musi istniec. */
 export async function renameScopedFile(scope: WriteScope, from: string, to: string): Promise<void> {
   const source = await checkTarget(scope, from);

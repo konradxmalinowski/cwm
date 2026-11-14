@@ -14,6 +14,7 @@ import { registerProject } from './commands/project';
 import { registerResolve } from './commands/resolve';
 import { registerResource } from './commands/resource';
 import { registerStart } from './commands/start';
+import { registerSync } from './commands/sync';
 
 function packageVersion(): string {
   try {
@@ -45,6 +46,7 @@ export function buildProgram(): Command {
   registerMarketplace(program);
   registerResolve(program);
   registerImport(program);
+  registerSync(program);
   registerPack(program);
   registerApprovals(program);
   registerStart(program);
