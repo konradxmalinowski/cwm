@@ -109,7 +109,7 @@ function topLevelKeys(bytes: Uint8Array): Map<string, string> | null {
 }
 
 /** Nazwy kluczy `settings.json`, ktore sie roznia (PRF-05). Bez wartosci: `env` moze miec dane. */
-function changedKeys(before: Uint8Array, after: Uint8Array): string[] {
+export function changedKeys(before: Uint8Array, after: Uint8Array): string[] {
   const a = topLevelKeys(before);
   const b = topLevelKeys(after);
   if (a === null || b === null) return ['(plik nie jest obiektem JSON)'];
@@ -141,7 +141,28 @@ export interface ApplyOptions {
   readonly livePlugins?: ReadonlySet<string>;
 }
 
-const expectedMode = (executable: boolean): number => (executable ? 0o700 : 0o600);
+export const expectedMode = (executable: boolean): number => (executable ? 0o700 : 0o600);
+
+/**
+ * Obszary manifestu, ktore ten plan zapisuje i sprzata: profil, pliki uruchomienia tego projektu,
+ * migawki pluginow z planu oraz nieaktualne migawki, z ktorych nie korzysta zadna trwajaca sesja
+ * (SEC-15). Wspolne dla `applyPlan` i `cwm diff`, zeby oba widzialy te same zmiany.
+ */
+export function cleanupAreas(
+  plan: RuntimePlan,
+  prev: readonly ManifestFile[],
+  livePlugins?: ReadonlySet<string>,
+): Set<string> {
+  const areas = new Set(plan.files.map((f) => areaOf(f.rel)));
+  areas.add('profile');
+  areas.add(`session:${plan.projectHash}`);
+  for (const entry of prev) {
+    if (entry.area.startsWith('plugin:') && !areas.has(entry.area)) {
+      if (!(livePlugins?.has(entry.area.slice('plugin:'.length)) ?? false)) areas.add(entry.area);
+    }
+  }
+  return areas;
+}
 
 export async function applyPlan(
   root: RuntimeRoot,
@@ -158,17 +179,7 @@ export async function applyPlan(
   const prev = loaded.manifest?.files ?? [];
   const prevByPath = new Map(prev.map((f) => [f.path, f]));
   const desired = new Map(plan.files.map((f) => [f.rel, f]));
-  const areas = new Set(plan.files.map((f) => areaOf(f.rel)));
-  areas.add('profile');
-  areas.add(`session:${plan.projectHash}`);
-  // Nieaktualne migawki pluginow, z ktorych nie korzysta zadna trwajaca sesja, sa sprzatane wg manifestu.
-  for (const entry of prev) {
-    if (entry.area.startsWith('plugin:') && !areas.has(entry.area)) {
-      if (!(options.livePlugins?.has(entry.area.slice('plugin:'.length)) ?? false)) {
-        areas.add(entry.area);
-      }
-    }
-  }
+  const areas = cleanupAreas(plan, prev, options.livePlugins);
   const prevManifestText = await readManifestText(root);
 
   await ensureProfileDir(root);
