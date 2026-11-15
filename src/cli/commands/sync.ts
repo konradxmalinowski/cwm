@@ -10,6 +10,7 @@ import {
   type SyncPlan,
   type SyncRemoval,
   type SyncSourcePlan,
+  denyNetwork,
 } from '../../infra/cwm';
 import { contextOf, failure, print, printJson, table, warn, type Context } from '../context';
 import {
@@ -304,7 +305,8 @@ export function registerSync(program: Command): void {
     )
     .option('--source <katalog>', 'tylko zasoby zaimportowane z tego katalogu (--from importu)')
     .option('--dry-run', 'pokaz plan, nic nie zapisuj')
-    .action(async (options: SyncOptions, command: Command) =>
-      syncCommand(contextOf(command), options),
-    );
+    .action(async (options: SyncOptions, command: Command) => {
+      denyNetwork();
+      return syncCommand(contextOf(command), options);
+    });
 }

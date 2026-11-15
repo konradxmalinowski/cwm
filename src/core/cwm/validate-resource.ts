@@ -30,11 +30,11 @@ import {
   type WorkflowRouting,
   type WorkflowStep,
 } from './resource';
+import { GIT_COMMIT_PATTERN, GIT_REF_PATTERN, gitRefProblem, gitUrlProblem } from './git-source';
 
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const WORD_PATTERN = /^[a-z][a-z-]{0,31}$/;
 const STEP_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
-const GIT_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
 const COMMAND_FORBIDDEN = /[\s;|&$`<>()'"\\]/;
 /** Waliduje manifest zasobu (sekcja 5 specyfikacji): Skill, Agent, Workflow, Plugin albo MCP. */
 export function validateResource(input: unknown): Result<Resource> {
@@ -382,15 +382,50 @@ function readPluginSource(c: Checker, value: unknown): PluginSource | null {
       return marketplace && plugin ? { type, marketplace, plugin } : null;
     }
     case 'git': {
-      c.object(value, path, ['type', 'url', 'ref'], ['type', 'url']);
-      const url = c.url(field(value, 'url'), at('url'));
+      c.object(value, path, ['type', 'url', 'ref', 'commit', 'tree'], ['type', 'url']);
+      const url = readGitUrl(c, field(value, 'url'), at('url'));
       const refValue = field(value, 'ref');
       const ref = refValue === undefined ? null : readGitRef(c, refValue, at('ref'));
-      return url ? { type, url, ...(ref ? { ref } : {}) } : null;
+      const commitValue = field(value, 'commit');
+      const commit =
+        commitValue === undefined
+          ? null
+          : c.string(
+              commitValue,
+              at('commit'),
+              GIT_COMMIT_PATTERN,
+              'pelny SHA commita (40 albo 64 znaki hex)',
+            );
+      const treeValue = field(value, 'tree');
+      const tree =
+        treeValue === undefined
+          ? null
+          : c.string(treeValue, at('tree'), /^[0-9a-f]{64}$/, 'skrot sha256 (64 znaki hex)');
+      return url
+        ? {
+            type,
+            url,
+            ...(ref ? { ref } : {}),
+            ...(commit ? { commit } : {}),
+            ...(tree ? { tree } : {}),
+          }
+        : null;
     }
     default:
       return null;
   }
+}
+
+/** Adres repozytorium: reguly `Checker.url` plus zaostrzenia z `gitUrlProblem` (bez zapytania i fragmentu). */
+function readGitUrl(c: Checker, value: unknown, path: string): string | null {
+  const url = c.url(value, path);
+  if (url === null) return null;
+  const problem = gitUrlProblem(url);
+  if (problem !== null) {
+    c.add(path, problem);
+    return null;
+  }
+  return url;
 }
 
 /** Ref trafia do polecenia `git`, wiec nie moze zaczynac sie od `-` ani zawierac `..`. */
@@ -398,6 +433,10 @@ function readGitRef(c: Checker, value: unknown, path: string): string | null {
   const ref = c.string(value, path, GIT_REF_PATTERN, 'nazwa galezi, taga lub commita');
   if (ref !== null && ref.includes('..')) {
     c.add(path, 'Ref nie moze zawierac "..".');
+    return null;
+  }
+  if (ref !== null && gitRefProblem(ref) !== null) {
+    c.add(path, gitRefProblem(ref) ?? '');
     return null;
   }
   return ref;

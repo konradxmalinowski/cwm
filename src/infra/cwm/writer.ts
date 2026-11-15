@@ -280,6 +280,71 @@ export async function replaceScopedTree(
 }
 
 /**
+ * Przenosi gotowe drzewo `from` (wypakowane przez `git` do katalogu roboczego pod korzeniem zapisu)
+ * na miejsce `to`: najpierw tryby (pliki 0600 albo 0700 z bitem wykonywania, katalogi 0700, niezaleznie
+ * od `umask`), potem zamiana katalogow z kopia `.nazwa.old-*` poprzedniej wersji, usuwana na koncu.
+ * Dowiazanie albo plik specjalny w drzewie to odmowa. Nazwy plikow w srodku nie sa sprawdzane
+ * (plugin moze miec `.mcp.json` albo `CLAUDE.md`; nic z tego nie trafia do natywnej konfiguracji,
+ * bo kopia lezy w `sources/` i jest tylko czytana); sprawdzane sa sciezki `from` i `to`.
+ */
+export async function installScopedTree(
+  scope: WriteScope,
+  from: string,
+  to: string,
+): Promise<ReplaceTreeResult> {
+  const source = await checkTarget(scope, from);
+  const target = await checkTarget(scope, to);
+  const sourceInfo = await lstatLoose(source);
+  if (sourceInfo === null || !sourceInfo.isDirectory()) {
+    throw new WriteDeniedError('Zrodlo instalacji drzewa nie jest katalogiem.');
+  }
+  await restrictModes(source);
+  const parent = dirname(target);
+  await ensureScopedDirectory(scope, parent);
+  const warnings: string[] = [];
+  const stamp = `${Date.now()}-${process.pid}-${randomBytes(3).toString('hex')}`;
+  const existing = await lstatLoose(target);
+  let previous: string | null = null;
+  if (existing !== null) {
+    if (!existing.isDirectory()) {
+      throw new WriteDeniedError(`Cel zapisu nie jest katalogiem: ${target}`);
+    }
+    previous = join(parent, `.${basename(target)}.old-${stamp}`);
+    await rename(target, previous);
+  }
+  try {
+    await rename(source, target);
+  } catch (error: unknown) {
+    if (previous !== null) await rename(previous, target).catch(() => undefined);
+    throw error;
+  }
+  if (previous !== null) {
+    await rm(previous, { recursive: true, force: true }).catch(() => {
+      warnings.push(`nie usunieto starej kopii: ${basename(previous)}`);
+    });
+  }
+  return { warnings };
+}
+
+/** Tryby drzewa po wypakowaniu: katalogi 0700, pliki 0600 albo 0700. Dowiazanie i plik specjalny to odmowa. */
+async function restrictModes(dir: string): Promise<void> {
+  if (!posix) return;
+  await chmod(dir, DIR_MODE);
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isSymbolicLink()) throw new WriteDeniedError('Dowiazanie symboliczne w drzewie.');
+    if (entry.isDirectory()) {
+      await restrictModes(path);
+    } else if (entry.isFile()) {
+      const info = await lstatLoose(path);
+      await chmod(path, info !== null && (info.mode & 0o100) !== 0 ? DIR_MODE : FILE_MODE);
+    } else {
+      throw new WriteDeniedError('Plik specjalny w drzewie.');
+    }
+  }
+}
+
+/**
  * Katalog projektu (`create` i `attach`): nie moze miec chronionego segmentu w rzeczywistej
  * sciezce, lezec w katalogu danych CWM, byc nim ani sprawiac, ze `<katalog>/.cwm` byloby katalogiem
  * danych (np. `attach ~` przy domyslnym `~/.cwm`). Dowiazanie do katalogu jest akceptowane.

@@ -2,12 +2,17 @@ import { parseDocument, isScalar, isSeq } from 'yaml';
 
 import {
   API_VERSION,
+  namespaceOf,
   RESOURCE_ID_PATTERN,
   refKey,
+  sanitizeGitUrl,
   validateCompanyManifest,
+  type Plugin,
+  type PluginSource,
   type Resource,
 } from '../../core/cwm';
 import { dropApprovalKeys } from './approvals';
+import { pruneGitSource } from './git-source';
 import { companyManifestFile, isSafeSegment, registryKindDir, type CwmLayout } from './layout';
 import { lstatLoose } from './paths';
 import { removePackMembers, withGlobalLock } from './packs';
@@ -29,6 +34,9 @@ import { join } from 'node:path';
 /** Przestrzen id pluginow z marketplace'u (inna nie jest uzywalna bez importu, ADR 0043). */
 export const PLUGIN_NAMESPACE = 'marketplace';
 
+/** Przestrzen id pluginow pobieranych z git (ADR 0048). */
+export const GIT_PLUGIN_NAMESPACE = 'git';
+
 export const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 /** Blad do pokazania uzytkownikowi (kod 1), bez szczegolow wewnetrznych. */
@@ -46,25 +54,70 @@ export interface PluginManifestInput {
   readonly plugin: string;
 }
 
-/** Dokument zasobu `Plugin` z marketplace'u, nieaktywny domyslnie. */
-export function pluginManifestDocument(input: PluginManifestInput): unknown {
+/** Dokument zasobu `Plugin` z dowolnym zrodlem, domyslnie nieaktywny. */
+export function pluginSourceDocument(
+  id: string,
+  version: string,
+  source: PluginSource,
+  activation: 'enabled' | 'disabled' = 'disabled',
+): unknown {
   return {
     apiVersion: API_VERSION,
     kind: 'Plugin',
-    metadata: { id: input.id, version: input.version },
-    spec: {
-      source: { type: 'marketplace', marketplace: input.marketplace, plugin: input.plugin },
-      activation: { default: 'disabled' },
-    },
+    metadata: { id, version },
+    spec: { source: { ...source }, activation: { default: activation } },
   };
 }
 
+/** Dokument zasobu `Plugin` z marketplace'u, nieaktywny domyslnie. */
+export function pluginManifestDocument(input: PluginManifestInput): unknown {
+  return pluginSourceDocument(input.id, input.version, {
+    type: 'marketplace',
+    marketplace: input.marketplace,
+    plugin: input.plugin,
+  });
+}
+
+/** Id pluginu CWM: `marketplace/<nazwa>` albo `git/<nazwa>` (inne przestrzenie wymagaja importu). */
 export const isPluginId = (id: string): boolean =>
-  RESOURCE_ID_PATTERN.test(id) && id.startsWith(`${PLUGIN_NAMESPACE}/`);
+  RESOURCE_ID_PATTERN.test(id) &&
+  (id.startsWith(`${PLUGIN_NAMESPACE}/`) || id.startsWith(`${GIT_PLUGIN_NAMESPACE}/`));
+
+export const isGitPluginId = (id: string): boolean =>
+  RESOURCE_ID_PATTERN.test(id) && id.startsWith(`${GIT_PLUGIN_NAMESPACE}/`);
 
 function pluginDir(layout: CwmLayout, id: string): string {
   const name = id.slice(id.indexOf('/') + 1);
-  return join(registryKindDir(layout, 'plugin'), PLUGIN_NAMESPACE, name);
+  return join(registryKindDir(layout, 'plugin'), namespaceOf(id), name);
+}
+
+/** Zasob `Plugin` z rejestru (tylko odczyt, bez blokady) albo null; kilka definicji to blad. */
+export async function findPluginResource(layout: CwmLayout, id: string): Promise<Plugin | null> {
+  const { ids } = await listCompanyIds(layout);
+  const registry = await FileResourceRegistry.load(layout, ids);
+  const entries = pluginEntries(registry, id);
+  if (entries.length > 1) {
+    throw new PluginCommandError(`Id ${id} ma w rejestrze kilka definicji (cwm doctor).`);
+  }
+  const [entry] = entries;
+  return entry === undefined ? null : (entry.resource as Plugin);
+}
+
+/** Czy dwa zrodla to ten sam wpis (marketplace: nazwa i plugin; git: adres bez danych logowania i ref). */
+export function samePluginSource(a: PluginSource, b: PluginSource): boolean {
+  if (a.type === 'marketplace' && b.type === 'marketplace') {
+    return a.marketplace === b.marketplace && a.plugin === b.plugin;
+  }
+  if (a.type === 'git' && b.type === 'git') {
+    return sanitizeGitUrl(a.url) === sanitizeGitUrl(b.url) && (a.ref ?? null) === (b.ref ?? null);
+  }
+  return false;
+}
+
+function describeSource(source: PluginSource): string {
+  if (source.type === 'marketplace') return `${source.marketplace}/${source.plugin}`;
+  if (source.type === 'git') return sanitizeGitUrl(source.url);
+  return `zrodlo ${source.type}`;
 }
 
 function pluginEntries(registry: FileResourceRegistry, id: string): RegistryEntry[] {
@@ -146,8 +199,7 @@ async function applyCompanyEdits(layout: CwmLayout, edits: readonly CompanyEdit[
 export interface AddPluginInput {
   readonly id: string;
   readonly version: string;
-  readonly marketplace: string;
-  readonly plugin: string;
+  readonly source: PluginSource;
   readonly companies: readonly string[];
 }
 
@@ -171,11 +223,14 @@ export function addPluginToRegistry(
   input: AddPluginInput,
 ): Promise<AddPluginResult> {
   return withGlobalLock(layout, async () => {
-    const document = pluginManifestDocument(input);
+    const document = pluginSourceDocument(input.id, input.version, input.source);
     const { ids } = await listCompanyIds(layout);
     const registry = await FileResourceRegistry.load(layout, ids);
     const existing = pluginEntries(registry, input.id);
-    const hint = `Wybierz inne id: --id ${PLUGIN_NAMESPACE}/${input.marketplace}-${input.plugin}`;
+    const hint =
+      input.source.type === 'marketplace'
+        ? `Wybierz inne id: --id ${PLUGIN_NAMESPACE}/${input.source.marketplace}-${input.source.plugin}`
+        : 'Wybierz inne id (--id).';
     let unchanged = false;
     if (existing.length > 1) {
       throw new PluginCommandError(`Id ${input.id} ma w rejestrze kilka definicji (cwm doctor).`);
@@ -183,17 +238,9 @@ export function addPluginToRegistry(
     const [current] = existing;
     if (current !== undefined) {
       const source = (current.resource as Extract<Resource, { kind: 'plugin' }>).source;
-      const same =
-        source.type === 'marketplace' &&
-        source.marketplace === input.marketplace &&
-        source.plugin === input.plugin;
-      if (!same) {
-        const target =
-          source.type === 'marketplace'
-            ? `${source.marketplace}/${source.plugin}`
-            : `zrodlo ${source.type}`;
+      if (!samePluginSource(source, input.source)) {
         throw new PluginCommandError(
-          `Id ${input.id} jest juz zajete przez ${target}, a nie ${input.marketplace}/${input.plugin}. ${hint}`,
+          `Id ${input.id} jest juz zajete przez ${describeSource(source)}, a nie ${describeSource(input.source)}. ${hint}`,
         );
       }
       unchanged = true;
@@ -251,12 +298,117 @@ export function setPluginEnabled(
   });
 }
 
+export interface UpdateGitPluginInput {
+  readonly id: string;
+  readonly commit: string;
+  /** Skrot drzewa zainstalowanej kopii (`source.tree`). */
+  readonly tree: string;
+  /** Nowy ref; `undefined` zostawia obecny. */
+  readonly ref?: string;
+  /** Nowa wersja zasobu; `undefined` zostawia obecna. */
+  readonly version?: string;
+}
+
+export interface UpdateGitPluginResult {
+  readonly previous: Extract<PluginSource, { type: 'git' }>;
+  readonly current: Extract<PluginSource, { type: 'git' }>;
+  readonly version: string;
+  /** Kopia poprzedniego commita zostala usunieta (nikt inny jej nie uzywa). */
+  readonly previousPruned: boolean;
+}
+
+function gitSourceUsed(registry: FileResourceRegistry, skip: string | null) {
+  return (url: string, commit: string): boolean =>
+    registry.entries.some(({ resource }) => {
+      if (resource.kind !== 'plugin' || resource.id === skip) return false;
+      const source = resource.source;
+      return (
+        source.type === 'git' &&
+        source.commit === commit &&
+        sanitizeGitUrl(source.url) === sanitizeGitUrl(url)
+      );
+    });
+}
+
+/**
+ * Zapisuje w manifescie pluginu z git nowy commit (i opcjonalnie ref oraz wersje), a potem usuwa
+ * kopie poprzedniego commita, jesli zaden inny zasob jej nie uzywa. Zatwierdzenie zostaje przy
+ * `cwm start`: drzewo sie zmienia, wiec skrot tez.
+ */
+export function updateGitPluginSource(
+  layout: CwmLayout,
+  input: UpdateGitPluginInput,
+): Promise<UpdateGitPluginResult> {
+  return withGlobalLock(layout, async () => {
+    const { ids } = await listCompanyIds(layout);
+    const registry = await FileResourceRegistry.load(layout, ids);
+    const entries = pluginEntries(registry, input.id);
+    const [entry] = entries;
+    if (entry === undefined) {
+      throw new PluginCommandError(`Plugin ${input.id} nie istnieje w rejestrze.`);
+    }
+    if (entries.length > 1) {
+      throw new PluginCommandError(`Id ${input.id} ma w rejestrze kilka definicji (cwm doctor).`);
+    }
+    const plugin = entry.resource as Plugin;
+    if (plugin.source.type !== 'git') {
+      throw new PluginCommandError(`Plugin ${input.id} nie pochodzi z git.`);
+    }
+    const previous = plugin.source;
+    const current: Extract<PluginSource, { type: 'git' }> = {
+      type: 'git',
+      url: previous.url,
+      ...((input.ref ?? previous.ref) === undefined ? {} : { ref: input.ref ?? previous.ref }),
+      commit: input.commit,
+      tree: input.tree,
+    };
+    const version = input.version ?? plugin.version;
+    const document = pluginSourceDocument(input.id, version, current, plugin.activationDefault);
+    const bytes = new TextEncoder().encode(toYaml(document));
+    await replaceScopedTree(homeScope(layout.home), pluginDir(layout, input.id), [
+      { rel: 'plugin.yaml', bytes, executable: false },
+    ]);
+    let previousPruned = false;
+    if (previous.commit !== undefined && previous.commit !== input.commit) {
+      previousPruned = await pruneGitSource(
+        layout,
+        previous.url,
+        previous.commit,
+        gitSourceUsed(registry, input.id),
+      ).catch(() => false);
+    }
+    return { previous, current, version, previousPruned };
+  });
+}
+
+/** Przygotowuje i waliduje edycje `plugins.enable` bez zapisu: nieistniejaca firma albo `forbid` to blad, jeszcze przed siecia. */
+export async function precheckEnable(
+  layout: CwmLayout,
+  companies: readonly string[],
+  id: string,
+): Promise<void> {
+  for (const company of [...new Set(companies)]) await planCompanyEdit(layout, company, id, 'add');
+}
+
+/** Usuwa kopie zrodla git, jesli zaden zasob z rejestru jej nie uzywa (sciezki bledow po pobraniu). */
+export async function pruneUnusedGitSource(
+  layout: CwmLayout,
+  url: string,
+  commit: string,
+): Promise<boolean> {
+  const { ids } = await listCompanyIds(layout);
+  const registry = await FileResourceRegistry.load(layout, ids);
+  return pruneGitSource(layout, url, commit, gitSourceUsed(registry, null)).catch(() => false);
+}
+
 export interface RemovePluginResult {
   readonly id: string;
   readonly listEdits: readonly string[];
   readonly approvalCompanies: readonly string[];
   /** Projekty z `~/.cwm`, ktorych `plugins.enable` nadal wymienia plugin (manifest zostaje do recznej poprawki). */
   readonly projectWarnings: readonly string[];
+  /** Plugin z git: kopia zrodla w `sources/git` zostala usunieta (nikt inny jej nie uzywa). */
+  readonly sourcePruned: boolean;
 }
 
 /**
@@ -306,11 +458,22 @@ export function removePluginFromRegistry(
       );
     }
     await removeScopedTree(homeScope(layout.home), entry.dir);
+    const source = (entry.resource as Plugin).source;
+    const sourcePruned =
+      source.type === 'git' && source.commit !== undefined
+        ? await pruneGitSource(
+            layout,
+            source.url,
+            source.commit,
+            gitSourceUsed(workspace.registry, id),
+          ).catch(() => false)
+        : false;
     return {
       id,
       listEdits: edits.flatMap((e) => e.removed.map((r) => `${e.label}: ${r}`)),
       approvalCompanies: dropped.touched,
       projectWarnings,
+      sourcePruned,
     };
   });
 }

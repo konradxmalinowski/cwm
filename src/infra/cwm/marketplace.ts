@@ -32,7 +32,7 @@ export type MarketplaceLoad =
   | { readonly ok: true; readonly marketplace: LoadedMarketplace }
   | { readonly ok: false; readonly reason: string };
 
-const currentUid = (): number | null =>
+export const currentUid = (): number | null =>
   typeof process.getuid === 'function' ? process.getuid() : null;
 
 /**
@@ -51,7 +51,7 @@ function ownerRejection(
 }
 
 /** Katalog po `realpath`: istnieje, jest katalogiem, nalezy do uzytkownika, a jego rodzic tez jest bezpieczny. */
-async function trustedDirectory(real: string, uid: number | null): Promise<string | null> {
+export async function trustedDirectory(real: string, uid: number | null): Promise<string | null> {
   const info = await lstatLoose(real);
   if (info === null || !info.isDirectory()) return 'to nie jest katalog';
   const own = ownerRejection(info, uid);

@@ -1,5 +1,5 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { ESLint } from 'eslint';
 
 /**
@@ -240,6 +240,75 @@ const cases = [
     code: "export const probe = import('node:fs/promises');\n",
     expect: 'no-restricted-syntax',
   },
+  // ADR 0048: `cwm start`, `cwm diff` i `cwm sync` nie uruchamiaja `git` ani nie dotykaja sieci.
+  // Kod planu i zrodel nie importuje child_process, a git-fetch.ts (jedyny proces `git` i siec)
+  // importuje tylko polecenie `cwm plugin`.
+  {
+    label: 'infra/cwm/runtime-plan* importuje node:child_process',
+    file: 'src/infra/cwm/runtime-plan-boundary-probe.ts',
+    code: "import { execFile } from 'node:child_process';\n\nexport const probe = execFile;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
+    label: 'infra/cwm/runtime-sources* laduje child_process dynamicznym importem',
+    file: 'src/infra/cwm/runtime-sources-boundary-probe.ts',
+    code: "export const probe = import('node:child_process');\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'infra/cwm/runtime-plan* importuje git-fetch (start nie siega do sieci)',
+    file: 'src/infra/cwm/runtime-plan-boundary-probe.ts',
+    code: "import { fetchGitSource } from './git-fetch';\n\nexport const probe = fetchGitSource;\n",
+    expect: 'import-x/no-restricted-paths',
+  },
+  {
+    label: 'infra/cwm/runtime-diff* importuje git-fetch (diff nie siega do sieci)',
+    file: 'src/infra/cwm/runtime-diff-boundary-probe.ts',
+    code: "import { fetchGitSource } from './git-fetch';\n\nexport const probe = fetchGitSource;\n",
+    expect: 'import-x/no-restricted-paths',
+  },
+  {
+    label: 'infra/cwm/sync* importuje git-fetch (sync nie siega do sieci)',
+    file: 'src/infra/cwm/sync-boundary-probe.ts',
+    code: "import { fetchGitSource } from './git-fetch';\n\nexport const probe = fetchGitSource;\n",
+    expect: 'import-x/no-restricted-paths',
+  },
+  {
+    label: 'cli/commands/start importuje git-fetch',
+    file: `src/cli/commands/start-${PROBE}`,
+    code: "import { fetchGitSource } from '../../infra/cwm/git-fetch';\n\nexport const probe = fetchGitSource;\n",
+    expect: 'import-x/no-restricted-paths',
+  },
+  {
+    label: 'cli/commands/diff importuje git-fetch',
+    file: `src/cli/commands/diff-${PROBE}`,
+    code: "import { fetchGitSource } from '../../infra/cwm/git-fetch';\n\nexport const probe = fetchGitSource;\n",
+    expect: 'import-x/no-restricted-paths',
+  },
+  {
+    label: 'infra/cwm/ laduje git-fetch szablonem tekstowym w import() (omija nazwe modulu)',
+    file: 'src/infra/cwm/runtime-plan-boundary-probe.ts',
+    code: 'export const probe = import(`./git-fetch.js`);\n',
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'cli/ laduje modul z nieliteralnego argumentu import()',
+    file: `src/cli/${PROBE}`,
+    code: "const name = './x';\n\nexport const probe = import(name);\n",
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'infra/ uzywa process.binding',
+    file: `src/infra/cwm/${PROBE}`,
+    code: 'export const probe = process.binding;\n',
+    expect: 'no-restricted-syntax',
+  },
+  {
+    label: 'main/ importuje git-fetch',
+    file: `src/main/${PROBE}`,
+    code: "import { fetchGitSource } from '../infra/cwm/git-fetch';\n\nexport const probe = fetchGitSource;\n",
+    expect: 'import-x/no-restricted-paths',
+  },
 ];
 
 // Proby pozytywne: lint nie moze zglosic niczego. Dowodza, ze regula zapisu jest wasko
@@ -278,7 +347,13 @@ const passCases = [
 ];
 
 // Pliki z listy procesow musza przechodzic lint, inaczej lista bylaby martwa.
-const allowedExecFiles = ['src/infra/cwm/engine-process.ts', 'src/infra/cwm/gitignore.ts'];
+const allowedExecFiles = [
+  'src/infra/cwm/engine-process.ts',
+  'src/infra/cwm/gitignore.ts',
+  'src/infra/cwm/git-fetch.ts',
+  // Jedyny importer git-fetch.ts: musi przechodzic lint, inaczej wyjatek bylby martwy.
+  'src/cli/commands/plugin.ts',
+];
 
 const control = {
   label: 'proba kontrolna: czysty plik w core/ przechodzi',
@@ -336,7 +411,7 @@ for (const testCase of cases) {
 for (const file of allowedExecFiles) {
   const rules = await lint(file);
   if (rules.length === 0) {
-    process.stdout.write(`PASS  dozwolone: ${file} uruchamia procesy\n`);
+    process.stdout.write(`PASS  dozwolone: ${file} przechodzi lint z wyjatkiem z listy\n`);
   } else {
     failures.push(`${file}: lint zglosil [${rules.join(', ')}]`);
     process.stdout.write(`FAIL  ${file} -> [${rules.join(', ')}]\n`);
@@ -355,6 +430,46 @@ try {
 } finally {
   await rm(control.file, { force: true });
 }
+
+// Skan zrodel (omija lint, np. importy dynamiczne i `require`): `git-fetch` wolno wymienic tylko w
+// `cli/commands/plugin.ts`, a `child_process` tylko w trzech plikach z listy procesow.
+const gitFetchImporters = new Set(['src/cli/commands/plugin.ts']);
+const processFiles = new Set(
+  allowedExecFiles.filter((file) => file !== 'src/cli/commands/plugin.ts'),
+);
+
+async function sourceFiles(dir) {
+  const found = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...(await sourceFiles(path)));
+    else if (entry.name.endsWith('.ts')) found.push(path.split('\\').join('/'));
+  }
+  return found;
+}
+
+for (const file of await sourceFiles('src')) {
+  if (file === 'src/infra/cwm/git-fetch.ts') continue;
+  const text = await readFile(file, 'utf8');
+  // Komentarze pomijamy: wolno w nich opisywac git-fetch.
+  const code = text
+    .split('\n')
+    .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+    .join('\n');
+  if (/\bgit-fetch\b/.test(code) && !gitFetchImporters.has(file)) {
+    failures.push(
+      `${file}: odwoluje sie do git-fetch (siec i git tylko z cwm plugin add|fetch|update)`,
+    );
+  }
+  if (/child_process\b/.test(code) && !processFiles.has(file)) {
+    failures.push(`${file}: odwoluje sie do child_process poza lista plikow z procesami`);
+  }
+}
+process.stdout.write(
+  failures.length === 0
+    ? 'PASS  skan zrodel: git-fetch i child_process tylko w plikach z listy\n'
+    : 'FAIL  skan zrodel: odwolania poza lista\n',
+);
 
 if (failures.length > 0) {
   process.stderr.write(`\nreguly granic nie dzialaja:\n- ${failures.join('\n- ')}\n`);
