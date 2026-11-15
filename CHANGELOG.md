@@ -12,6 +12,18 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- `cwm plugin add git <url> --id git/<nazwa>`, `cwm plugin fetch` i `cwm plugin update` (ADR 0048,
+  `docs/CLI.md`): plugin z repozytorium git trafia do rejestru z przypiętym pełnym SHA commita
+  (`source.commit`), a `cwm start` czyta wyłącznie lokalną kopię `~/.cwm/sources/git/<skrót adresu>/<commit>/`.
+  Sieć i proces `git` są tylko w tych trzech poleceniach: `cwm start`, `cwm diff` i `cwm sync` nigdy ich nie
+  uruchamiają (reguła lintu i sonda w `npm run test:boundaries`). `git` idzie po ścieżce bezwzględnej ze
+  środowiskiem zbudowanym od zera, bez hooków, konfiguracji systemowej i globalnej, protokołów `file` i `ext`,
+  przekierowań, submodułów, LFS i pytań o hasło; adresy to `https://` (http tylko na pętli zwrotnej) bez
+  danych logowania, z limitami rozmiaru i czasu. Drzewo przechodzi te same kontrole co plugin `local`
+  (dowiązanie w repozytorium to odmowa), a zatwierdzenie dostaje adres, ref i commit. `update` pokazuje stary
+  i nowy commit oraz zmienione pliki, a zatwierdzenie zostaje przy `cwm start`. Manifest zapisuje też skrót drzewa kopii (`source.tree`), a start odmawia przy niezgodności; adresy muszą być w formie kanonicznej, a `start`, `diff` i `sync` blokują sieć także w czasie wykonania. `cwm plugin remove` usuwa też
+  nieużywaną kopię.
+
 - `cwm diff` (ADR 0047, `docs/CLI.md`): pokazuje, co zmieni najbliższy `cwm start` w profilu firmy, z
   tego samego planu co start, bez zapisu w `~/.cwm` i w projekcie i bez blokady (nie przeszkadza
   działającej sesji). Grupy: pliki dodane, zmienione (ujednolicony diff do 200 wierszy, liczniki dla
