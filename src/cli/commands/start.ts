@@ -14,6 +14,7 @@ import {
   removedMembers,
   statusOf,
   type ApprovalsFile,
+  type CompanyManifest,
   type ApprovalSubject,
   type ChildEnv,
   type FieldChange,
@@ -76,7 +77,7 @@ interface StartOptions {
 
 type Status = 'approved' | 'new' | 'changed';
 
-interface PendingItem {
+export interface PendingItem {
   readonly subject: ApprovalSubject;
   readonly status: Status;
   readonly changes: readonly FieldChange[];
@@ -84,10 +85,10 @@ interface PendingItem {
   readonly verdict?: PackVerdict;
 }
 
-const isPackPending = (item: PendingItem): boolean => item.verdict?.state === 'pending';
+export const isPackPending = (item: PendingItem): boolean => item.verdict?.state === 'pending';
 
 /** Odmowa z kodem 1: w trybie JSON jako dokument, inaczej jako komunikat na stderr. */
-function refuse(ctx: Context, message: string, extra: Record<string, unknown> = {}): never {
+export function refuse(ctx: Context, message: string, extra: Record<string, unknown> = {}): never {
   if (ctx.json) {
     printJson({ ok: false, error: message, ...extra });
     throw new CliError('', 1);
@@ -95,7 +96,7 @@ function refuse(ctx: Context, message: string, extra: Record<string, unknown> = 
   throw failure(message);
 }
 
-async function locateProject(
+export async function locateProject(
   ctx: Context,
   workspace: Workspace,
   projectOption: string | undefined,
@@ -125,7 +126,7 @@ async function probeVersion(path: string, root: RuntimeRoot | null): Promise<str
   }
 }
 
-function sessionConflicts(live: readonly SessionMarker[], plan: RuntimePlan): string[] {
+export function sessionConflicts(live: readonly SessionMarker[], plan: RuntimePlan): string[] {
   const out: string[] = [];
   for (const marker of live) {
     if (marker.pid === process.pid) continue;
@@ -143,7 +144,7 @@ function sessionConflicts(live: readonly SessionMarker[], plan: RuntimePlan): st
   return out;
 }
 
-function classify(
+export function classify(
   subjects: readonly ApprovalSubject[],
   file: ApprovalsFile,
   verdicts: ReadonlyMap<string, PackVerdict>,
@@ -513,20 +514,22 @@ function renderDryRun(
   for (const text of report.blockers) print(`  - ${text}`);
 }
 
-async function startCommand(
+/** Wspolne wejscie `cwm start` i `cwm diff`: ten sam plan z tych samych zrodel, bez zapisu. */
+export async function prepareRun(
   ctx: Context,
-  options: StartOptions,
+  projectOption: string | undefined,
   engineArgs: readonly string[],
-): Promise<void> {
-  if (process.platform === 'win32') {
-    throw failure('cwm start nie dziala na Windowsie w tym etapie (silnik wymaga powloki .cmd).');
-  }
-  const argErrors = checkPassThroughArgs(engineArgs);
-  if (argErrors.length > 0) throw usageError(argErrors.join('\n'));
-
+): Promise<{
+  workspace: Workspace;
+  company: CompanyManifest;
+  projectDir: string;
+  record: ProjectRecord;
+  packDefs: Awaited<ReturnType<typeof loadPackDefs>>;
+  plan: RuntimePlan;
+}> {
   await requireInitialized(ctx.layout);
   const workspace = await loadWorkspace(ctx.layout);
-  const record = await locateProject(ctx, workspace, options.project);
+  const record = await locateProject(ctx, workspace, projectOption);
   if (record.dir === null) refuse(ctx, 'Manifest projektu jest bledny; napraw go (cwm doctor).');
   const projectDir = await assertProjectDirAllowed(record.dir, ctx.layout.home);
 
@@ -551,6 +554,62 @@ async function startCommand(
     packMembership: packDefs.membership,
   });
   if (plan.errors.length > 0) refuse(ctx, plan.errors.join('\n'), { errors: plan.errors });
+  return { workspace, company, projectDir, record, packDefs, plan };
+}
+
+/** Stan zatwierdzen planu (firma i zaufane skroty pakietow), wspolny dla `cwm start` i `cwm diff`. */
+export async function loadApprovalState(
+  ctx: Context,
+  plan: RuntimePlan,
+): Promise<{
+  items: PendingItem[];
+  pending: PendingItem[];
+  packs: Awaited<ReturnType<typeof loadPackTrusts>>;
+}> {
+  const approvals = await loadApprovals(ctx.layout, plan.company);
+  if (approvals.state === 'corrupt') {
+    refuse(
+      ctx,
+      `${approvals.message} Nic nie jest zatwierdzone; napraw lub usun plik zatwierdzen.`,
+    );
+  }
+  const existing = approvals.state === 'ok' ? approvals.file : null;
+  const packs = await loadPackTrusts(
+    ctx.layout,
+    plan.packMembers.map((member) => member.pack),
+  );
+  if (packs.corrupt.size > 0) {
+    refuse(
+      ctx,
+      `${[...packs.corrupt].map(([id, message]) => `Pakiet ${id}: ${message}`).join('\n')} Nic z tych pakietow nie jest zatwierdzone; napraw lub usun plik zaufanych skrotow.`,
+    );
+  }
+  const verdicts = evaluatePackMembers(plan.packMembers, packs.trust);
+  const items = classify(
+    plan.subjects,
+    existing ?? { company: plan.company, entries: [] },
+    verdicts,
+  );
+  const pending = items.filter((item) => item.status !== 'approved');
+  return { items, pending, packs };
+}
+
+async function startCommand(
+  ctx: Context,
+  options: StartOptions,
+  engineArgs: readonly string[],
+): Promise<void> {
+  if (process.platform === 'win32') {
+    throw failure('cwm start nie dziala na Windowsie w tym etapie (silnik wymaga powloki .cmd).');
+  }
+  const argErrors = checkPassThroughArgs(engineArgs);
+  if (argErrors.length > 0) throw usageError(argErrors.join('\n'));
+
+  const { workspace, company, projectDir, record, packDefs, plan } = await prepareRun(
+    ctx,
+    options.project,
+    engineArgs,
+  );
 
   const lookup = await resolveEngineBinary({
     configuredPath: company.runtime.claudePath,
@@ -585,31 +644,7 @@ async function startCommand(
   });
   if (!argvResult.ok) throw usageError(argvResult.errors.join('\n'));
 
-  const approvals = await loadApprovals(ctx.layout, plan.company);
-  if (approvals.state === 'corrupt') {
-    refuse(
-      ctx,
-      `${approvals.message} Nic nie jest zatwierdzone; napraw lub usun plik zatwierdzen.`,
-    );
-  }
-  const existing = approvals.state === 'ok' ? approvals.file : null;
-  const packs = await loadPackTrusts(
-    ctx.layout,
-    plan.packMembers.map((member) => member.pack),
-  );
-  if (packs.corrupt.size > 0) {
-    refuse(
-      ctx,
-      `${[...packs.corrupt].map(([id, message]) => `Pakiet ${id}: ${message}`).join('\n')} Nic z tych pakietow nie jest zatwierdzone; napraw lub usun plik zaufanych skrotow.`,
-    );
-  }
-  const verdicts = evaluatePackMembers(plan.packMembers, packs.trust);
-  const items = classify(
-    plan.subjects,
-    existing ?? { company: plan.company, entries: [] },
-    verdicts,
-  );
-  const pending = items.filter((item) => item.status !== 'approved');
+  const { items, pending, packs } = await loadApprovalState(ctx, plan);
 
   const peek = await peekRuntimeRoot(ctx.layout, plan.company);
   const live = peek === null ? [] : await liveSessions(peek, false);

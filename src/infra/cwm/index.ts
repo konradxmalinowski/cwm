@@ -18,6 +18,7 @@ export * from './read';
 export * from './resource-lists';
 export * from './registry';
 export * from './runtime-apply';
+export * from './runtime-diff';
 export * from './runtime-fs';
 export * from './runtime-plan';
 export * from './runtime-sources';

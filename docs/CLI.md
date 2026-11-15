@@ -1,6 +1,6 @@
 # CLI `cwm`
 
-last_updated: 2026-11-14
+last_updated: 2026-11-15
 
 `cwm` zakłada i sprawdza dane CWM w `~/.cwm`: firmy, projekty i zasoby (skille, agenci, komendy,
 workflowy, ustawienia, pluginy, serwery MCP). Składa też z nich konfigurację projektu, a
@@ -437,7 +437,7 @@ i tabulator zostają.
 |---|---|
 | `0` | sukces; także `-h` i `-V` |
 | `1` | błąd walidacji, polityki albo stanu na dysku (brak `cwm init`, firma już istnieje, błąd w manifeście, przerwane pytanie, nieoczekiwany błąd); dla `import claude` i `sync` także zmiany do zapisania bez terminala (zob. niżej), a dla `sync` zablokowane usunięcie (zasób obowiązkowy albo wymagany) i źródło, którego nie da się przejrzeć; dla `start` niezatwierdzone zasoby bez terminala, brak zmiennej `envRef`, trwająca sesja firmy z innym profilem, odmowa zatwierdzenia; po uruchomieniu silnika `start` zwraca jego kod wyjścia |
-| `2` | błędne użycie: nieznane polecenie lub opcja, brak wymaganego argumentu, niepoprawne id, zła wartość `--store`, `CWM_HOME` niebezwzględny; dla `import claude` brak `--company` i `--global` bez terminala albo oba naraz; dla `start` niedozwolone argumenty silnika po `--`, dla `approvals revoke` zły zestaw selektorów |
+| `2` | błędne użycie: nieznane polecenie lub opcja, brak wymaganego argumentu, niepoprawne id, zła wartość `--store`, `CWM_HOME` niebezwzględny; dla `import claude` brak `--company` i `--global` bez terminala albo oba naraz; dla `start` niedozwolone argumenty silnika po `--`, dla `approvals revoke` zły zestaw selektorów; dla `diff` także każdy błąd ustawienia (brak manifestu projektu, uszkodzony manifest firmy), bo `1` oznacza tam różnicę: start coś zmieni albo odmówi |
 
 `cwm` bez argumentów i `cwm help` wypisują pomoc, ale kończą się kodem `2`. Do pomocy z kodem `0`
 służy `-h`.
@@ -1214,6 +1214,52 @@ w `approvals/<firma>.yaml`. Bez terminala niezatwierdzone zasoby pakietów końc
 pakietu). `--json` w `--dry-run` ma przy takich zasobach pola `pack`, `packState`, `packChanges`,
 `packBlockers`. Uszkodzony plik zaufanych skrótów pakietu przerywa start.
 
+### `cwm diff`
+
+```text
+cwm diff [--project <katalog>] [--stat] [--json]
+```
+
+Pokazuje, co zmieni najbliższy `cwm start` w profilu firmy (ADR 0047). Buduje ten sam plan co start
+(rejestr, resolver, pakiety, zatwierdzenia) i porównuje go z plikami w `~/.cwm/runtime/<firma>/` oraz z
+manifestem `generated/manifest.json`. Działa **tylko na odczyt**: nie zapisuje niczego w `~/.cwm` ani w
+projekcie, nie tworzy katalogu firmy, nie bierze blokady `.lock` (nie przeszkadza działającej sesji ani
+`cwm start`) i nie uruchamia silnika. Projekt jest wyszukiwany jak w `cwm start` (bieżący katalog i
+wyżej albo `--project`).
+
+Wynik w grupach:
+
+- **Dodane** i **Usunięte:** ścieżka względna wobec `runtime/<firma>`, rozmiar i skrót SHA-256.
+- **Zmienione:** rozmiar i skrót przed i po, liczniki `+N -M` oraz ujednolicony diff (3 wiersze
+  kontekstu) dla plików tekstowych, w których po obu stronach jest najwyżej 200 wierszy; dłuższe
+  pliki mają same liczniki. Plik z samą zmianą trybu (0600/0700) jest opisany jako „tylko tryb pliku”.
+- **Zmienione poza CWM:** plik profilu, który różni się od manifestu (np. silnik dopisał
+  `settings.json`). Start go nadpisze i zachowa kopię w `generated/prev`; ekran podaje przy
+  `settings.json` nazwy zmienionych kluczy najwyższego poziomu.
+- **Pluginy:** jeden wpis na plugin (nowy, zmieniony z liczbą dodanych, zmienionych i usuniętych plików
+  między migawkami, usuwany).
+- **Zostają na miejscu:** pliki z manifestu zmienione poza CWM, których start nie usunie.
+- **Start zostałby odrzucony:** plik spoza CWM w miejscu pliku z planu, niebezpieczny plik w profilu,
+  trwająca sesja firmy z innym profilem.
+
+Pliki uruchomienia (`sessions/<projekt>/settings.json`, `mcp.json`, `plugin/`) są porównane ze stanem
+po ostatniej sesji tego projektu; bez niej są „dodane”. Zatwierdzenia: jedna linia z liczbą zasobów do
+zatwierdzenia i pakietami do ponownej zgody (szczegóły w `cwm start --dry-run`).
+
+Czego **nie** widać: treści pliku oznaczonego jako możliwy sekret (nazwa albo treść, klasyfikator jak w
+imporcie), pliku binarnego i większego niż 512 KiB (zostaje „treść ukryta” z powodem), oraz zawartości
+`env` w plikach JSON: w `settings.json` i `mcp.json` wartość każdego klucza `env` jest zastąpiona
+znacznikiem, a zmiana jest zgłoszona słowami (`env zmieniony (treść ukryta)`).
+
+`--stat` pomija wiersze diffu. `--json` wypisuje `{ ok, differs, company, project, profile{dir, exists,
+manifest}, approvals{total, approved, pending, pendingResources[], packsToReapprove[]}, files[],
+plugins[], kept[], unchanged, blockers[], warnings[] }`; `files[]` ma `path`, `area`
+(`profile`, `session`), `status` (`added`, `changed`, `removed`), `outsideCwm`, `action`, rozmiary i
+pełne skróty przed i po, `lines`, `hunks`, `hidden`, `notes`. Kody wyjścia: `0` brak różnic, `1` start
+coś zmieni albo odmówi (zob. wyżej), `2` błąd użycia lub ustawienia (brak manifestu projektu,
+uszkodzony manifest, zła opcja). Pominięte w porównaniu: `generated/manifest.json`, `.lock`, `active/`,
+`tmp/`.
+
 ### `cwm pack`
 
 ```text
@@ -1261,7 +1307,7 @@ Uszkodzony plik zatwierdzeń oznacza „nic nie jest zatwierdzone”
 
 ## Czego jeszcze nie ma
 
-Polecenia `diff` i `run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), lockfile, `--follow-links` w imporcie, kopiowanie skryptów
+Polecenie `run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), lockfile, `--follow-links` w imporcie, kopiowanie skryptów
 hooków do rejestru (skrypt poza rejestrem jest przypięty skrótem, ale nie skopiowany), pluginy
 `git` w `cwm start`, marketplace'y zdalne (git, http) i źródła obiektowe wpisów, polecenie `cwm plugin add`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
 zatwierdzeń, Windows w `cwm start` oraz import biblioteki aplikacji i pluginów. Zapis do

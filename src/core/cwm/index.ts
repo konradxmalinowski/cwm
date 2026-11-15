@@ -9,6 +9,7 @@ export * from './env-policy';
 export * from './errors';
 export * from './hook-paths';
 export * from './kinds';
+export * from './line-diff';
 export * from './manifest';
 export * from './marketplace';
 export * from './merge-settings';

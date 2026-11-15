@@ -12,6 +12,15 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- `cwm diff` (ADR 0047, `docs/CLI.md`): pokazuje, co zmieni najbliższy `cwm start` w profilu firmy, z
+  tego samego planu co start, bez zapisu w `~/.cwm` i w projekcie i bez blokady (nie przeszkadza
+  działającej sesji). Grupy: pliki dodane, zmienione (ujednolicony diff do 200 wierszy, liczniki dla
+  dłuższych), zmienione poza CWM (dryf, np. `settings.json` dopisany przez silnik, z informacją o
+  nadpisaniu), usunięte, jeden wpis na plugin, pliki uruchomienia względem ostatniej sesji projektu i
+  krótka informacja o zatwierdzeniach (w tym pakietach do ponownej zgody). Pliki z możliwym sekretem i
+  binarne pokazują tylko metadane, a zawartość `env` jest ukryta. `--stat`, `--json`; kod `0` bez
+  różnic, `1` gdy start coś zmieni albo odmówi, `2` błąd użycia lub ustawienia.
+
 - `cwm plugin add|enable|disable|list|remove` (ADR 0046, `docs/CLI.md`): plugin z lokalnego
   marketplace'u trafia do rejestru jednym poleceniem (`cwm plugin add <marketplace>/<plugin>`, wersja
   z `plugin.json`, kolizja id z podpowiedzią `--id`, idempotentnie), a `--enable <firma>` albo

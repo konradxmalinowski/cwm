@@ -5,6 +5,7 @@ import { Command } from 'commander';
 
 import { registerApprovals } from './commands/approvals';
 import { registerCompany } from './commands/company';
+import { registerDiff } from './commands/diff';
 import { registerDoctor } from './commands/doctor';
 import { registerImport } from './commands/import';
 import { registerInit } from './commands/init';
@@ -52,6 +53,7 @@ export function buildProgram(): Command {
   registerPack(program);
   registerApprovals(program);
   registerStart(program);
+  registerDiff(program);
   registerDoctor(program);
   return program;
 }
