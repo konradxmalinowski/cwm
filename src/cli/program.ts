@@ -15,8 +15,10 @@ import { registerPack } from './commands/pack';
 import { registerProject } from './commands/project';
 import { registerResolve } from './commands/resolve';
 import { registerResource } from './commands/resource';
+import { registerRun } from './commands/run';
 import { registerStart } from './commands/start';
 import { registerSync } from './commands/sync';
+import { registerWorkflow } from './commands/workflow';
 
 function packageVersion(): string {
   try {
@@ -47,12 +49,14 @@ export function buildProgram(): Command {
   registerResource(program);
   registerMarketplace(program);
   registerPlugin(program);
+  registerWorkflow(program);
   registerResolve(program);
   registerImport(program);
   registerSync(program);
   registerPack(program);
   registerApprovals(program);
   registerStart(program);
+  registerRun(program);
   registerDiff(program);
   registerDoctor(program);
   return program;

@@ -1,7 +1,13 @@
 import { TOOL_IDS } from '../model/item';
 import { Checker, childPath, field, isPlainObject } from './check';
 import { fail, ok, type Result } from './errors';
-import { ALL_SET_KEYS, API_VERSION, ID_SPACE_PATTERN, isSharedNamespace } from './kinds';
+import {
+  ALL_SET_KEYS,
+  API_VERSION,
+  ID_SPACE_PATTERN,
+  isSharedNamespace,
+  RESOURCE_ID_PATTERN,
+} from './kinds';
 import { CWM_OWNED_ENV } from './patterns';
 import { ENV_NAME_PATTERN } from './env-policy';
 import type {
@@ -17,7 +23,7 @@ import { FORBIDDEN_KEYS, nullObject } from './safe-keys';
 
 const WORD_PATTERN = /^[a-z][a-z-]{0,31}$/;
 const ASSET_KEYS = ['skills', 'agents', 'workflows', 'commands', 'settings', 'files'] as const;
-const OPTIONAL_KEYS = ['skills', 'agents', 'commands', 'settings', 'files'] as const;
+const OPTIONAL_KEYS = ['skills', 'agents', 'workflows', 'commands', 'settings', 'files'] as const;
 
 /** Wspolna otoczka: apiVersion i kind. Reszte pol sprawdza wywolujacy. */
 function readRoot(
@@ -216,7 +222,7 @@ export function validateCompanyManifest(input: unknown): Result<CompanyManifest>
     c,
     input,
     'Company',
-    ['metadata', 'resources', 'plugins', 'mcp', 'instructions', 'exports', 'runtime'],
+    ['metadata', 'resources', 'plugins', 'mcp', 'workflows', 'instructions', 'exports', 'runtime'],
     ['metadata'],
   );
   if (!root) return fail(c.errors);
@@ -234,6 +240,8 @@ export function validateCompanyManifest(input: unknown): Result<CompanyManifest>
   const file = instructions && c.relativePath(field(instructions, 'file'), 'instructions.file');
   const exportsObj = subObject(c, field(root, 'exports'), 'exports', ALL_SET_KEYS);
   const runtime = readCompanyRuntime(c, field(root, 'runtime'));
+  const workflowsBlock = subObject(c, field(root, 'workflows'), 'workflows', ['default']);
+  const defaultWorkflow = field(workflowsBlock, 'default');
 
   const value: CompanyManifest = {
     apiVersion: API_VERSION,
@@ -253,6 +261,19 @@ export function validateCompanyManifest(input: unknown): Result<CompanyManifest>
     },
     plugins: readBlock(c, field(root, 'plugins'), 'plugins', ['enable', 'forbid']),
     mcp: readBlock(c, field(root, 'mcp'), 'mcp', ['enable']),
+    ...(defaultWorkflow === undefined
+      ? {}
+      : {
+          workflows: {
+            default:
+              c.string(
+                defaultWorkflow,
+                'workflows.default',
+                RESOURCE_ID_PATTERN,
+                '<przestrzen>/<nazwa>',
+              ) ?? '',
+          },
+        }),
     instructions: file ? { file } : null,
     exports: readFields(c, exportsObj, 'exports', ALL_SET_KEYS),
     runtime,
@@ -287,7 +308,8 @@ export function validateProjectManifest(input: unknown): Result<ProjectManifest>
     'enable',
     'disableOptional',
   ]);
-  const workflows = subObject(c, field(s, 'workflows'), 'spec.workflows', ['selection']);
+  const workflows = subObject(c, field(s, 'workflows'), 'spec.workflows', ['selection', 'default']);
+  const defaultWorkflow = field(workflows, 'default');
   const native = subObject(c, field(s, 'native'), 'spec.native', ['preserve']);
   const selection = field(workflows, 'selection');
   const preserve = field(native, 'preserve');
@@ -338,6 +360,17 @@ export function validateProjectManifest(input: unknown): Result<ProjectManifest>
           selection === undefined || selection === null
             ? null
             : c.string(selection, 'spec.workflows.selection', WORD_PATTERN),
+        ...(defaultWorkflow === undefined
+          ? {}
+          : {
+              default:
+                c.string(
+                  defaultWorkflow,
+                  'spec.workflows.default',
+                  RESOURCE_ID_PATTERN,
+                  '<przestrzen>/<nazwa>',
+                ) ?? '',
+            }),
       },
       native: {
         preserve:

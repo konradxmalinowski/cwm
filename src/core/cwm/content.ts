@@ -152,24 +152,32 @@ export function frontmatterFrameProblem(rawText: string, split: SplitResult): st
   return bodyFrameProblem(split.body);
 }
 
+/**
+ * Wzorce wstawek skopiowane z silnika (ADR 0049, SEC-02): wstawka w wierszu (poprzedzona poczatkiem tekstu lub
+ * bialym znakiem, moze obejmowac nowe linie) i blok ```! w dowolnym miejscu, tez jednowierszowy. Blok akceptuje
+ * dodatkowo ogrodzenie `~~~`, czyli szerzej niz silnik: wszystko, co silnik uruchomi, jest pokazane i zatwierdzane.
+ */
+const INLINE_SNIPPET = /(?<=^|\s)!`([^`]+)`/g;
+const BLOCK_SNIPPET = /(`{3}|~{3})!\s*\n?([\s\S]*?)\n?\1/g;
+
 /** Wstawka polecenia wykonywana przy wczytaniu: `!` z poleceniem w odwrotnych apostrofach albo blok ```!. */
 export function hasInlineCommands(text: string): boolean {
-  return text.includes('!`') || /^\s*(?:`{3,}|~{3,})!/m.test(text);
+  return text.includes('!`') || /(?:`{3}|~{3})!/.test(text);
 }
 
 /**
- * Wstawki wykonywane przy wczytaniu, w calosci i w kolejnosci wystapien: `!` z poleceniem w
- * odwrotnych apostrofach oraz bloki ogrodzone ```! (SEC-04). Ekran zatwierdzania pokazuje je bez skracania.
+ * Wstawki wykonywane przy wczytaniu, w calosci i w kolejnosci wystapien (SEC-04). Ekran zatwierdzania pokazuje je
+ * bez skracania.
  */
 export function extractInlineCommands(text: string): string[] {
-  const out: string[] = [];
-  for (const match of text.matchAll(/(?:^|[^`])!`([^`\n]+)`/g)) {
-    if (match[1] !== undefined) out.push(match[1]);
+  const found: { index: number; text: string }[] = [];
+  for (const match of text.matchAll(INLINE_SNIPPET)) {
+    if (match[1] !== undefined) found.push({ index: match.index, text: match[1] });
   }
-  for (const match of text.matchAll(/^[ \t]*(`{3,}|~{3,})![^\n]*\n([\s\S]*?)\n[ \t]*\1/gm)) {
-    if (match[2] !== undefined) out.push(match[2]);
+  for (const match of text.matchAll(BLOCK_SNIPPET)) {
+    if (match[2] !== undefined) found.push({ index: match.index, text: match[2] });
   }
-  return out;
+  return found.sort((a, b) => a.index - b.index).map((item) => item.text);
 }
 
 /** Klucz bez rozroznienia wielkosci liter i bez `_` oraz `-`: `Allowed_Tools` to `allowedtools`. */

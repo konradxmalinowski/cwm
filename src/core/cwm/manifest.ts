@@ -5,9 +5,10 @@ export type AssetSet = Pick<
   ResourceSet,
   'skills' | 'agents' | 'workflows' | 'commands' | 'settings' | 'files'
 >;
+/** Rozszerzenie wlasciciela (ADR 0049): workflow moze byc tez obowiazkowy albo opcjonalny globalnie. */
 export type OptionalAssetSet = Pick<
   ResourceSet,
-  'skills' | 'agents' | 'commands' | 'settings' | 'files'
+  'skills' | 'agents' | 'workflows' | 'commands' | 'settings' | 'files'
 >;
 
 /** Lokalny marketplace pluginow: katalog z `.claude-plugin/marketplace.json` (ADR 0043). Inne typy nie istnieja. */
@@ -64,6 +65,8 @@ export interface CompanyManifest {
     readonly forbid: readonly string[];
   };
   readonly mcp: { readonly enable: readonly string[] };
+  /** Rozszerzenie wlasciciela (ADR 0049): workflow domyslny dla `cwm run`, gdy opis nic wyraznie nie wskazuje. */
+  readonly workflows?: { readonly default?: string };
   readonly instructions: { readonly file: string } | null;
   /** Rozszerzenie wlasciciela: zasoby dostepne do importu przez projekty innych firm. */
   readonly exports: ResourceSet;
@@ -92,7 +95,11 @@ export interface ProjectManifest {
     };
     readonly plugins: { readonly enable: readonly string[]; readonly disable: readonly string[] };
     readonly mcp: { readonly enable: readonly string[]; readonly disable: readonly string[] };
-    readonly workflows: { readonly selection: string | null };
+    readonly workflows: {
+      readonly selection: string | null;
+      /** Rozszerzenie wlasciciela (ADR 0049): przesloniecie workflow domyslnego firmy. */
+      readonly default?: string;
+    };
     readonly native: { readonly preserve: boolean | null };
     readonly imports: readonly ProjectImport[];
   };

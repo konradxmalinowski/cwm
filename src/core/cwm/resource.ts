@@ -243,6 +243,8 @@ export const EXECUTION_RELEVANT_FIELDS = {
   skill: ['tools', 'allowed-tools', 'model', 'source.sha256'],
   agent: ['tools', 'allowed-tools', 'model', 'source.sha256'],
   command: ['tools', 'allowed-tools', 'model', 'source.sha256'],
+  /** Workflow instructional zamienia sie w komende `cwm-<nazwa>`: te same pola co komenda (ADR 0049). */
+  workflow: ['allowed-tools', 'source.sha256'],
   project: ['path.realpath', 'company'],
 } as const;
 

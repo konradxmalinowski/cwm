@@ -15,6 +15,7 @@ import {
   statusOf,
   type ApprovalsFile,
   type CompanyManifest,
+  type EffectiveConfiguration,
   type ApprovalSubject,
   type ChildEnv,
   type FieldChange,
@@ -70,7 +71,7 @@ import { renderChanges, renderExec } from '../pack-render';
 import { resolveRecord } from '../resolve-flow';
 import { requireInitialized } from './shared';
 
-interface StartOptions {
+export interface StartOptions {
   readonly project?: string;
   readonly strictMcp?: boolean;
   readonly dryRun?: boolean;
@@ -422,6 +423,7 @@ function renderDryRun(
   conflicts: readonly string[],
   report: Report,
   store: string,
+  extra: Readonly<Record<string, unknown>>,
 ): void {
   const byArea = {
     profile: plan.files.filter((f) => f.rel.startsWith('claude/')).map((f) => f.rel),
@@ -430,6 +432,7 @@ function renderDryRun(
   };
   if (ctx.json) {
     printJson({
+      ...extra,
       ok: report.blockers.length === 0,
       dryRun: true,
       company: plan.company,
@@ -515,19 +518,22 @@ function renderDryRun(
   for (const text of report.blockers) print(`  - ${text}`);
 }
 
-/** Wspolne wejscie `cwm start` i `cwm diff`: ten sam plan z tych samych zrodel, bez zapisu. */
-export async function prepareRun(
-  ctx: Context,
-  projectOption: string | undefined,
-  engineArgs: readonly string[],
-): Promise<{
+export interface PreparedRun {
   workspace: Workspace;
   company: CompanyManifest;
   projectDir: string;
   record: ProjectRecord;
   packDefs: Awaited<ReturnType<typeof loadPackDefs>>;
   plan: RuntimePlan;
-}> {
+  effective: EffectiveConfiguration;
+}
+
+/** Wspolne wejscie `cwm start`, `cwm run` i `cwm diff`: ten sam plan z tych samych zrodel, bez zapisu. */
+export async function prepareRun(
+  ctx: Context,
+  projectOption: string | undefined,
+  engineArgs: readonly string[],
+): Promise<PreparedRun> {
   await requireInitialized(ctx.layout);
   const workspace = await loadWorkspace(ctx.layout);
   const record = await locateProject(ctx, workspace, projectOption);
@@ -543,6 +549,7 @@ export async function prepareRun(
   const company = companyLoaded.value;
 
   const packDefs = await loadPackDefs(ctx.layout);
+  const projectDefault = record.loaded.ok ? record.loaded.value.spec.workflows.default : undefined;
   const plan = await buildRuntimePlan({
     layout: ctx.layout,
     workspace,
@@ -552,10 +559,11 @@ export async function prepareRun(
     projectStore: record.store,
     homeDir: homedir(),
     userArgs: engineArgs,
+    ...(projectDefault === undefined ? {} : { projectWorkflowDefault: projectDefault }),
     packMembership: packDefs.membership,
   });
   if (plan.errors.length > 0) refuse(ctx, plan.errors.join('\n'), { errors: plan.errors });
-  return { workspace, company, projectDir, record, packDefs, plan };
+  return { workspace, company, projectDir, record, packDefs, plan, effective };
 }
 
 /** Stan zatwierdzen planu (firma i zaufane skroty pakietow), wspolny dla `cwm start` i `cwm diff`. */
@@ -606,11 +614,23 @@ async function startCommand(
   const argErrors = checkPassThroughArgs(engineArgs);
   if (argErrors.length > 0) throw usageError(argErrors.join('\n'));
 
-  const { workspace, company, projectDir, record, packDefs, plan } = await prepareRun(
-    ctx,
-    options.project,
-    engineArgs,
-  );
+  const prepared = await prepareRun(ctx, options.project, engineArgs);
+  await launchPrepared(ctx, options, prepared, engineArgs, {});
+}
+
+/**
+ * Reszta `cwm start` po zbudowaniu planu: wersja silnika, zatwierdzenia, blokady sesji, zapis profilu i
+ * uruchomienie. Wspolna z `cwm run`, wiec zatwierdzenia, izolacja i reguly argumentow sa te same.
+ * `extra` dolacza pola do dokumentu `--dry-run --json` (wybor workflow w `cwm run`).
+ */
+export async function launchPrepared(
+  ctx: Context,
+  options: StartOptions,
+  prepared: PreparedRun,
+  engineArgs: readonly string[],
+  extra: Readonly<Record<string, unknown>>,
+): Promise<void> {
+  const { workspace, company, projectDir, record, packDefs, plan } = prepared;
 
   const lookup = await resolveEngineBinary({
     configuredPath: company.runtime.claudePath,
@@ -691,6 +711,7 @@ async function startCommand(
       conflicts,
       { blockers, warnings },
       record.store,
+      extra,
     );
     if (blockers.length > 0) throw new CliError('', 1);
     return;
