@@ -22,6 +22,7 @@ import {
   projectApprovalKey,
   refKey,
   settingsEnvRefs,
+  taskReachesShell,
   validateCleanupPath,
   type ApprovalSubject,
   type CompanyManifest,
@@ -33,6 +34,8 @@ import {
   type Resource,
   type ResourceFacts,
   sanitizeGitUrl,
+  withTaskPlaceholder,
+  workflowCommandName,
 } from '../../core/cwm';
 import { lookupGitSource } from './git-source';
 import { pinHookCommands, pinInfos } from './hook-pins';
@@ -86,6 +89,8 @@ export interface PlanInput {
   readonly projectStore: 'local' | 'home';
   readonly homeDir: string;
   readonly userArgs: readonly string[];
+  /** `spec.workflows.default` projektu: wchodzi do zatwierdzenia pary projekt-firma (SEC-03, ADR 0049). */
+  readonly projectWorkflowDefault?: string;
   /** Czlonkostwo w pakietach: klucz zasobu (`rodzaj:id`) -> id pakietu (ADR 0044). */
   readonly packMembership?: ReadonlyMap<string, string>;
 }
@@ -103,6 +108,14 @@ export interface PlanSummary {
   readonly pluginDirs: number;
   /** Odwolania do natywnego katalogu konfiguracji przepisane na sciezke profilu w kopiach zasobow. */
   readonly rewrittenReferences: number;
+}
+
+/** Workflow aktywny w projekcie i polecenie, w ktore sie zamienil (`null` dla typu bez generowania). */
+export interface PlannedWorkflow {
+  readonly id: string;
+  readonly type: 'instructional' | 'orchestrated';
+  /** Nazwa polecenia po `/`: `cwm-<nazwa>` w profilu, `<plugin>:cwm-<nazwa>` dla zasobu obowiazkowego. */
+  readonly slash: string | null;
 }
 
 export interface RuntimePlan {
@@ -125,6 +138,9 @@ export interface RuntimePlan {
   readonly subjects: readonly ApprovalSubject[];
   /** Pola czlonkow pakietow wyprowadzone z rejestru (niezalezne od firmy), do oceny zaufanych skrotow. */
   readonly packMembers: readonly PackMemberFacts[];
+  readonly workflows: readonly PlannedWorkflow[];
+  /** Polecenia workflow zaslaniane przez natywny `.claude/commands/` projektu (cwm run odmawia, SEC-04). */
+  readonly shadowedWorkflowCommands: readonly string[];
   readonly ownEnvRefs: readonly string[];
   readonly settingsEnvRefs: Readonly<Record<string, string>>;
   readonly otherCompanyRefs: readonly string[];
@@ -274,8 +290,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
       makeSubject({
         ...(key === undefined ? {} : { key }),
         company: companyId,
-        kind: resource.kind as
-          'mcp' | 'plugin' | 'settings' | 'skill' | 'agent' | 'command' | 'files',
+        kind: resource.kind,
         id: resource.id,
         version: resource.version ?? null,
         fields,
@@ -357,11 +372,14 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     });
   };
 
+  const plannedWorkflows: PlannedWorkflow[] = [];
+  const workflowCommandNames = new Set<string>();
   for (const entry of effective.resources) {
     const resource = entry.resource;
     const label = resource.id;
-    if (resource.kind === 'workflow') {
-      out.notes.push(`${label}: workflow nie jest generowany do silnika w tym etapie.`);
+    if (resource.kind === 'workflow' && resource.type === 'orchestrated') {
+      out.notes.push(`${label}: workflow orchestrated nie jest generowany do silnika (ADR 0049).`);
+      plannedWorkflows.push({ id: resource.id, type: resource.type, slash: null });
       continue;
     }
     const inPlugin = entry.origin === 'mandatory';
@@ -407,7 +425,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           out.errors.push(`${label}: kolizja nazwy SKILL.md w drzewie skilla.`);
           break;
         }
-        if (taken.has(`${base}/skills/${name}`)) {
+        if (taken.has(`${base}/skills/${name}`) || taken.has(`${base}/commands/${name}`)) {
           out.errors.push(`${label}: nazwa skilla "${name}" jest juz zajeta przez inny zasob.`);
           break;
         }
@@ -470,6 +488,58 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           agentFacts.content,
         );
         subject(resource, agentFacts);
+        break;
+      }
+      case 'workflow': {
+        if (dir === undefined) break;
+        // Workflow instructional to komenda `cwm-<nazwa>`: ten sam parser, te same flagi i to samo zatwierdzenie.
+        const name = workflowCommandName(resource.id);
+        const bytes = await readSourceFile(dir, stripDot(resource.source));
+        if (bytes === null) {
+          out.errors.push(
+            `${label}: brak pliku zrodlowego ${resource.source} albo jest niebezpieczny.`,
+          );
+          break;
+        }
+        let text: string;
+        try {
+          text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        } catch {
+          out.errors.push(`${label}: plik zrodlowy nie jest poprawnym UTF-8.`);
+          break;
+        }
+        const parsed = parseOrReport(
+          'command',
+          encoder.encode(withTaskPlaceholder(text)),
+          label,
+          out,
+          name,
+        );
+        if (parsed === null) break;
+        if (taskReachesShell(text)) {
+          out.errors.push(
+            `${label}: wstawka ! uzywa $ARGUMENTS albo $1: opis zadania trafilby do powloki.`,
+          );
+          break;
+        }
+        // Skill o tej samej nazwie odpowiada na to samo `/<nazwa>` (SEC-05).
+        if (taken.has(`${base}/commands/${name}`) || taken.has(`${base}/skills/${name}`)) {
+          out.errors.push(
+            `${label}: nazwa polecenia "${name}" jest juz zajeta przez inna komende albo skill.`,
+          );
+          break;
+        }
+        taken.add(`${base}/commands/${name}`);
+        workflowCommandNames.add(name);
+        out.add(`${base}/commands/${name}.md`, parsed.content, false, refKey(resource));
+        counters.commands += 1;
+        if (!inPlugin) profileNames.commands.push(name);
+        plannedWorkflows.push({
+          id: resource.id,
+          type: 'instructional',
+          slash: inPlugin ? `${cwmPluginName(companyId)}:${name}` : name,
+        });
+        subject(resource, contentFacts(parsed, sha256Hex(parsed.content)));
         break;
       }
       case 'files': {
@@ -731,6 +801,15 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     addDirsFromArgs(input.userArgs, projectDir),
     profileNames,
   );
+  // Natywny skill `.claude/skills/cwm-<nazwa>/` odpowiada na to samo `/cwm-<nazwa>` co komenda workflow.
+  const skillShadow = await findShadowing(projectDir, addDirsFromArgs(input.userArgs, projectDir), {
+    skills: [...workflowCommandNames],
+    agents: [],
+    commands: [],
+  });
+  const shadowedWorkflowCommands = [...shadowed, ...skillShadow]
+    .map((item) => /^(?:command|skill) (\S+) /.exec(item)?.[1])
+    .filter((name): name is string => name !== undefined && workflowCommandNames.has(name));
   for (const item of shadowed) {
     out.warnings.push(
       `Natywne .claude/ projektu ma zasob o tej samej nazwie co zasob firmy: ${item}.`,
@@ -752,7 +831,15 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
       kind: 'project',
       id: projectDir,
       version: null,
-      fields: { path: projectDir, company: companyId, projectResources },
+      fields: {
+        path: projectDir,
+        company: companyId,
+        projectResources,
+        // Tylko gdy ustawione, zeby skroty zatwierdzonych par bez domyslnego workflow sie nie zmienily.
+        ...(input.projectWorkflowDefault === undefined
+          ? {}
+          : { workflowDefault: input.projectWorkflowDefault }),
+      },
       warnings:
         input.projectStore === 'local'
           ? [
@@ -776,6 +863,9 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         claudePath: configuredEnginePath,
         envPassthrough: [...company.runtime.envPassthrough].sort(),
         isolation: company.runtime.isolation,
+        ...(company.workflows?.default === undefined
+          ? {}
+          : { workflowDefault: company.workflows.default }),
       },
       warnings: company.runtime.isolation
         ? []
@@ -893,6 +983,8 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     pluginSnapshots: pluginSnapshots.sort(),
     subjects: subjects.sort((a, b) => (a.key < b.key ? -1 : 1)),
     packMembers,
+    shadowedWorkflowCommands: [...new Set(shadowedWorkflowCommands)].sort(),
+    workflows: plannedWorkflows.sort((a, b) => (a.id < b.id ? -1 : 1)),
     ownEnvRefs: ownRefs,
     settingsEnvRefs: envRefs,
     otherCompanyRefs: foreignEnvRefs(registryRefs, ownRefs),

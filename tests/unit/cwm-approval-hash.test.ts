@@ -26,6 +26,7 @@ import {
   type PackTrustFile,
   type Plugin,
   type Skill,
+  type Workflow,
 } from '../../src/core/cwm';
 
 const base = {
@@ -484,6 +485,69 @@ describe('pola zatwierdzenia skilla i komendy (SEC-04)', () => {
       sourceSha256: 's'.repeat(64),
     });
     expect(canonicalJson(widened)).not.toBe(canonicalJson(fields));
+  });
+});
+
+describe('pola zatwierdzenia workflow instructional (ADR 0049)', () => {
+  const workflow: Workflow = {
+    kind: 'workflow',
+    id: 'acme-a/review',
+    version: '1.0.0',
+    type: 'instructional',
+    source: 'workflow.md',
+    agents: [],
+    steps: [],
+  };
+  const plain = {
+    allowedTools: false,
+    allowedToolsValue: [],
+    inlineCommands: false,
+    inlineSnippets: [],
+    tools: [],
+    model: null,
+  };
+
+  it('sama tresc bez allowed-tools i wstawek nie wymaga zatwierdzenia, jak komenda', () => {
+    expect(needsApproval(workflow, { content: plain, sourceSha256: 's'.repeat(64) })).toBe(false);
+    expect(executionFields(workflow, { content: plain, sourceSha256: 's'.repeat(64) })).toBeNull();
+  });
+
+  it('allowed-tools i wstawki ! wymuszaja zatwierdzenie, a skrot zalezy od tresci i rodzaju', () => {
+    const content = {
+      ...plain,
+      allowedTools: true,
+      allowedToolsValue: ['Bash(git diff:*)'],
+      inlineCommands: true,
+      inlineSnippets: ['git diff --stat'],
+    };
+    const facts = { content, sourceSha256: 'a'.repeat(64) };
+    expect(needsApproval(workflow, facts)).toBe(true);
+    const fields = executionFields(workflow, facts);
+    expect(fields).toMatchObject({
+      inlineSnippets: ['git diff --stat'],
+      sourceSha256: 'a'.repeat(64),
+    });
+    const changed = executionFields(workflow, { content, sourceSha256: 'b'.repeat(64) });
+    const hash = (kind: 'workflow' | 'command', f: unknown): string =>
+      approvalHash({ company: 'acme-a', kind, id: 'acme-a/review', fields: f });
+    expect(hash('workflow', changed)).not.toBe(hash('workflow', fields));
+    expect(hash('workflow', fields)).not.toBe(hash('command', fields));
+  });
+
+  it('walidator odczytu przyjmuje klucz workflow:', () => {
+    const entry = {
+      key: 'workflow:acme-a/review',
+      hash: 'c'.repeat(64),
+      approvedAt: '2026-11-15T10:00:00Z',
+      fields: {},
+    };
+    const parsed = validateApprovalsFile({
+      apiVersion: 'cwm.dev/v1',
+      kind: 'Approvals',
+      company: 'acme-a',
+      entries: [entry],
+    });
+    expect(parsed.ok).toBe(true);
   });
 });
 

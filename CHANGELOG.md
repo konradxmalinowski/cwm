@@ -10,7 +10,26 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersji w
 `package.json` zmieni się przy wydaniu.
 
+### Security
+
+- Wstawki `!` w skillach, agentach, komendach i workflow są rozpoznawane wzorcami silnika (wstawka wielowierszowa,
+  blok ` ```! ` jednowierszowy i w środku wiersza), więc każda wstawka, którą silnik wykona, jest pokazana i
+  zatwierdzana. Zasoby, które miały takie niewidoczne wstawki, dostaną nowe pole `inlineSnippets` i **nowy skrót
+  zatwierdzenia** (zamierzone: zapytają ponownie przy `cwm start`).
+
 ### Added
+
+- `cwm run "<zadanie>"` i `cwm workflow add|list|show` (ADR 0049, `docs/CLI.md`): polecenie dobiera workflow
+  `instructional` do opisu zadania deterministycznie i offline (słowa kluczowe po `foldName` na granicach słów,
+  podobieństwo do przykładów, `priority`; próg 4 pkt i przewaga 1 pkt), pokazuje wybór, wynik, powód i dwóch
+  kolejnych kandydatów, a potem uruchamia ten sam kod co `cwm start` z poleceniem `/cwm-<nazwa> <zadanie>` jako
+  jednym argumentem silnika. Remis albo brak trafienia: lista do wyboru na terminalu, bez terminala błąd z
+  podpowiedzią; `--workflow` pomija routing, `--dry-run` i `--explain` pokazują plan i pełną tabelę wyników,
+  `routing.mode: manual` wyłącza workflow z automatu, a `workflows.default` projektu i firmy wygrywa tylko bez
+  wyraźnego trafienia. Workflow jest w profilu komendą `cwm-<nazwa>` (zasób obowiązkowy w pluginie CWM) i
+  przechodzi to samo zatwierdzenie co komenda (`allowed-tools`, wstawki `!`); `$ARGUMENTS` we wstawce `!` jest
+  odrzucany (także `$ARGUMENTSx`, `$10`, wstawki wielowierszowe i blokowe); `workflows.default` projektu i firmy wchodzi do ich zatwierdzeń, a `cwm run` odmawia, gdy natywny `.claude/commands/` projektu zasłania polecenie workflow. Workflow `orchestrated` kończy się komunikatem „nieobsługiwany”. Nowe pola opcjonalne:
+  `workflows` w `config.yaml` (`mandatory` i `optional`), `workflows.default` w `company.yaml` i `project.yaml`.
 
 - `cwm plugin add git <url> --id git/<nazwa>`, `cwm plugin fetch` i `cwm plugin update` (ADR 0048,
   `docs/CLI.md`): plugin z repozytorium git trafia do rejestru z przypiętym pełnym SHA commita

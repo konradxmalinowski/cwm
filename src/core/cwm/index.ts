@@ -24,6 +24,7 @@ export * from './policy';
 export * from './registry';
 export * from './resolve';
 export * from './resource';
+export * from './routing';
 export * from './runtime-config';
 export * from './safe-keys';
 export * from './settings-spec';

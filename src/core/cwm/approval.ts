@@ -15,7 +15,16 @@ export const APPROVAL_DOMAIN = 'cwm-approval-v1\n';
 export const APPROVAL_ENGINE = 'claude-code';
 
 export type ApprovalKind =
-  'mcp' | 'plugin' | 'settings' | 'skill' | 'agent' | 'command' | 'files' | 'project' | 'company';
+  | 'mcp'
+  | 'plugin'
+  | 'settings'
+  | 'skill'
+  | 'agent'
+  | 'command'
+  | 'workflow'
+  | 'files'
+  | 'project'
+  | 'company';
 
 export interface ApprovalDocumentInput {
   readonly company: string;
@@ -169,6 +178,7 @@ export function needsApproval(resource: Resource, facts: ResourceFacts): boolean
     case 'skill':
     case 'agent':
     case 'command':
+    case 'workflow':
     case 'files': {
       const content = facts.content;
       return (
@@ -179,8 +189,6 @@ export function needsApproval(resource: Resource, facts: ResourceFacts): boolean
           hasSkillHooks(facts))
       );
     }
-    case 'workflow':
-      return false;
   }
 }
 
@@ -236,6 +244,7 @@ export function executionFields(
     case 'skill':
     case 'agent':
     case 'command':
+    case 'workflow':
     case 'files': {
       if (!needsApproval(resource, facts)) return null;
       const content = facts.content;
@@ -256,8 +265,6 @@ export function executionFields(
           : {}),
       };
     }
-    case 'workflow':
-      return null;
   }
 }
 
@@ -402,7 +409,7 @@ export function statusOf(subject: ApprovalSubject, file: ApprovalsFile): Approva
 }
 
 const KEY =
-  /^(?:mcp|plugin|settings|skill|agent|command|files|project|company):[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]{1,512}$/u;
+  /^(?:mcp|plugin|settings|skill|agent|command|workflow|files|project|company):[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]{1,512}$/u;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const MAX_ENTRIES = 500;
 

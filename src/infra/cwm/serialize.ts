@@ -22,6 +22,15 @@ const emptyAssets = (): Record<
   files: [],
 });
 
+const emptyOptional = (): GlobalConfig['resources']['mandatory'] => ({
+  skills: [],
+  agents: [],
+  workflows: [],
+  commands: [],
+  settings: [],
+  files: [],
+});
+
 export function toYaml(document: unknown): string {
   return stringify(document, { lineWidth: 0, indent: 2, aliasDuplicateObjects: false });
 }
@@ -32,8 +41,8 @@ export function defaultGlobalConfig(engine: ToolId = 'claude-code'): GlobalConfi
     kind: 'GlobalConfig',
     defaults: { engine, projectMode: 'clean', workflowSelection: 'automatic' },
     resources: {
-      mandatory: { skills: [], agents: [], commands: [], settings: [], files: [] },
-      optional: { skills: [], agents: [], commands: [], settings: [], files: [] },
+      mandatory: emptyOptional(),
+      optional: emptyOptional(),
     },
     runtime: {
       separateCompanyConfigs: true,

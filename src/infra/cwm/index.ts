@@ -29,3 +29,4 @@ export * from './serialize';
 export * from './workspace';
 export * from './writer';
 export * from './yaml-manifest';
+export * from './workflow-registry';
