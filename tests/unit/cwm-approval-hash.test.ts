@@ -388,6 +388,56 @@ describe('pola zatwierdzenia pluginu (SEC-04)', () => {
   });
 });
 
+describe('plugin z git (ADR 0048)', () => {
+  const commit = 'c'.repeat(40);
+  const gitPlugin: Plugin = {
+    kind: 'plugin',
+    id: 'git/acme-lint',
+    version: '1.0.0',
+    source: { type: 'git', url: 'https://example.com/acme/lint.git', ref: 'main', commit },
+    activationDefault: 'disabled',
+  };
+  const facts = { url: 'https://example.com/acme/lint.git', ref: 'main', commit };
+  const hashOf = (resource: Plugin, extra: object) =>
+    approvalHash({
+      company: 'acme-a',
+      kind: 'plugin',
+      id: resource.id,
+      fields: executionFields(resource, { treeSha256: 't'.repeat(64), ...extra }),
+    });
+
+  it('adres, ref i commit wchodza do skrotu, a samo zrodlo nie jest jedynym nosnikiem', () => {
+    const base = hashOf(gitPlugin, { git: facts });
+    for (const change of [
+      { url: 'https://example.com/acme/other.git' },
+      { ref: 'develop' },
+      { ref: null },
+      { commit: 'd'.repeat(40) },
+    ]) {
+      expect(hashOf(gitPlugin, { git: { ...facts, ...change } })).not.toBe(base);
+    }
+    // Ten sam commit i drzewo, ale inny adres w polach `git`: pyta ponownie.
+    expect(hashOf(gitPlugin, {})).not.toBe(base);
+  });
+
+  it('pola local i marketplace nie dostaja klucza git (ich skroty sie nie zmieniaja)', () => {
+    const localPlugin: Plugin = {
+      ...gitPlugin,
+      id: 'local/acme-lint',
+      source: { type: 'local', path: 'plugin' },
+    };
+    const local = executionFields(localPlugin, { treeSha256: 't'.repeat(64) });
+    expect(Object.keys(local ?? {})).not.toContain('git');
+    const market: Plugin = {
+      ...gitPlugin,
+      id: 'marketplace/acme-lint',
+      source: { type: 'marketplace', marketplace: 'example-market', plugin: 'acme-lint' },
+    };
+    expect(Object.keys(executionFields(market, { treeSha256: 't' }) ?? {})).not.toContain('git');
+    expect(Object.keys(executionFields(gitPlugin, { git: facts }) ?? {})).toContain('git');
+  });
+});
+
 describe('pola zatwierdzenia skilla i komendy (SEC-04)', () => {
   const skill: Skill = {
     kind: 'skill',
