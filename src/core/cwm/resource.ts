@@ -114,7 +114,15 @@ export interface Workflow {
 export type PluginSource =
   | { readonly type: 'local'; readonly path: string }
   | { readonly type: 'marketplace'; readonly marketplace: string; readonly plugin: string }
-  | { readonly type: 'git'; readonly url: string; readonly ref?: string };
+  | {
+      readonly type: 'git';
+      readonly url: string;
+      readonly ref?: string;
+      /** Pelny SHA przypiety przez `cwm plugin fetch|update`; `cwm start` uzywa tylko jego (ADR 0048). */
+      readonly commit?: string;
+      /** Skrot drzewa (APR-03) kopii z `cwm plugin fetch|update`; start odmawia, gdy kopia sie rozni. */
+      readonly tree?: string;
+    };
 
 export interface Plugin {
   readonly kind: 'plugin';

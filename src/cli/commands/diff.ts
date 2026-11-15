@@ -8,6 +8,7 @@ import {
   type PluginDiff,
   type RuntimeDiff,
   type RuntimePlan,
+  denyNetwork,
 } from '../../infra/cwm';
 import { CliError, contextOf, print, printJson, type Context } from '../context';
 import {
@@ -212,7 +213,8 @@ export function registerDiff(program: Command): void {
     )
     .option('--project <katalog>', 'katalog projektu (domyslnie biezacy, z szukaniem w gore)')
     .option('--stat', 'tylko liczniki zmian, bez wierszy diffu')
-    .action(async (options: DiffOptions, command: Command) =>
-      diffCommand(contextOf(command), options),
-    );
+    .action(async (options: DiffOptions, command: Command) => {
+      denyNetwork();
+      return diffCommand(contextOf(command), options);
+    });
 }

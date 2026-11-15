@@ -26,12 +26,15 @@ import {
   type ApprovalSubject,
   type CompanyManifest,
   type EffectiveConfiguration,
+  type GitFacts,
   type MarketplaceFacts,
   type McpServer,
   type PackMemberFacts,
   type Resource,
   type ResourceFacts,
+  sanitizeGitUrl,
 } from '../../core/cwm';
+import { lookupGitSource } from './git-source';
 import { pinHookCommands, pinInfos } from './hook-pins';
 import { parseContent, parseFilesMarkdown } from './import-source';
 import { companyDir, resourceFileName, type CwmLayout } from './layout';
@@ -575,6 +578,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         const source = resource.source;
         let root: string | null;
         let marketplaceFacts: MarketplaceFacts | undefined;
+        let gitFacts: GitFacts | undefined;
         let entryVersion: string | null = null;
         if (source.type === 'local') {
           root = dir === undefined ? null : await realInside(dir, source.path);
@@ -593,10 +597,28 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           marketplaceFacts = resolved.facts;
           entryVersion = resolved.version;
         } else {
-          out.errors.push(
-            `${label}: pluginy ${source.type} nie sa obslugiwane w cwm start (tylko local i marketplace).`,
-          );
-          break;
+          // Git: tylko lokalna kopia przypietego commita (ADR 0048). Zadnej sieci ani procesu `git`.
+          if (source.commit === undefined) {
+            out.errors.push(
+              `${label}: plugin z git nie ma przypietego commita. Pobierz go: cwm plugin fetch ${resource.id}`,
+            );
+            break;
+          }
+          const copy = await lookupGitSource(layout, source.url, source.commit);
+          if (!copy.ok) {
+            out.errors.push(
+              copy.missing
+                ? `${label}: brak pobranej kopii commita ${source.commit.slice(0, 12)}. Pobierz ja: cwm plugin fetch ${resource.id}`
+                : `${label}: ${copy.reason}.`,
+            );
+            break;
+          }
+          root = copy.dir;
+          gitFacts = {
+            url: sanitizeGitUrl(source.url),
+            ref: source.ref ?? null,
+            commit: source.commit,
+          };
         }
         const tree =
           root === null ? null : await readTree(root, undefined, { rejectHardlinks: true });
@@ -606,14 +628,26 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           );
           break;
         }
-        if (marketplaceFacts !== undefined) {
+        if (marketplaceFacts !== undefined || gitFacts !== undefined) {
           if (root === null || !(await directoryUnchanged(root))) {
             out.errors.push(`${label}: katalog pluginu zmienil sie w trakcie odczytu.`);
             break;
           }
-          out.warnings.push(...versionWarnings(label, resource.version, entryVersion, tree.files));
+          if (marketplaceFacts !== undefined) {
+            out.warnings.push(
+              ...versionWarnings(label, resource.version, entryVersion, tree.files),
+            );
+          }
         }
         const treeHash = treeSha256(tree.files);
+        if (source.type === 'git' && source.tree !== treeHash) {
+          out.errors.push(
+            source.tree === undefined
+              ? `${label}: manifest nie ma skrotu drzewa kopii (source.tree). Pobierz ponownie: cwm plugin fetch ${resource.id}`
+              : `${label}: kopia zrodla nie zgadza sie z zapisanym skrotem drzewa (zmieniona po pobraniu?). Pobierz ponownie: cwm plugin fetch ${resource.id}`,
+          );
+          break;
+        }
         const slug = `${slugOf(resource.id)}@${treeHash.slice(0, 16)}`;
         for (const file of tree.files) {
           out.add(`plugins/${slug}/${file.rel}`, file.bytes, file.executable, refKey(resource));
@@ -633,6 +667,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
             files: tree.files.map((f) => ({ path: f.rel, sha256: sha256Hex(f.bytes) })),
             pluginExec: exec,
             ...(marketplaceFacts === undefined ? {} : { marketplace: marketplaceFacts }),
+            ...(gitFacts === undefined ? {} : { git: gitFacts }),
           },
           commands: exec.hookCommands,
           serverStrings: serverCommandStrings(exec),

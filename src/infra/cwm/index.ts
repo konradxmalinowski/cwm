@@ -1,5 +1,6 @@
 export * from './approvals';
 export * from './engine-process';
+export * from './git-source';
 export * from './gitignore';
 export * from './global-config';
 export * from './hook-pins';
@@ -8,6 +9,7 @@ export * from './import-source';
 export * from './import-types';
 export * from './layout';
 export * from './marketplace';
+export * from './network-guard';
 export * from './pack-derive';
 export * from './pack-import';
 export * from './packs';

@@ -69,7 +69,8 @@ cwm init
   approvals/packs/<przestrzeń>/<nazwa>.json   zaufane skróty pakietów (tworzy `cwm import`, odnawia `cwm start`)
   packs/<przestrzeń>/<nazwa>.yaml definicje pakietów: lista zasobów (tworzy `cwm import`, zob. `cwm pack`)
   runtime/<firma>/                profil i pliki uruchomienia (tworzy `cwm start`, zob. niżej)
-  sources/  cache/  locks/        zarezerwowane, na razie puste
+  sources/git/<skrót adresu>/<commit>/   kopie pluginów z git, bez `.git` (tworzy `cwm plugin add git|fetch|update`)
+  cache/  locks/                  zarezerwowane, na razie puste
 ```
 
 Katalog zasobu zawiera plik definicji i pliki, na które wskazuje `spec.source` (np. `SKILL.md`;
@@ -638,8 +639,9 @@ wielkość liter, Unicode) do tej samej nazwy co inny wpis; `source` to tekst `.
 bez ścieżki bezwzględnej, bez segmentów zaczynających się od `.`, bez samego korzenia); wpis nie
 deklaruje `hooks`, `mcpServers`, `lspServers`, `commands`, `agents`, `skills` ani `outputStyles` (silnik
 czyta je z `plugin.json` pluginu, nie z wpisu) i nie ma `strict: false`; nie ma nieznanych pól.
-Źródła obiektowe (`github`, `url`, `git`, `npm`) są odrzucane z powodem: CWM niczego nie pobiera.
-Kto potrzebuje takiego pluginu, klonuje go sam do katalogu marketplace'u i wpisuje `./sciezka`.
+Źródła obiektowe (`github`, `url`, `git`, `npm`) są odrzucane z powodem: marketplace niczego nie pobiera.
+Plugin z repozytorium git dodaje `cwm plugin add git` (zob. `cwm plugin`); można też sklonować go ręcznie do
+katalogu marketplace'u i wpisać `./sciezka`.
 
 Kody: `0`; `1` przy odmowie (marketplace nie przechodzi kontroli, nazwa zajęta, nieznany, w użyciu);
 `2` przy niepoprawnej nazwie. Z `--json` każde polecenie zwraca `{ ok, ... }`.
@@ -648,19 +650,22 @@ Kody: `0`; `1` przy odmowie (marketplace nie przechodzi kontroli, nazwa zajęta,
 
 ```text
 cwm plugin add <marketplace>/<plugin> [--id <id>] [--plugin-version <wersja>] [--enable <firma>...]
+cwm plugin add git <url> --id git/<nazwa> [--ref <ref>] [--plugin-version <wersja>] [--enable <firma>...]
+cwm plugin fetch <id>
+cwm plugin update <id> [--ref <ref>]
 cwm plugin enable <id> --company <firma>
 cwm plugin disable <id> --company <firma>
 cwm plugin list
 cwm plugin remove <id>
 ```
 
-Zasoby `Plugin` z lokalnych marketplace'ów (ADR 0046). Zapis idzie przez writer `~/.cwm` (atomowo, tryb
+Zasoby `Plugin` z lokalnych marketplace'ów (ADR 0046) i z repozytoriów git (ADR 0048). Zapis idzie przez writer `~/.cwm` (atomowo, tryb
 0600) pod mutexem `runtime/global`, jak `cwm sync`; edycje `company.yaml` zachowują komentarze i resztę
 pliku, a wynik przechodzi ten sam walidator co odczyt. Żadne z poleceń nie zatwierdza pluginu:
-zatwierdzenie jest przy `cwm start` (treść pluginu i blok `marketplace`), a `cwm start --dry-run`
+zatwierdzenie jest przy `cwm start` (treść pluginu i blok `marketplace` albo `git`), a `cwm start --dry-run`
 pokazuje plugin jako `NOWE`.
 
-- `add` rozwiązuje wpis jak `cwm start` (marketplace zarejestrowany, wpis używalny, katalog zaufany;
+- `add <marketplace>/<plugin>` rozwiązuje wpis jak `cwm start` (marketplace zarejestrowany, wpis używalny, katalog zaufany;
   zob. `cwm marketplace`) i zapisuje `registry/plugins/marketplace/<plugin>/plugin.yaml` z
   `activation.default: disabled`. Id to `marketplace/<plugin>`; `--id` musi mieć przestrzeń `marketplace`.
   Wersja: `--plugin-version`, inaczej `version` z `.claude-plugin/plugin.json`, inaczej `0.0.0`.
@@ -669,15 +674,77 @@ pokazuje plugin jako `NOWE`.
   - Id zajęte przez ten sam wpis: `bez zmian` (kod `0`).
   - `--enable <firma>...` dopisuje id do `plugins.enable` wskazanych firm (także gdy zasób już istniał).
     Nieistniejąca firma albo id w jej `plugins.forbid` przerywa polecenie przed jakimkolwiek zapisem.
+- `add git <url> --id git/<nazwa>` pobiera repozytorium (patrz niżej), przypina pełny SHA commita w
+  `registry/plugins/git/<nazwa>/plugin.yaml` (`source.commit`) i dopisuje id do `plugins.enable` firm z `--enable`.
+  `--id` jest wymagane i musi mieć przestrzeń `git`. `--ref` to gałąź, tag albo pełny SHA (domyślnie `HEAD`
+  repozytorium). Id zajęte przez inne źródło to błąd przed pobraniem; to samo źródło to `bez zmian`, bez sieci.
+- `fetch <id>` pobiera kopię commita przypiętego w manifeście (po SHA), gdy jej brakuje na dysku; gdy kopia
+  jest na miejscu, nic nie pobiera. Manifest bez `source.commit` (zapisany ręcznie) przypina `ref` do bieżącego
+  commita.
+- `update <id> [--ref <ref>]` pobiera aktualny commit refu, pokazuje stary i nowy commit oraz listę
+  zmienionych plików (`+` dodany, `~` zmieniony, `-` usunięty, do 50 wierszy), zapisuje nowy commit w
+  manifeście i usuwa kopię starego, jeśli nie używa jej inny zasób. Ten sam commit to `bez zmian`. Nic nie
+  zatwierdza: skrót drzewa się zmienia, więc `cwm start` zapyta ponownie.
 - `enable` i `disable` dopisują i usuwają id w `plugins.enable` firmy; `enable` wymaga zasobu w rejestrze i
   odmawia przy `plugins.forbid`. Powtórzenie to `bez zmian`.
-- `list` wypisuje pluginy z rejestru: id, wersja, źródło i firmy, które je włączają.
+- `list` wypisuje pluginy z rejestru: id, wersja, źródło (dla git: adres bez danych logowania, ref i
+  początek commita) i firmy, które je włączają.
 - `remove` odmawia, gdy firma włącza plugin (w komunikacie jej nazwa); inaczej usuwa zasób z rejestru,
   z `exports.plugins` firm, z pakietów (razem z zaufanymi skrótami) i z zatwierdzeń oraz kopie `.old-*`.
+  Dla pluginu z git usuwa też kopię w `sources/git`, jeśli nie używa jej inny zasób.
   Projekt z `~/.cwm`, który nadal wymienia plugin, daje ostrzeżenie.
 
+**Pluginy z git (ADR 0048).** Sieć i proces `git` są tylko w `cwm plugin add git`, `fetch` i `update`;
+`cwm start`, `cwm diff` i `cwm sync` nigdy nie uruchamiają `git` ani nie łączą się z siecią (pilnuje tego
+lint i `npm run test:boundaries`). Start używa wyłącznie commita przypiętego w manifeście, z kopii
+`~/.cwm/sources/git/<skrót adresu>/<commit>/`; bez kopii kończy się błędem z poleceniem `cwm plugin fetch <id>`,
+a manifest bez `source.commit` albo z kopią, której skrót drzewa różni się od `source.tree`, błędem z tym samym poleceniem (`fetch` pobiera wtedy ponownie).
+
+```yaml
+apiVersion: cwm.dev/v1
+kind: Plugin
+metadata:
+  id: git/acme-lint
+  version: 1.0.0
+spec:
+  source:
+    type: git
+    url: https://example.com/acme/lint.git
+    ref: v1.0.0
+    commit: 0123456789abcdef0123456789abcdef01234567
+    tree: 89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567
+  activation:
+    default: disabled
+```
+
+- Adres: w formie kanonicznej (`new URL(adres).href` równe wpisanemu: małe litery w schemacie i hoście, bez jawnego domyślnego portu), `https://` (`http://` tylko dla `localhost`, `127.0.0.0/8` i `::1`). Odrzucane są `file://`,
+  `ext::`, `git://`, `ssh://`, ścieżki lokalne, nazwa użytkownika i hasło w adresie, zapytanie (`?`), fragment
+  (`#`), białe znaki i znaki sterujące. Dane logowania nie są obsługiwane: pobieranie jest anonimowe
+  (publiczne repozytoria), a pomocniki haseł i agent SSH są wyłączone.
+- Ref: nazwa gałęzi, tagu (`refs/tags/<nazwa>` rozstrzyga niejednoznaczność) albo pełny SHA; skrócony SHA, `..`,
+  początkowy `-` i `.lock` są odrzucane.
+- `git` jest uruchamiany po ścieżce bezwzględnej z `PATH` (po `realpath`, ten sam warunek właściciela i
+  uprawnień co plik silnika), w pustym katalogu roboczym 0700, ze środowiskiem zbudowanym od zera: tylko
+  zmienne proxy (`HTTPS_PROXY`, `NO_PROXY`) i certyfikatów (`SSL_CERT_FILE`, `SSL_CERT_DIR`) z procesu CWM,
+  `HOME` wskazuje katalog roboczy (żadnego `~/.netrc`, `~/.ssh`, `~/.gitconfig`), `GIT_CONFIG_GLOBAL=/dev/null`,
+  `GIT_CONFIG_NOSYSTEM=1`, `GIT_TERMINAL_PROMPT=0`, `GIT_ALLOW_PROTOCOL=https`. Opcje `-c`: bez hooków
+  (`core.hooksPath=/dev/null`), `protocol.allow=never` z wyjątkiem https, bez przekierowań, bez submodułów,
+  bez filtrów LFS, bez pomocników haseł, z `transfer.fsckObjects`.
+- Pobranie to `git fetch --depth=1 --no-tags --no-recurse-submodules` po SHA (przy `fetch`) albo po refie
+  (przy `add` i `update`). Limity: 120 s na polecenie, 300 s łącznie, 64 MiB w katalogu roboczym (kontrola co 200 ms, przed pobraniem wymagane 128 MiB wolnego miejsca), 4 MiB
+  wyjścia; przerwanie (Ctrl-C, SIGTERM) zabija proces `git` z jego pomocnikami i usuwa katalog roboczy.
+- Przed wypakowaniem lista plików commita (`git ls-tree -r -l -z`) musi mieć tylko zwykłe pliki (dowiązanie
+  symboliczne, składnik `.git` i tryb inny niż 100644 i 100755 to błąd), do 500 plików, 1 MiB na plik i 10 MiB
+  razem; submoduły nie są pobierane (ostrzeżenie, w kopii ich nie ma). Wypakowane drzewo czyta ten sam `readTree`
+  co plugin `local` (bez dowiązań, bez twardych dowiązań, bez kolizji wielkości liter). Hooki, filtry i
+  atrybuty z repozytorium nie są wykonywane; kopia nie ma katalogu `.git`.
+- Pola zatwierdzenia: jak dla pluginu `local` (skrót drzewa, lista plików, hooki, serwery MCP i LSP, piny)
+  plus blok `git` z adresem bez danych logowania, refem i commitem. Zmiana adresu, refu albo commita pyta
+  ponownie. Skróty pluginów `local` i `marketplace` się nie zmieniają.
+
 Kody: `0`; `1` przy odmowie (marketplace albo wpis nieużywalny, kolizja id, nieznana firma albo plugin,
-`plugins.forbid`, plugin włączony); `2` przy niepoprawnym argumencie. Z `--json` każde polecenie zwraca
+`plugins.forbid`, plugin włączony, nieudane pobranie, repozytorium z dowiązaniem albo przekroczonym limitem);
+`2` przy niepoprawnym argumencie (w tym adres lub ref odrzucony regułami powyżej). Z `--json` każde polecenie zwraca
 `{ ok, ... }`.
 
 ### `cwm resolve`
@@ -1056,7 +1123,7 @@ skróty zatwierdzeń liczone z tych samych bajtów, zatwierdzenie, zapis dokład
 odczyt kontrolny, `spawn`. Katalogiem silnika jest katalog projektu z manifestem (też przy
 wywołaniu z podkatalogu), nie `cwd`.
 
-**Zatwierdzenia.** Wymagają ich: każdy serwer MCP, plugin `local` i `marketplace`, `Settings`, skill, agent i
+**Zatwierdzenia.** Wymagają ich: każdy serwer MCP, plugin `local`, `marketplace` i `git`, `Settings`, skill, agent i
 komenda z `allowed-tools`, `tools` albo wstawkami `!` (liczone z plików, nie z flag w manifeście)
 para (katalog projektu po `realpath`, firma, z listą zasobów włączonych przez projekt) oraz opcje
 uruchamiania firmy (`company:<id>`: `runtime.claude.path`, `env.passthrough`, `isolation`). Skrót
@@ -1086,6 +1153,8 @@ różnicą „było/jest” i pełnymi wartościami. Domyślna odpowiedź to „
 stdout nie są terminalem, albo `--json`, `--no-input`) start niczego nie zatwierdza: kończy się
 kodem `1` i listą kluczy ze skrótami, chyba że wszystko jest już zatwierdzone. Nie ma `--yes`.
 Przed pytaniami `start` wypisuje ostrzeżenia planu oraz ostrzeżenia zasobów już zatwierdzonych.
+
+**Pluginy z git** (`source.type: git`, ADR 0048). `cwm start` czyta tylko lokalną kopię przypiętego commita z `~/.cwm/sources/git/` (bez `git`, bez sieci); brak kopii albo brak `source.commit` to błąd z poleceniem `cwm plugin fetch <id>`. Dalej ta sama droga co plugin `local`; pola zatwierdzenia dostają blok `git` (zob. `cwm plugin`).
 
 **Pluginy z marketplace'u** (`source.type: marketplace`, ADR 0043). `cwm start` czyta
 `marketplace.json` z zarejestrowanego katalogu (kontrola i limity: zob. `cwm marketplace`), wybiera
@@ -1309,6 +1378,6 @@ Uszkodzony plik zatwierdzeń oznacza „nic nie jest zatwierdzone”
 
 Polecenie `run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), lockfile, `--follow-links` w imporcie, kopiowanie skryptów
 hooków do rejestru (skrypt poza rejestrem jest przypięty skrótem, ale nie skopiowany), pluginy
-`git` w `cwm start`, marketplace'y zdalne (git, http) i źródła obiektowe wpisów, polecenie `cwm plugin add`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
+marketplace'y zdalne (git, http) i źródła obiektowe wpisów, pobieranie z uwierzytelnieniem (SSH, tokeny) dla pluginów `git`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
 zatwierdzeń, Windows w `cwm start` oraz import biblioteki aplikacji i pluginów. Zapis do
 konfiguracji silnika (`.claude/`, `CLAUDE.md`, `.mcp.json`) jest poza zakresem.

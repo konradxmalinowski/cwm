@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildChildEnv,
+  buildGitEnv,
+  checkGitTreeListing,
   foreignEnvRefs,
+  gitHardeningArgs,
+  gitRefProblem,
+  gitUrlProblem,
+  sanitizeGitUrl,
   sanitizePath,
   type ChildEnvInput,
 } from '../../src/core/cwm';
@@ -257,5 +263,169 @@ describe('wartosci o ksztalcie sekretu i PATH (SEC-11)', () => {
       }),
     );
     expect(result.env['PATH']).toBe('/usr/bin');
+  });
+});
+
+describe('srodowisko i opcje procesu git (ADR 0048)', () => {
+  const gitInput = {
+    parent: {
+      HOME: '/home/u',
+      PATH: '/evil/bin:/usr/bin',
+      GITHUB_TOKEN: 'ghp_xxx',
+      SSH_AUTH_SOCK: '/tmp/agent',
+      GIT_SSH_COMMAND: 'evil',
+      GIT_CONFIG_GLOBAL: '/home/u/.gitconfig',
+      GIT_EXEC_PATH: '/evil',
+      HTTPS_PROXY: 'http://proxy.example:3128',
+      SSL_CERT_FILE: '/etc/ssl/ca.pem',
+      ANTHROPIC_API_KEY: 'sk-ant-x',
+    },
+    scratchDir: '/cwm/sources/git/.tmp-1',
+    gitDir: '/usr/bin',
+    allowLoopbackHttp: false,
+  };
+
+  it('buduje srodowisko od zera: bez sekretow, agenta ssh, GIT_* rodzica i prawdziwego HOME', () => {
+    const env = buildGitEnv(gitInput);
+    expect(Object.keys(env).sort()).toEqual(
+      [
+        'GIT_ALLOW_PROTOCOL',
+        'GIT_ATTR_NOSYSTEM',
+        'GIT_CONFIG_GLOBAL',
+        'GIT_CONFIG_NOSYSTEM',
+        'GIT_CONFIG_SYSTEM',
+        'GIT_LFS_SKIP_SMUDGE',
+        'GIT_NO_LAZY_FETCH',
+        'GIT_NO_REPLACE_OBJECTS',
+        'GIT_OPTIONAL_LOCKS',
+        'GIT_TERMINAL_PROMPT',
+        'HOME',
+        'HTTPS_PROXY',
+        'LANG',
+        'LC_ALL',
+        'PATH',
+        'SSL_CERT_FILE',
+        'TMPDIR',
+        'XDG_CONFIG_HOME',
+      ].sort(),
+    );
+    expect(env['HOME']).toBe('/cwm/sources/git/.tmp-1');
+    expect(env['PATH']).toBe('/usr/bin:/usr/bin:/bin');
+    expect(env['GIT_CONFIG_GLOBAL']).toBe('/dev/null');
+    expect(env['GIT_CONFIG_NOSYSTEM']).toBe('1');
+    expect(env['GIT_TERMINAL_PROMPT']).toBe('0');
+    expect(env['GIT_ALLOW_PROTOCOL']).toBe('https');
+  });
+
+  it('http dopuszcza tylko dla petli zwrotnej i wylacza dla niej proxy', () => {
+    const env = buildGitEnv({ ...gitInput, allowLoopbackHttp: true });
+    expect(env['GIT_ALLOW_PROTOCOL']).toBe('https:http');
+    expect(env['NO_PROXY']).toBe('localhost,127.0.0.1,::1');
+    expect(gitHardeningArgs(true)).toContain('protocol.http.allow=always');
+    expect(gitHardeningArgs(false)).toContain('protocol.http.allow=never');
+  });
+
+  it('opcje -c wylaczaja hooki, protokoly file i ext, przekierowania, submoduly i LFS', () => {
+    const settings = gitHardeningArgs(false).filter((_, index) => index % 2 === 1);
+    for (const expected of [
+      'core.hooksPath=/dev/null',
+      'protocol.allow=never',
+      'protocol.file.allow=never',
+      'protocol.ext.allow=never',
+      'protocol.ssh.allow=never',
+      'http.followRedirects=false',
+      'fetch.recurseSubmodules=false',
+      'filter.lfs.smudge=',
+      'filter.lfs.required=false',
+      'credential.helper=',
+      'transfer.fsckObjects=true',
+    ]) {
+      expect(settings).toContain(expected);
+    }
+    expect(gitHardeningArgs(false).filter((_, index) => index % 2 === 0)).not.toContain('--');
+  });
+
+  it('odrzuca adresy file, ext, ssh, z haslem, zapytaniem i bialymi znakami', () => {
+    for (const bad of [
+      'file:///tmp/repo',
+      'ext::sh -c id',
+      '/tmp/repo',
+      'ssh://git@example.com/acme/tools.git',
+      'git@example.com:acme/tools.git',
+      'git://example.com/acme/tools.git',
+      'http://example.com/acme/tools.git',
+      'https://user:pass@example.com/acme/tools.git',
+      'https://token@example.com/acme/tools.git',
+      'https://example.com/acme/tools.git?x=1',
+      'https://example.com/acme/tools.git#frag',
+      'https://example.com/',
+      'https://example.com/acme/tools .git',
+      'https://example.com/acme\\tools.git',
+      '-https://example.com/a',
+      'HTTPS://example.com/acme/tools.git',
+      'http://\uFF11\uFF12\uFF17.0.0.1/acme/tools.git',
+      'http:127.0.0.1:8080/acme/tools.git',
+      'https://EXAMPLE.com/acme/tools.git',
+      'https://example.com:443/acme/tools.git',
+    ]) {
+      expect(gitUrlProblem(bad), bad).not.toBeNull();
+    }
+    for (const good of [
+      'https://example.com/acme/tools.git',
+      'https://example.com:8443/acme/tools',
+      'http://127.0.0.1:8080/acme/tools.git',
+      'http://localhost/acme/tools.git',
+    ]) {
+      expect(gitUrlProblem(good), good).toBeNull();
+    }
+  });
+
+  it('sanityzuje adres do wyswietlenia i odrzuca skrocony SHA oraz zle refy', () => {
+    expect(sanitizeGitUrl('https://user:pass@example.com/a/b.git?token=x#f')).toBe(
+      'https://example.com/a/b.git',
+    );
+    expect(gitRefProblem('main')).toBeNull();
+    expect(gitRefProblem('refs/tags/v1.0.0')).toBeNull();
+    expect(gitRefProblem('a'.repeat(40))).toBeNull();
+    for (const bad of ['-x', 'abc1234', 'a..b', 'x/', 'a//b', 'x.lock', 'a b']) {
+      expect(gitRefProblem(bad), bad).not.toBeNull();
+    }
+  });
+
+  describe('lista plikow commita', () => {
+    const limits = { files: 3, fileBytes: 100, bytes: 150 };
+    const entry = (mode: string, type: string, size: string, path: string): string =>
+      `${mode} ${type} ${'a'.repeat(40)} ${size.padStart(7)}\t${path}\0`;
+
+    it('przyjmuje zwykle pliki i zbiera submoduly', () => {
+      const raw =
+        entry('100644', 'blob', '10', 'a.md') +
+        entry('100755', 'blob', '20', 'bin/run.sh') +
+        entry('160000', 'commit', '-', 'vendor/lib');
+      expect(checkGitTreeListing(raw, limits)).toEqual({
+        ok: true,
+        files: 2,
+        bytes: 30,
+        submodules: ['vendor/lib'],
+      });
+    });
+
+    it('odrzuca dowiazanie, skladnik .git, limity i pusty commit', () => {
+      const bad = (raw: string): boolean => !checkGitTreeListing(raw, limits).ok;
+      expect(bad(entry('120000', 'blob', '5', 'link'))).toBe(true);
+      expect(bad(entry('100644', 'blob', '5', 'x/.GIT/config'))).toBe(true);
+      expect(bad(entry('100644', 'blob', '101', 'big'))).toBe(true);
+      expect(bad(['a', 'b', 'c', 'd'].map((n) => entry('100644', 'blob', '1', n)).join(''))).toBe(
+        true,
+      );
+      expect(bad(entry('100644', 'blob', '99', 'a') + entry('100644', 'blob', '99', 'b'))).toBe(
+        true,
+      );
+      expect(bad(entry('100644', 'blob', '5', 'a\nb'))).toBe(true);
+      expect(bad(entry('100644', 'blob', '5', 'a\u202Eb'))).toBe(true);
+      expect(bad(entry('100644', 'blob', '5', 'a\u2028b'))).toBe(true);
+      expect(bad('')).toBe(true);
+      expect(bad('nonsense\0')).toBe(true);
+    });
   });
 });

@@ -51,6 +51,7 @@ import {
   type RuntimeRoot,
   type SessionMarker,
   type Workspace,
+  denyNetwork,
 } from '../../infra/cwm';
 import {
   CliError,
@@ -765,7 +766,8 @@ export function registerStart(program: Command): void {
     .option('--strict-mcp', 'dodaje --strict-mcp-config: tylko serwery MCP wygenerowane przez CWM')
     .option('--dry-run', 'wypisuje plan i stan zatwierdzen bez zapisu i bez uruchamiania silnika')
     .argument('[argumenty-silnika...]', 'argumenty przekazane silnikowi (po "--")')
-    .action(async (args: string[], options: StartOptions, command: Command) =>
-      startCommand(contextOf(command), options, args),
-    );
+    .action(async (args: string[], options: StartOptions, command: Command) => {
+      denyNetwork();
+      return startCommand(contextOf(command), options, args);
+    });
 }

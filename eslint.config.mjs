@@ -130,15 +130,37 @@ const FS_WRITE_ALLOWED = [
 const FS_MODULE_NAMES = ['fs', 'node:fs', 'fs/promises', 'node:fs/promises'];
 
 /**
- * Pliki, ktore wolno uruchamiac procesy (SEC-16): silnik (`cwm start`) i pomocnik `git check-ignore`.
- * Reszta `src/` nie importuje `child_process`, tez przez `require` i `import()`.
+ * Pliki, ktore wolno uruchamiac procesy (SEC-16): silnik (`cwm start`), pomocnik `git check-ignore`
+ * i pobieranie pluginow z git (`cwm plugin add git|fetch|update`, ADR 0048). Reszta `src/` nie
+ * importuje `child_process`, tez przez `require` i `import()`.
  */
-const EXEC_ALLOWED = ['src/infra/cwm/engine-process.ts', 'src/infra/cwm/gitignore.ts'];
+const EXEC_ALLOWED = [
+  'src/infra/cwm/engine-process.ts',
+  'src/infra/cwm/gitignore.ts',
+  'src/infra/cwm/git-fetch.ts',
+];
 const SRC_WRITE_ALLOWED = FS_WRITE_ALLOWED.filter((entry) => entry.startsWith('src/'));
 const EXEC_PATTERN_CHILD = '^(node:)?child_process$';
 const EXEC_PROCESS_MESSAGE =
-  'node:child_process tylko w engine-process.ts i gitignore.ts (SEC-16, eslint.config.mjs).';
+  'node:child_process tylko w engine-process.ts, gitignore.ts i git-fetch.ts (SEC-16, eslint.config.mjs).';
 const EXEC_PATHS = PROCESS_MODULES.map((name) => ({ name, message: EXEC_PROCESS_MESSAGE }));
+/**
+ * Dynamiczne ladowanie modulu z nielitertalnym argumentem (szablon, zmienna, konkatenacja) omija
+ * kontrole po nazwie modulu, wiec jest zabronione w `src/`, tak samo `process.binding` i `process.dlopen`.
+ */
+const DYNAMIC_LOAD_MESSAGE =
+  'Argument import()/require() ma byc literalem tekstowym (omijalby zakazy modulow, ADR 0048); process.binding i process.dlopen sa zabronione.';
+const NONLITERAL_LOADS = [
+  { selector: 'ImportExpression:not([source.type="Literal"])', message: DYNAMIC_LOAD_MESSAGE },
+  {
+    selector: "CallExpression[callee.name='require']:not([arguments.0.type='Literal'])",
+    message: DYNAMIC_LOAD_MESSAGE,
+  },
+  {
+    selector: "MemberExpression[object.name='process'][property.name=/^(binding|dlopen)$/]",
+    message: DYNAMIC_LOAD_MESSAGE,
+  },
+];
 const PROCESS_DYNAMIC_LOADS = [
   {
     selector: `CallExpression[callee.name='require'][arguments.0.value=/${EXEC_PATTERN_CHILD}/]`,
@@ -160,6 +182,7 @@ const FS_WRITE_PATHS = FS_MODULE_NAMES.map((name) => ({
 
 /** `require` i `import()` omijaja `no-restricted-imports`, wiec maja osobne selektory. */
 const FS_DYNAMIC_LOADS = [
+  ...NONLITERAL_LOADS,
   {
     selector: `CallExpression[callee.name='require'][arguments.0.value=/^(node:)?fs(\\/promises)?$/]`,
     message: FS_WRITE_MESSAGE,
@@ -178,6 +201,31 @@ const EXEC_DYNAMIC_LOADS = [
     message: EXEC_MESSAGE,
   },
   { selector: `ImportExpression[source.value=/${EXEC_PATTERN}/]`, message: EXEC_MESSAGE },
+];
+
+/** Kierunki zaleznosci miedzy warstwami (`import-x/no-restricted-paths`). */
+const LAYER_ZONES = [
+  { target: './src/core', from: './src/main' },
+  { target: './src/core', from: './src/infra' },
+  { target: './src/core', from: './src/adapters' },
+  { target: './src/core', from: './src/renderer' },
+  { target: './src/core', from: './src/preload' },
+  { target: './src/adapters', from: './src/main' },
+  { target: './src/adapters', from: './src/infra' },
+  { target: './src/adapters', from: './src/renderer' },
+  { target: './src/renderer', from: './src/main' },
+  { target: './src/renderer', from: './src/infra' },
+  { target: './src/renderer', from: './src/adapters' },
+  { target: './src/renderer', from: './src/preload' },
+  // CLI jest drugim composition rootem: widzi core i infra, nie widzi procesow Electrona.
+  { target: './src/cli', from: './src/main' },
+  { target: './src/cli', from: './src/renderer' },
+  { target: './src/cli', from: './src/preload' },
+  { target: './src/core', from: './src/cli' },
+  { target: './src/adapters', from: './src/cli' },
+  { target: './src/infra', from: './src/cli' },
+  { target: './src/main', from: './src/cli' },
+  { target: './src/renderer', from: './src/cli' },
 ];
 
 export default tseslint.config(
@@ -221,31 +269,28 @@ export default tseslint.config(
       eqeqeq: ['error', 'always'],
       'no-eval': 'error',
       'no-implied-eval': 'error',
+      'import-x/no-restricted-paths': ['error', { zones: LAYER_ZONES }],
+    },
+  },
+
+  // Siec i `git` tylko w `cwm plugin add git|fetch|update` (ADR 0048): `git-fetch.ts` importuje wylacznie
+  // polecenie `plugin` (i on sam). `cwm start`, `cwm diff`, `cwm sync` i reszta `src/` nie maja do
+  // niego drogi. Blok powtarza strefy warstw, bo regula z pozniejszego bloku zastepuje wczesniejsza.
+  {
+    files: ['src/**/*.ts'],
+    ignores: ['src/cli/commands/plugin.ts', 'src/infra/cwm/git-fetch.ts'],
+    rules: {
       'import-x/no-restricted-paths': [
         'error',
         {
           zones: [
-            { target: './src/core', from: './src/main' },
-            { target: './src/core', from: './src/infra' },
-            { target: './src/core', from: './src/adapters' },
-            { target: './src/core', from: './src/renderer' },
-            { target: './src/core', from: './src/preload' },
-            { target: './src/adapters', from: './src/main' },
-            { target: './src/adapters', from: './src/infra' },
-            { target: './src/adapters', from: './src/renderer' },
-            { target: './src/renderer', from: './src/main' },
-            { target: './src/renderer', from: './src/infra' },
-            { target: './src/renderer', from: './src/adapters' },
-            { target: './src/renderer', from: './src/preload' },
-            // CLI jest drugim composition rootem: widzi core i infra, nie widzi procesow Electrona.
-            { target: './src/cli', from: './src/main' },
-            { target: './src/cli', from: './src/renderer' },
-            { target: './src/cli', from: './src/preload' },
-            { target: './src/core', from: './src/cli' },
-            { target: './src/adapters', from: './src/cli' },
-            { target: './src/infra', from: './src/cli' },
-            { target: './src/main', from: './src/cli' },
-            { target: './src/renderer', from: './src/cli' },
+            ...LAYER_ZONES,
+            {
+              target: './src',
+              from: './src/infra/cwm/git-fetch.ts',
+              message:
+                'git-fetch.ts (siec i git) tylko z cwm plugin add|fetch|update (ADR 0048): start, diff i sync go nie importuja.',
+            },
           ],
         },
       ],
@@ -278,7 +323,7 @@ export default tseslint.config(
     ignores: EXEC_ALLOWED,
     rules: {
       'no-restricted-imports': ['error', { paths: EXEC_PATHS }],
-      'no-restricted-syntax': ['error', ...PROCESS_DYNAMIC_LOADS],
+      'no-restricted-syntax': ['error', ...NONLITERAL_LOADS, ...PROCESS_DYNAMIC_LOADS],
     },
   },
 

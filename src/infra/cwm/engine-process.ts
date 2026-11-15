@@ -31,8 +31,12 @@ export async function parentRejection(real: string, uid: number): Promise<string
   return null;
 }
 
-/** Powod odrzucenia pliku albo null, gdy plik jest akceptowalny (SPN-01 pkt 1). */
-async function rejection(
+/**
+ * Powod odrzucenia pliku wykonywalnego albo null, gdy plik jest akceptowalny (SPN-01 pkt 1). Wspolne
+ * dla silnika i dla `git` (ADR 0048): zwykly plik z prawem wykonania poza katalogiem `projectDir`,
+ * wlasciciel root albo biezacy uzytkownik, bez zapisu dla grupy i innych, bezpieczny katalog nadrzedny.
+ */
+export async function executableRejection(
   real: string,
   projectDir: string,
   uid: number | null,
@@ -76,7 +80,7 @@ export async function resolveEngineBinary(input: {
       if (input.configuredPath !== null) reasons.push('runtime.claude.path nie istnieje');
       continue;
     }
-    const reason = await rejection(real, input.projectDir, uid);
+    const reason = await executableRejection(real, input.projectDir, uid);
     if (reason === null) return { ok: true, path: real };
     reasons.push(`${candidate}: ${reason}`);
   }

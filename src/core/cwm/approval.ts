@@ -114,6 +114,16 @@ export interface MarketplaceFacts {
   readonly resolvedPath: string;
 }
 
+/**
+ * Zrodlo pluginu z git (ADR 0048), rozwiazane przy `cwm start` z lokalnej kopii. Adres jest bez
+ * danych logowania, a `commit` to przypiety SHA: zmiana adresu, refu albo commita pyta ponownie.
+ */
+export interface GitFacts {
+  readonly url: string;
+  readonly ref: string | null;
+  readonly commit: string;
+}
+
 /** Fakty o tresci zasobu liczone z plikow zrodlowych, nie z flag w manifescie (APR-01). */
 export interface ResourceFacts {
   readonly pins?: readonly PinInfo[];
@@ -128,6 +138,8 @@ export interface ResourceFacts {
   readonly pluginExec?: PluginExecutables;
   /** Tylko plugin `source.type: marketplace`; brak dla `local`, wiec skroty pluginow `local` sie nie zmieniaja. */
   readonly marketplace?: MarketplaceFacts;
+  /** Tylko plugin `source.type: git`; brak dla `local` i `marketplace`, wiec ich skroty sie nie zmieniaja. */
+  readonly git?: GitFacts;
   /** Skrot tresci zrodla skilla, agenta lub komendy. */
   readonly sourceSha256?: string;
   readonly content?: {
@@ -208,6 +220,7 @@ export function executionFields(
         pins: (facts.pins ?? []).map((pin) => ({ path: pin.raw, sha256: pin.sha256 })),
         // Dodawane tylko dla marketplace'u, zeby skroty zatwierdzonych pluginow `local` sie nie zmienily.
         ...(facts.marketplace === undefined ? {} : { marketplace: { ...facts.marketplace } }),
+        ...(facts.git === undefined ? {} : { git: { ...facts.git } }),
       };
     case 'settings':
       return {

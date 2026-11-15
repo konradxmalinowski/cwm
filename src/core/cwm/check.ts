@@ -41,7 +41,7 @@ function isUnsafeSegment(segment: string): boolean {
   );
 }
 
-function isLoopback(hostname: string): boolean {
+export function isLoopback(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(hostname);
 }
 
