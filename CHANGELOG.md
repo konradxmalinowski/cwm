@@ -12,6 +12,14 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- `cwm plugin add|enable|disable|list|remove` (ADR 0046, `docs/CLI.md`): plugin z lokalnego
+  marketplace'u trafia do rejestru jednym poleceniem (`cwm plugin add <marketplace>/<plugin>`, wersja
+  z `plugin.json`, kolizja id z podpowiedzią `--id`, idempotentnie), a `--enable <firma>` albo
+  `cwm plugin enable|disable` zmienia `plugins.enable` w `company.yaml` z zachowaniem komentarzy,
+  walidacją wyniku i blokadą `runtime/global`. Firma z id w `plugins.forbid` odrzuca włączenie, a
+  `cwm plugin remove` odmawia dla pluginu włączonego przez firmę i sprząta rejestr, `exports`, pakiety i
+  zatwierdzenia. Zatwierdzenie pluginu zostaje przy `cwm start`.
+
 - `cwm sync` (ADR 0045, `docs/CLI.md`): odświeża rejestr z natywnych katalogów zapisanych w
   `spec.nativeDir` zasobów, tym samym skanem, planem i pakietami co `cwm import claude`. Zmienione i
   nowe zasoby, oznaczone pliki wracają tylko gdy są już w rejestrze z tym samym skrótem, a zasoby,
