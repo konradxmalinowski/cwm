@@ -24,13 +24,13 @@ z sieci (git, http, npm) jest poza zakresem: ten etap niczego nie ściąga.
    jest wyłącznie klucz `marketplaces` (reszta pliku i komentarze zostają), a wynik przechodzi ten
    sam walidator co odczyt. `remove` odmawia, gdy zasób `Plugin` wskazuje na marketplace.
    `show <nazwa> <plugin>` wypisuje gotowy manifest zasobu.
-3. **Bez `cwm plugin add`.** Zasób `Plugin` leży w rejestrze globalnym (`registry/plugins/<przestrzeń>/<nazwa>/`),
+3. **Bez `cwm plugin add` (uzupełnione przez ADR 0046).** Zasób `Plugin` leży w rejestrze globalnym (`registry/plugins/<przestrzeń>/<nazwa>/`),
    nie w katalogu firmy (skan firmy nie obejmuje pluginów), a jego id musi mieć przestrzeń
    `marketplace` (obcej przestrzeni nie da się użyć bez importu), więc dwa marketplace'y z pluginami
    o tej samej nazwie kolidują w id. Włączenie wymaga edycji `company.yaml`, a żadne polecenie CWM
    nie edytuje manifestu firmy. Polecenie zapisujące rejestr globalny i `company.yaml` nie pasuje
    do istniejących wzorców zapisu, więc manifest pozostaje ręczny (`docs/CLI.md`), a `show` daje
-   gotowy tekst. Do osobnej decyzji właściciela.
+   gotowy tekst. Do osobnej decyzji właściciela. Polecenie dodał ADR 0046 (`cwm plugin add|enable|disable|list|remove`).
 4. **Rozwiązanie przy `cwm start` i `--dry-run`.** `buildRuntimePlan`, `case 'plugin'`:
    - marketplace musi być zarejestrowany; katalog po `realpath` należy do bieżącego użytkownika, nie
      jest zapisywalny dla grupy i innych, a jego katalog nadrzędny ma właściciela root albo

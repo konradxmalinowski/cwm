@@ -11,6 +11,7 @@ export * from './marketplace';
 export * from './pack-derive';
 export * from './pack-import';
 export * from './packs';
+export * from './plugin-registry';
 export * from './paths';
 export * from './project-dir';
 export * from './read';

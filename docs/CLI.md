@@ -300,10 +300,9 @@ marketplaces:
 
 Nazwa to małe litery ASCII (jak przestrzeń nazw id) i musi być równa polu `name` w
 `<katalog>/.claude-plugin/marketplace.json`. Typ inny niż `local` jest błędem walidacji. Zasób
-`Plugin` nie ma polecenia `cwm plugin add`: manifest zapisuje się ręcznie w
-`registry/plugins/marketplace/<plugin>/plugin.yaml` (gotowy tekst wypisuje `cwm marketplace show
-<nazwa> <plugin>`), a jego id dopisuje do `plugins.enable` w `company.yaml` (albo `spec.plugins.enable`
-projektu). Dwa marketplace'y z pluginami o tej samej nazwie wymagają różnych id zasobów, np.
+`Plugin` zapisuje `cwm plugin add` (ADR 0046), a id dopisuje do `plugins.enable` w `company.yaml` `--enable`
+albo `cwm plugin enable`. Ręczny zapis nadal działa (`cwm marketplace show <nazwa> <plugin>` wypisuje gotowy
+tekst). Dwa marketplace'y z pluginami o tej samej nazwie wymagają różnych id zasobów, np.
 `marketplace/acme-lint` i `marketplace/other-acme-lint`; wskazuje je `spec.source.plugin`, nie id.
 
 `registry/mcp/global/acme-docs/mcp.yaml`. Sekretów nie wpisuje się wprost: zmienna środowiskowa
@@ -644,6 +643,42 @@ Kto potrzebuje takiego pluginu, klonuje go sam do katalogu marketplace'u i wpisu
 
 Kody: `0`; `1` przy odmowie (marketplace nie przechodzi kontroli, nazwa zajęta, nieznany, w użyciu);
 `2` przy niepoprawnej nazwie. Z `--json` każde polecenie zwraca `{ ok, ... }`.
+
+### `cwm plugin`
+
+```text
+cwm plugin add <marketplace>/<plugin> [--id <id>] [--plugin-version <wersja>] [--enable <firma>...]
+cwm plugin enable <id> --company <firma>
+cwm plugin disable <id> --company <firma>
+cwm plugin list
+cwm plugin remove <id>
+```
+
+Zasoby `Plugin` z lokalnych marketplace'ów (ADR 0046). Zapis idzie przez writer `~/.cwm` (atomowo, tryb
+0600) pod mutexem `runtime/global`, jak `cwm sync`; edycje `company.yaml` zachowują komentarze i resztę
+pliku, a wynik przechodzi ten sam walidator co odczyt. Żadne z poleceń nie zatwierdza pluginu:
+zatwierdzenie jest przy `cwm start` (treść pluginu i blok `marketplace`), a `cwm start --dry-run`
+pokazuje plugin jako `NOWE`.
+
+- `add` rozwiązuje wpis jak `cwm start` (marketplace zarejestrowany, wpis używalny, katalog zaufany;
+  zob. `cwm marketplace`) i zapisuje `registry/plugins/marketplace/<plugin>/plugin.yaml` z
+  `activation.default: disabled`. Id to `marketplace/<plugin>`; `--id` musi mieć przestrzeń `marketplace`.
+  Wersja: `--plugin-version`, inaczej `version` z `.claude-plugin/plugin.json`, inaczej `0.0.0`.
+  Opcja nie nazywa się `--version`, bo tę flagę przechwytuje program (`-V, --version`).
+  - Id zajęte przez inny marketplace albo plugin: błąd z podpowiedzią `--id marketplace/<marketplace>-<plugin>`.
+  - Id zajęte przez ten sam wpis: `bez zmian` (kod `0`).
+  - `--enable <firma>...` dopisuje id do `plugins.enable` wskazanych firm (także gdy zasób już istniał).
+    Nieistniejąca firma albo id w jej `plugins.forbid` przerywa polecenie przed jakimkolwiek zapisem.
+- `enable` i `disable` dopisują i usuwają id w `plugins.enable` firmy; `enable` wymaga zasobu w rejestrze i
+  odmawia przy `plugins.forbid`. Powtórzenie to `bez zmian`.
+- `list` wypisuje pluginy z rejestru: id, wersja, źródło i firmy, które je włączają.
+- `remove` odmawia, gdy firma włącza plugin (w komunikacie jej nazwa); inaczej usuwa zasób z rejestru,
+  z `exports.plugins` firm, z pakietów (razem z zaufanymi skrótami) i z zatwierdzeń oraz kopie `.old-*`.
+  Projekt z `~/.cwm`, który nadal wymienia plugin, daje ostrzeżenie.
+
+Kody: `0`; `1` przy odmowie (marketplace albo wpis nieużywalny, kolizja id, nieznana firma albo plugin,
+`plugins.forbid`, plugin włączony); `2` przy niepoprawnym argumencie. Z `--json` każde polecenie zwraca
+`{ ok, ... }`.
 
 ### `cwm resolve`
 
