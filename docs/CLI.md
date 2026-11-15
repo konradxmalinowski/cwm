@@ -104,11 +104,13 @@ resources:
   mandatory:
     skills: []
     agents: []
+    workflows: []             # rozszerzenie spoza specyfikacji (ADR 0049)
     commands: []
     settings: []
   optional:
     skills: []
     agents: []
+    workflows: []
     commands: []
     settings: []
 runtime:
@@ -143,6 +145,8 @@ plugins:
   forbid: []
 mcp:
   enable: [global/acme-docs]
+workflows:                        # opcjonalne, rozszerzenie spoza specyfikacji (ADR 0049)
+  default: acme-a/bugfix          # dla cwm run, gdy opis nic wyraźnie nie wskazuje
 instructions:
   file: CLAUDE.md
 exports:
@@ -192,6 +196,7 @@ spec:
     disable: []
   workflows:
     selection: automatic
+    default: acme-a/bugfix        # opcjonalne (ADR 0049): przesłania workflow domyślny firmy
   native:
     preserve: true
 ```
@@ -269,6 +274,25 @@ spec:
   steps:
     - id: review
       agent: global/reviewer
+```
+
+Workflow `instructional` (dodawany przez `cwm workflow add`, ADR 0049) ma `routing`, który czyta
+`cwm run`; `mode: manual` wyłącza go z wyboru automatycznego:
+
+```yaml
+apiVersion: cwm.dev/v1
+kind: Workflow
+metadata:
+  id: acme-a/bugfix
+  version: 1.0.0
+spec:
+  type: instructional
+  source: workflow.md
+  routing:
+    mode: automatic
+    priority: 20
+    keywords: [bug, regression]
+    examples: [fix a failing unit test in the parser]
 ```
 
 `registry/plugins/marketplace/acme-lint/plugin.yaml`:
@@ -1123,8 +1147,8 @@ skróty zatwierdzeń liczone z tych samych bajtów, zatwierdzenie, zapis dokład
 odczyt kontrolny, `spawn`. Katalogiem silnika jest katalog projektu z manifestem (też przy
 wywołaniu z podkatalogu), nie `cwd`.
 
-**Zatwierdzenia.** Wymagają ich: każdy serwer MCP, plugin `local`, `marketplace` i `git`, `Settings`, skill, agent i
-komenda z `allowed-tools`, `tools` albo wstawkami `!` (liczone z plików, nie z flag w manifeście)
+**Zatwierdzenia.** Wymagają ich: każdy serwer MCP, plugin `local`, `marketplace` i `git`, `Settings`, skill, agent,
+komenda i workflow `instructional` z `allowed-tools`, `tools` albo wstawkami `!` (liczone z plików, nie z flag w manifeście)
 para (katalog projektu po `realpath`, firma, z listą zasobów włączonych przez projekt) oraz opcje
 uruchamiania firmy (`company:<id>`: `runtime.claude.path`, `env.passthrough`, `isolation`). Skrót
 obejmuje wszystkie pola wykonawcze (zob. ADR 0040): uprawnienia, `env`, hooki wraz z `sha256`
@@ -1374,9 +1398,64 @@ usuwa zaufane skróty pakietu i unieważnia profile wszystkich firm (z `--compan
 Uszkodzony plik zatwierdzeń oznacza „nic nie jest zatwierdzone”
 (kod `1`).
 
+### `cwm run`
+
+```text
+cwm run <zadanie...> [--workflow <id>] [--project <katalog>] [--strict-mcp] [--dry-run] [--explain] [--json]
+```
+
+Dobiera workflow do opisu zadania i uruchamia `cwm start` z poleceniem tego workflow jako
+pierwszym poleceniem sesji (ADR 0049). Po `prepareRun` wspólnym ze startem liczy wynik każdego aktywnego
+workflow projektu, pokazuje wybór (workflow, wynik, powód: które słowa kluczowe i jaki przykład
+trafiły, dwaj kolejni kandydaci), a potem wykonuje resztę `cwm start` tym samym kodem: zatwierdzenia,
+izolacja, blokady sesji, zapis profilu, argumenty silnika. Silnik dostaje `-- /<polecenie> <zadanie>`
+jako jeden argument (bez powłoki); zadanie zaczynające się od `-` podaj po `--`:
+`cwm run -- "-x popraw test"`.
+
+**Wynik.** Słowo kluczowe (po `foldName`, na granicach słów, także fraza wielowyrazowa): 4 pkt i
+2 pkt za każde kolejne słowo frazy. Przykład: do 6 pkt za pokrycie jego znaczących słów (krótkie i
+pospolite odpadają; jedno wspólne słowo liczy się za pół). `priority`: do +2 pkt, tylko przy
+istniejącym trafieniu. Wybierany jest lider z wynikiem co najmniej 4 i przewagą co najmniej 1 pkt.
+Remis albo brak trafienia: na terminalu lista do wyboru, bez terminala (i przy `--dry-run`) błąd z
+listą i podpowiedzią `--workflow`. Workflow domyślny (`spec.workflows.default` projektu, potem
+`workflows.default` firmy) wygrywa tylko bez wyraźnego trafienia albo rozstrzyga remis, w którym
+uczestniczy. `routing.mode: manual` i brak `routing` wyłączają workflow z automatu.
+
+`--workflow <id>` pomija routing (pełne id albo sama nazwa, gdy jest jednoznaczna). `--dry-run` pokazuje
+wybór i plan startu jak `cwm start --dry-run`, niczego nie zapisuje i nie pyta. `--explain` dodaje
+tabelę wyników wszystkich workflow. `--json` wymaga `--dry-run` i dokłada do dokumentu startu pole
+`workflow { id, basis, default, command, minScore, scores[], warnings[] }`. Zadanie: niepuste, do 4000
+znaków, bez znaków sterujących i formatujących (poza nową linią i tabulatorem); nie jest zapisywane w
+profilu ani w logu. Argumenty silnika (`--model` itp.) nie są w tym etapie przyjmowane. Workflow
+`orchestrated` kończy się odmową „nieobsługiwany”. Kody wyjścia jak w `cwm start`; `2` także dla złego
+zadania.
+
+Workflow `instructional` jest w profilu komendą `cwm-<nazwa>` (zasób obowiązkowy: `/cwm-<firma>:cwm-<nazwa>`
+w pluginie CWM) i podlega zatwierdzeniu jak komenda (`allowed-tools`, wstawki `!`); tekst z
+`$ARGUMENTS` albo `$<cyfra>` razem ze znacznikiem wstawki `!` jest odrzucany. Natywny `.claude/commands/cwm-<nazwa>.md` projektu zasłaniający wybrane polecenie to odmowa. Zatwierdzenia obejmują wszystkie aktywne workflow, nie tylko wybrany.
+
+### `cwm workflow`
+
+```text
+cwm workflow add <id> (--from <plik.md> | --from-command <id komendy>) [--keywords a,b]
+                 [--example "..."]... [--priority 0-1000] [--manual]
+                 [--enable <firma>...] [--global optional|mandatory]
+cwm workflow list
+cwm workflow show <id>
+```
+
+`add` tworzy workflow `instructional` (wersja `1.0.0`): `global/<nazwa>` w rejestrze, `<firma>/<nazwa>`
+w `companies/<firma>/workflows/`. `--from-command` kopiuje treść komendy z rejestru. `--enable` dopisuje id
+do `resources.enable.workflows` (firma-właściciel tylko u siebie; odmowa przy `disableOptional`),
+`--global` do `config.yaml`. Zapis przez writer `~/.cwm`, z zachowaniem komentarzy, walidacją i blokadą
+`runtime/global` (jak `cwm plugin`). Treść przechodzi te same kontrole co plan startu; `add` podaje, czy będzie wymagała
+zatwierdzenia. Powtórzenie z tą samą treścią to brak zmian, z inną to odmowa. Zatwierdzenie nastąpi przy
+`cwm start`. `list` wypisuje workflow, ich routing i gdzie są włączone; `show` pokazuje routing,
+polecenie, w które workflow się zamienia, i cechy do zatwierdzenia. `--json` działa dla wszystkich.
+
 ## Czego jeszcze nie ma
 
-Polecenie `run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), lockfile, `--follow-links` w imporcie, kopiowanie skryptów
+Wykonanie workflow `orchestrated` i argumenty silnika w `cwm run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), lockfile, `--follow-links` w imporcie, kopiowanie skryptów
 hooków do rejestru (skrypt poza rejestrem jest przypięty skrótem, ale nie skopiowany), pluginy
 marketplace'y zdalne (git, http) i źródła obiektowe wpisów, pobieranie z uwierzytelnieniem (SSH, tokeny) dla pluginów `git`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
 zatwierdzeń, Windows w `cwm start` oraz import biblioteki aplikacji i pluginów. Zapis do

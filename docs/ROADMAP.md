@@ -660,7 +660,7 @@ i dwuklik na trzech systemach sprawdził ręcznie właściciel (niżej).
 - Wyniki lint, typecheck, `npm test` (1197 testów), `test:boundaries` (32 próby) i build zielone.
 
 **Checklista ręczna przed publikacją wydania (wykonana, wynik niżej):**
-1. Upewnić się, że kryteria 1–3 są na `main`, a `package.json` ma wersję równą tagowi.
+1. Upewnić się, że kryteria 1-3 są na `main`, a `package.json` ma wersję równą tagowi.
 2. Utworzyć tag `vX.Y.Z`; workflow zostawia **szkic**. Sprawdzić w nim osiem plików i `SHA256SUMS`.
 3. macOS (osobno arm64 i x64, najlepiej czysty użytkownik): pobrać DMG przeglądarką (ustawia
    kwarantannę), przeciągnąć aplikację do Programów, uruchomić dwuklikiem, zobaczyć ostrzeżenie
@@ -722,10 +722,11 @@ jeszcze kryteriów akceptacji w stylu Etapów 1 do 10; powstaną przy planowaniu
 | Etap G: `cwm plugin` | `cwm plugin add\|enable\|disable\|list\|remove`: zasób `Plugin` z marketplace'u do rejestru i `plugins.enable` firmy z zachowaniem komentarzy, walidacją i blokadą `runtime/global`; odmowa przy `plugins.forbid` i przy usuwaniu włączonego pluginu (ADR 0046, `docs/CLI.md`) | Zrobione na gałęzi `feat/cwm-plugin-add`, niescalone do `main`; bez nowych plików testów |
 | Etap H: `cwm diff` | Różnica między planem `cwm start` a profilem w `~/.cwm/runtime/<firma>/`: pliki dodane, zmienione (ujednolicony diff), zmienione poza CWM (dryf), usunięte, jeden wpis na plugin, zatwierdzenia i pakiety do ponownej zgody; tylko odczyt, bez blokady; ukryte pliki z możliwym sekretem i `env` (ADR 0047, `docs/CLI.md`) | Zrobione na gałęzi `feat/cwm-diff`, niescalone do `main`; bez nowych plików testów |
 | Etap I: pluginy z git | `cwm plugin add git\|fetch\|update`: plugin `source.type: git` z przypiętym `source.commit`, lokalna kopia w `~/.cwm/sources/git/`, `cwm start` bez sieci i bez `git`; `git` po ścieżce bezwzględnej ze środowiskiem od zera i opcjami bez hooków, protokołów `file` i `ext`, submodułów i LFS; zatwierdzenie z adresem, refem i commitem; reguła lintu i sonda granic (ADR 0048, `docs/CLI.md`) | Zrobione na gałęzi `feat/cwm-git-plugins`, niescalone do `main`; bez nowych plików testów; SSH i prywatne repozytoria poza zakresem |
+| Etap J: `cwm run` | `cwm run "<zadanie>"`: deterministyczny routing workflow (`src/core/cwm/routing.ts`), uruchomienie przez wspólne `prepareRun` i `launchPrepared` z `cwm start`; workflow `instructional` jako komenda `cwm-<nazwa>` (zasób obowiązkowy w pluginie) z zatwierdzeniem jak komenda; `cwm workflow add\|list\|show`; `workflows.default` projektu i firmy (ADR 0049, `docs/CLI.md`) | Zrobione na gałęzi `feat/cwm-run-dispatch`, niescalone do `main`; bez nowych plików testów; `orchestrated` i argumenty silnika w `cwm run` poza zakresem |
 | CLI `cwm`, dalsze polecenia | Lockfile i polecenia, które zmieniają stan silnika | Planowane |
 | Adapter runtime | Profil Claude Code z `CLAUDE_CONFIG_DIR` na podstawie ADR 0036 | Zrobione w Etapie B (`cwm start`) |
 | Pluginy i MCP | Zatwierdzanie pól wykonawczych (`EXECUTION_RELEVANT_FIELDS`) działa w `cwm start` dla `local`, `marketplace` i `git`; zostaje zapis do natywnej konfiguracji silnika z przeglądem bezpieczeństwa (ADR 0037, ADR 0020) | Częściowo (Etapy B i D); reszta planowana |
-| Dyspozytor workflow | Wybór workflow na podstawie `routing` | Planowane |
+| Dyspozytor workflow | Wybór workflow na podstawie `routing` | Zrobione dla `instructional` w Etapie J (`cwm run`); `orchestrated` planowane |
 
 ---
 
