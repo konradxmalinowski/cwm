@@ -4,7 +4,6 @@ import { resolve } from 'node:path';
 import type { Command } from 'commander';
 
 import {
-  API_VERSION,
   escapeControlChars,
   validateResource,
   type MarketplaceSource,
@@ -17,7 +16,10 @@ import {
   listCompanyIds,
   loadGlobalConfig,
   loadMarketplace,
+  PLUGIN_NAMESPACE,
+  pluginManifestDocument,
   resolveMarketplacePlugin,
+  SEMVER_PATTERN,
   toYaml,
 } from '../../infra/cwm';
 import {
@@ -168,23 +170,16 @@ async function removeMarketplace(ctx: Context, name: string): Promise<void> {
   print(`Usunieto marketplace "${name}" z konfiguracji (katalog marketplace'u nietkniety).`);
 }
 
-const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
-
-/** Gotowy manifest zasobu `Plugin` do wklejenia w `registry/plugins/marketplace/<plugin>/plugin.yaml`. */
+/** Gotowy manifest zasobu `Plugin` (to samo, co zapisuje `cwm plugin add`). */
 function manifestFor(marketplace: string, plugin: MarketplacePlugin): string | null {
   const name = plugin.name.toLowerCase();
-  const document = {
-    apiVersion: API_VERSION,
-    kind: 'Plugin',
-    metadata: {
-      id: `marketplace/${name}`,
-      version: plugin.version !== null && SEMVER.test(plugin.version) ? plugin.version : '0.0.0',
-    },
-    spec: {
-      source: { type: 'marketplace', marketplace, plugin: name },
-      activation: { default: 'disabled' },
-    },
-  };
+  const document = pluginManifestDocument({
+    id: `${PLUGIN_NAMESPACE}/${name}`,
+    version:
+      plugin.version !== null && SEMVER_PATTERN.test(plugin.version) ? plugin.version : '0.0.0',
+    marketplace,
+    plugin: name,
+  });
   return validateResource(document).ok ? toYaml(document) : null;
 }
 
@@ -216,7 +211,7 @@ async function showMarketplace(
     if (manifest === null) return;
     print('');
     print(
-      `Manifest zasobu (zapisz jako registry/plugins/marketplace/${esc(plugin.name.toLowerCase())}/plugin.yaml, potem dodaj id do plugins.enable w company.yaml):`,
+      `Manifest zasobu (zapisze go cwm plugin add ${name}/${esc(plugin.name.toLowerCase())}; reczny zapis: registry/plugins/marketplace/${esc(plugin.name.toLowerCase())}/plugin.yaml):`,
     );
     print(manifest);
     return;
