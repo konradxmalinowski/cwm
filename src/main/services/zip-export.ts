@@ -58,12 +58,13 @@ export class ZipSaveService implements ZipPort {
     return service;
   }
 
-  plan(
+  /** Asynchroniczne, zeby brak serwisu byl odrzuconym wynikiem, a nie wyjatkiem w miejscu wywolania. */
+  async plan(
     tool: ToolId,
     itemIds: readonly string[],
     confirmedItemIds: readonly string[],
   ): Promise<ZipPlanReport> {
-    return this.zip().plan(tool, itemIds, confirmedItemIds);
+    return await this.zip().plan(tool, itemIds, confirmedItemIds);
   }
 
   async save(planId: string): Promise<Result<ExportZipSaveDto>> {
