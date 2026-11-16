@@ -12,6 +12,7 @@ export * from './git-source';
 export * from './hook-paths';
 export * from './kinds';
 export * from './line-diff';
+export * from './lockfile';
 export * from './manifest';
 export * from './marketplace';
 export * from './merge-settings';

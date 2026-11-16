@@ -14,6 +14,7 @@ import {
   foldName,
   extractPluginExecutables,
   isInsidePluginRoot,
+  lockPinsHash,
   serverCommandStrings,
   foreignEnvRefs,
   formatJson,
@@ -33,6 +34,7 @@ import {
   type EffectiveConfiguration,
   type EffectiveResource,
   type GitFacts,
+  type LockFact,
   type MarketplaceFacts,
   type McpServer,
   type PackMemberFacts,
@@ -160,6 +162,8 @@ export interface RuntimePlan {
   /** Pola czlonkow pakietow wyprowadzone z rejestru (niezalezne od firmy), do oceny zaufanych skrotow. */
   readonly packMembers: readonly PackMemberFacts[];
   readonly workflows: readonly PlannedWorkflow[];
+  /** Skroty tresci zasobow do lockfile (ADR 0051): z bajtow zrodlowych, wiec niezalezne od maszyny. */
+  readonly lockFacts: readonly LockFact[];
   /** Polecenia workflow zaslaniane przez natywny `.claude/commands/` projektu (cwm run odmawia, SEC-04). */
   readonly shadowedWorkflowCommands: readonly string[];
   readonly ownEnvRefs: readonly string[];
@@ -304,6 +308,11 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
   );
 
   const subjects: ApprovalSubject[] = [];
+  const lockFacts = new Map<string, LockFact>();
+  const setLockFact = (resource: Resource, fact: Partial<Omit<LockFact, 'key'>>): void => {
+    const key = refKey(resource);
+    lockFacts.set(key, { content: null, ...lockFacts.get(key), ...fact, key });
+  };
   const subject = (resource: Resource, facts: ResourceFacts, key?: string): void => {
     const fields = executionFields(resource, facts);
     if (fields === null || !needsApproval(resource, facts)) return;
@@ -517,6 +526,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     taken.add(`${base}/commands/${name}`);
     workflowCommandNames.add(name);
     out.add(`${base}/commands/${name}.md`, parsed.content, false, refKey(resource));
+    setLockFact(resource, { content: sha256Hex(parsed.content) });
     counters.commands += 1;
     if (!inPlugin) profileNames.commands.push(name);
     plannedWorkflows.push({
@@ -588,6 +598,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           );
         }
         counters.skills += 1;
+        setLockFact(resource, { content: treeSha256(tree.files) });
         if (!inPlugin) profileNames.skills.push(name);
         const skillFacts = contentFacts(parsed, treeSha256(finals));
         trackPack(resource, tree.files, skillFacts.content);
@@ -628,6 +639,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         }
         taken.add(`${base}/${folder}/${name}`);
         out.add(`${base}/${folder}/${name}.md`, parsed.content, false, refKey(resource));
+        setLockFact(resource, { content: sha256Hex(bytes) });
         if (resource.kind === 'agent') counters.agents += 1;
         else counters.commands += 1;
         if (!inPlugin) {
@@ -720,6 +732,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           out.add(`claude/${resource.root}/${file.rel}`, file.bytes, false, refKey(resource));
         }
         summary.profile.files += 1;
+        setLockFact(resource, { content: treeSha256(tree.files) });
         trackPack(resource, tree.files, facts);
         subject(resource, { content: facts, sourceSha256: treeSha256(finals) });
         break;
@@ -743,6 +756,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
           break;
         }
         commandPaths[resource.id] = pin.path;
+        setLockFact(resource, { content: pin.sha256 });
         subject(
           resource,
           { projectDir, commandSha256: pin.sha256, commandPath: pin.path },
@@ -836,6 +850,13 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
             break;
           }
         }
+        setLockFact(resource, {
+          content: treeHash,
+          ...(gitFacts === undefined ? {} : { git: { commit: gitFacts.commit, tree: treeHash } }),
+          ...(marketplaceFacts === undefined
+            ? {}
+            : { marketplace: { name: marketplaceFacts.marketplace, version: entryVersion } }),
+        });
         const slug = `${slugOf(resource.id)}@${treeHash.slice(0, 16)}`;
         for (const file of tree.files) {
           out.add(`plugins/${slug}/${file.rel}`, file.bytes, file.executable, refKey(resource));
@@ -1029,6 +1050,8 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         : { raw: info.raw, sha256: planned.sha256, unpinnedReason: null };
     });
     subject(pending.resource, { ...pending.facts, pins: infos });
+    const pinsHash = lockPinsHash(infos.map((info) => info.sha256));
+    if (pinsHash !== null) setLockFact(pending.resource, { pins: pinsHash });
   }
 
   // Pola czlonkow pakietow z tych samych bajtow rejestru, ktore przeczytal plan (ADR 0044).
@@ -1105,6 +1128,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     packMembers,
     shadowedWorkflowCommands: [...new Set(shadowedWorkflowCommands)].sort(),
     workflows: plannedWorkflows.sort((a, b) => (a.id < b.id ? -1 : 1)),
+    lockFacts: [...lockFacts.values()].sort((a, b) => (a.key < b.key ? -1 : 1)),
     ownEnvRefs: ownRefs,
     settingsEnvRefs: envRefs,
     otherCompanyRefs: foreignEnvRefs(registryRefs, ownRefs),

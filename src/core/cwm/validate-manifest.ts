@@ -300,7 +300,7 @@ export function validateProjectManifest(input: unknown): Result<ProjectManifest>
   const spec = c.object(
     field(root, 'spec'),
     'spec',
-    ['engine', 'resources', 'plugins', 'mcp', 'workflows', 'native', 'imports'],
+    ['engine', 'resources', 'plugins', 'mcp', 'workflows', 'native', 'lock', 'imports'],
     ['engine'],
   );
   const s = spec ?? {};
@@ -313,6 +313,7 @@ export function validateProjectManifest(input: unknown): Result<ProjectManifest>
   const native = subObject(c, field(s, 'native'), 'spec.native', ['preserve']);
   const selection = field(workflows, 'selection');
   const preserve = field(native, 'preserve');
+  const lockMode = field(s, 'lock');
 
   const imports = c.list(
     field(s, 'imports'),
@@ -378,6 +379,9 @@ export function validateProjectManifest(input: unknown): Result<ProjectManifest>
             ? null
             : c.boolean(preserve, 'spec.native.preserve'),
       },
+      ...(lockMode === undefined
+        ? {}
+        : { lock: c.oneOf(lockMode, 'spec.lock', ['frozen', 'warn'] as const) ?? 'warn' }),
       imports,
     },
   };

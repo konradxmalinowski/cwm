@@ -11,7 +11,9 @@ import {
   denyNetwork,
 } from '../../infra/cwm';
 import { CliError, contextOf, print, printJson, type Context } from '../context';
+import { evaluateLock, lockJson, lockSummaryLines, type LockReport } from '../lock-flow';
 import {
+  detectEngineVersion,
   isPackPending,
   loadApprovalState,
   prepareRun,
@@ -22,6 +24,7 @@ import {
 interface DiffOptions {
   readonly project?: string;
   readonly stat?: boolean;
+  readonly frozen?: boolean;
 }
 
 interface ApprovalSummary {
@@ -101,6 +104,7 @@ function renderText(
   diff: RuntimeDiff,
   approvals: ApprovalSummary,
   conflicts: readonly string[],
+  lock: LockReport,
   stat: boolean,
   differs: boolean,
 ): void {
@@ -133,7 +137,9 @@ function renderText(
     print(`Zostaja na miejscu (${diff.kept.length}):`);
     for (const item of diff.kept) print(`  ${item.path}: ${item.reason}`);
   }
-  const problems = [...diff.blockers, ...conflicts];
+  print('');
+  for (const line of lockSummaryLines(lock)) print(line);
+  const problems = [...diff.blockers, ...conflicts, ...lock.blockers];
   if (problems.length > 0) {
     print('');
     print(`Start zostalby odrzucony (${problems.length}):`);
@@ -156,9 +162,23 @@ async function diffCommand(ctx: Context, options: DiffOptions): Promise<void> {
     diff: RuntimeDiff;
     approvals: ApprovalSummary;
     conflicts: string[];
+    lock: LockReport;
   };
   try {
-    const { plan } = await prepareRun(ctx, options.project, []);
+    const { plan, record, effective, company, projectDir } = await prepareRun(
+      ctx,
+      options.project,
+      [],
+    );
+    // Lockfile jest tylko czytany; wersja silnika to ta sama proba co w `cwm start` (null, gdy sie nie uda).
+    const lock = await evaluateLock({
+      layout: ctx.layout,
+      record,
+      effective,
+      facts: plan.lockFacts,
+      engineVersion: await detectEngineVersion(company, projectDir),
+      frozenFlag: options.frozen === true,
+    });
     const { items } = await loadApprovalState(ctx, plan);
     // Tylko odczyt: bez tworzenia katalogu firmy, bez zamka, bez usuwania znacznikow sesji.
     const root = await peekRuntimeRoot(ctx.layout, plan.company);
@@ -171,19 +191,21 @@ async function diffCommand(ctx: Context, options: DiffOptions): Promise<void> {
       diff,
       approvals: summarizeApprovals(items),
       conflicts: sessionConflicts(live, plan),
+      lock,
     };
   } catch (error: unknown) {
     // Kod 1 oznacza tu "start cos zmieni", wiec kazdy blad ustawienia to kod 2.
     if (error instanceof CliError && error.exitCode === 1) throw new CliError(error.message, 2);
     throw error;
   }
-  const { plan, diff, approvals, conflicts } = result;
+  const { plan, diff, approvals, conflicts, lock } = result;
   const stat = options.stat === true;
   const differs =
     diff.files.length > 0 ||
     diff.plugins.length > 0 ||
     diff.blockers.length > 0 ||
-    conflicts.length > 0;
+    conflicts.length > 0 ||
+    lock.blockers.length > 0;
   if (ctx.json) {
     printJson({
       ok: true,
@@ -196,11 +218,12 @@ async function diffCommand(ctx: Context, options: DiffOptions): Promise<void> {
       plugins: diff.plugins,
       kept: diff.kept,
       unchanged: diff.unchanged,
-      blockers: [...diff.blockers, ...conflicts],
-      warnings: diff.warnings,
+      lock: lockJson(lock),
+      blockers: [...diff.blockers, ...conflicts, ...lock.blockers],
+      warnings: [...diff.warnings, ...lock.warnings],
     });
   } else {
-    renderText(plan, diff, approvals, conflicts, stat, differs);
+    renderText(plan, diff, approvals, conflicts, lock, stat, differs);
   }
   if (differs) throw new CliError('', 1);
 }
@@ -213,6 +236,10 @@ export function registerDiff(program: Command): void {
     )
     .option('--project <katalog>', 'katalog projektu (domyslnie biezacy, z szukaniem w gore)')
     .option('--stat', 'tylko liczniki zmian, bez wierszy diffu')
+    .option(
+      '--frozen',
+      'traktuje dryf wzgledem lockfile jako odmowe startu (jak spec.lock: frozen)',
+    )
     .action(async (options: DiffOptions, command: Command) => {
       denyNetwork();
       return diffCommand(contextOf(command), options);

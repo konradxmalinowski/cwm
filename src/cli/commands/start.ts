@@ -66,6 +66,7 @@ import {
   warn,
   type Context,
 } from '../context';
+import { evaluateLock, lockJson, lockSummaryLines, type LockReport } from '../lock-flow';
 import { promptConfirm, promptSelect } from '../prompts';
 import { renderChanges, renderExec } from '../pack-render';
 import { resolveRecord } from '../resolve-flow';
@@ -75,6 +76,8 @@ export interface StartOptions {
   readonly project?: string;
   readonly strictMcp?: boolean;
   readonly dryRun?: boolean;
+  /** Dryf wzgledem lockfile to odmowa startu (ADR 0051), tak jak `spec.lock: frozen`. */
+  readonly frozen?: boolean;
 }
 
 type Status = 'approved' | 'new' | 'changed';
@@ -125,6 +128,28 @@ async function probeVersion(path: string, root: RuntimeRoot | null): Promise<str
     return await queryEngineVersion(path, scratch);
   } finally {
     await removeScratchDir(scratch);
+  }
+}
+
+/**
+ * Wersja silnika dla `cwm lock` i `cwm diff`: ta sama sciezka wyszukiwania i ta sama proba co w `cwm start`
+ * (`claude --version`, limit czasu, minimalne srodowisko, pusty katalog 0700), ale w katalogu tymczasowym
+ * systemu, jak w `--dry-run`, bo te polecenia nie tworza katalogu firmy. Brak bezpiecznego pliku silnika,
+ * nieudana proba i kazdy blad to null, nie wyjatek.
+ */
+export async function detectEngineVersion(
+  company: CompanyManifest,
+  projectDir: string,
+): Promise<string | null> {
+  try {
+    const lookup = await resolveEngineBinary({
+      configuredPath: company.runtime.claudePath,
+      pathEnv: process.env['PATH'],
+      projectDir,
+    });
+    return lookup.ok ? await probeVersion(lookup.path, null) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -423,6 +448,7 @@ function renderDryRun(
   conflicts: readonly string[],
   report: Report,
   store: string,
+  lock: LockReport,
   extra: Readonly<Record<string, unknown>>,
 ): void {
   const byArea = {
@@ -461,6 +487,7 @@ function renderDryRun(
       argv,
       env: { removed: env.removed, added: env.added, missing: env.missing, reserved: env.reserved },
       sessionConflicts: conflicts,
+      lock: lockJson(lock),
       warnings: report.warnings,
       notes: plan.notes,
       rewrittenReferences: plan.summary.rewrittenReferences,
@@ -508,6 +535,7 @@ function renderDryRun(
   if (env.added.length > 0) print(`  dodane (nazwy): ${env.added.join(', ')}`);
   if (env.missing.length > 0) print(`  BRAK wymaganych zmiennych: ${env.missing.join(', ')}`);
   for (const text of conflicts) print(`Blokada profilu: ${text}`);
+  for (const line of lockSummaryLines(lock)) print(line);
   for (const text of [...report.warnings, ...plan.notes]) print(`Ostrzezenie: ${text}`);
   print('');
   print(
@@ -665,13 +693,27 @@ export async function launchPrepared(
   });
   if (!argvResult.ok) throw usageError(argvResult.errors.join('\n'));
 
+  // Porownanie z lockfile po rozwiazaniu i przed zatwierdzeniami (ADR 0051).
+  const lock = await evaluateLock({
+    layout: ctx.layout,
+    record,
+    effective: prepared.effective,
+    facts: plan.lockFacts,
+    engineVersion: version,
+    frozenFlag: options.frozen === true,
+  });
+
   const { items, pending, packs } = await loadApprovalState(ctx, plan);
 
   const peek = await peekRuntimeRoot(ctx.layout, plan.company);
   const live = peek === null ? [] : await liveSessions(peek, false);
   const conflicts = sessionConflicts(live, plan);
 
-  const warnings = [...plan.warnings, ...packDefs.problems.map((text) => `Pakiety: ${text}`)];
+  const warnings = [
+    ...plan.warnings,
+    ...packDefs.problems.map((text) => `Pakiety: ${text}`),
+    ...lock.warnings,
+  ];
   if (version === null) warnings.push('Nie udalo sie ustalic wersji silnika (claude --version).');
   else if (version !== EXPECTED_ENGINE_VERSION) {
     warnings.push(
@@ -698,7 +740,7 @@ export async function launchPrepared(
   if (pending.length > 0) {
     blockers.push(`niezatwierdzone zasoby: ${pending.map((p) => labelOf(p.subject)).join(', ')}`);
   }
-  blockers.push(...conflicts);
+  blockers.push(...conflicts, ...lock.blockers);
 
   if (options.dryRun === true) {
     renderDryRun(
@@ -711,6 +753,7 @@ export async function launchPrepared(
       conflicts,
       { blockers, warnings },
       record.store,
+      lock,
       extra,
     );
     if (blockers.length > 0) throw new CliError('', 1);
@@ -720,6 +763,7 @@ export async function launchPrepared(
   if (childEnv.reserved.length > 0 || childEnv.missing.length > 0 || conflicts.length > 0) {
     refuse(ctx, blockers.filter((b) => !b.startsWith('niezatwierdzone')).join('\n'));
   }
+  if (lock.blockers.length > 0) refuse(ctx, lock.blockers.join('\n'), { lock: lockJson(lock) });
   if (pending.length > 0) {
     if (!ctx.interactive) {
       refuse(ctx, pendingMessage(pending), {
@@ -786,6 +830,7 @@ export function registerStart(program: Command): void {
     .option('--project <katalog>', 'katalog projektu (domyslnie biezacy, z szukaniem w gore)')
     .option('--strict-mcp', 'dodaje --strict-mcp-config: tylko serwery MCP wygenerowane przez CWM')
     .option('--dry-run', 'wypisuje plan i stan zatwierdzen bez zapisu i bez uruchamiania silnika')
+    .option('--frozen', 'odmawia startu, gdy zasoby rozni sie od lockfile (jak spec.lock: frozen)')
     .argument('[argumenty-silnika...]', 'argumenty przekazane silnikowi (po "--")')
     .action(async (args: string[], options: StartOptions, command: Command) => {
       denyNetwork();
