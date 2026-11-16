@@ -27,3 +27,6 @@ Thumbs.db
 tests/.tmp/
 
 __boundary-probe*.ts
+report/
+plans/
+reports/

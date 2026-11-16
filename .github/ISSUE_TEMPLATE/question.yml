@@ -1,0 +1,21 @@
+name: Question
+description: Ask how to use CWM
+title: 'question: '
+labels: ['question']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GitHub Discussions is the preferred place for questions once the maintainer enables it.
+        Until then, use this form. Check `README.md`, `docs/INSTALACJA.md` and `docs/CLI.md` first.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What you already tried
+      description: Commands, settings, and the version and operating system you use. Remove private data.
