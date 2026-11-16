@@ -1238,8 +1238,12 @@ zespołem, wyłącz ignorowanie samego `cwm.lock`.
 ### `cwm start`
 
 ```text
-cwm start [--project <katalog>] [--strict-mcp] [--frozen] [--dry-run] [--json] [-- <argumenty silnika>]
+cwm start [--project <katalog>] [--strict-mcp] [--frozen] [--dry-run] [--verbose] [--json] [-- <argumenty silnika>]
 ```
+
+`--dry-run` pokazuje podsumowania: liczbę zatwierdzonych zasobów (osobno tylko nowe, zmienione i z uwagami),
+liczbę plików i jedną linię o przepisanych odwołaniach do natywnego katalogu konfiguracji. `--verbose` przywraca
+pełne listy; `--json` zawsze zawiera wszystko (w tym `rewrittenByResource`).
 
 Składa konfigurację projektu (jak `cwm resolve`), generuje profil firmy i uruchamia Claude Code
 w katalogu projektu. Kolejność jest wiążąca (APR-04): resolve, plan generowania w pamięci,
@@ -1504,7 +1508,7 @@ Uszkodzony plik zatwierdzeń oznacza „nic nie jest zatwierdzone”
 ### `cwm run`
 
 ```text
-cwm run <zadanie...> [--workflow <id>] [--project <katalog>] [--strict-mcp] [--frozen] [--dry-run] [--explain] [--json]
+cwm run <zadanie...> [--workflow <id>] [--project <katalog>] [--strict-mcp] [--frozen] [--dry-run] [--verbose] [--explain] [--json]
 ```
 
 Dobiera workflow do opisu zadania i uruchamia `cwm start` z poleceniem tego workflow jako

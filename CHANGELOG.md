@@ -33,6 +33,9 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- `cwm start --dry-run` i `cwm run --dry-run` pokazują podsumowania zamiast pełnych list (zatwierdzone zasoby,
+  pliki), a przepisane odwołania do natywnego katalogu konfiguracji to jedna linia zamiast linii na zasób, także przy
+  zwykłym starcie. `--verbose` przywraca pełne listy; `--json` bez zmian, z nowym polem `rewrittenByResource`.
 - `cwm lock [--check] [--json]` i lockfile projektu `cwm.lock` (ADR 0051, `docs/CLI.md`): powtarzalny obraz zasobów
   efektywnych projektu (id, rodzaj, pochodzenie, warstwa, wersja, skrót definicji i treści, `commit` i `tree` pluginu
   z git, wersja i skrót z marketplace'u, skrót wygenerowanej komendy workflow) oraz wersji Claude Code z

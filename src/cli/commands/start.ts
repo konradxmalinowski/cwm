@@ -78,6 +78,8 @@ export interface StartOptions {
   readonly dryRun?: boolean;
   /** Dryf wzgledem lockfile to odmowa startu (ADR 0051), tak jak `spec.lock: frozen`. */
   readonly frozen?: boolean;
+  /** `--dry-run`: pelne listy (zatwierdzone zasoby, pliki, przepisane odwolania) zamiast podsumowan. */
+  readonly verbose?: boolean;
 }
 
 type Status = 'approved' | 'new' | 'changed';
@@ -450,6 +452,7 @@ function renderDryRun(
   store: string,
   lock: LockReport,
   extra: Readonly<Record<string, unknown>>,
+  verbose: boolean,
 ): void {
   const byArea = {
     profile: plan.files.filter((f) => f.rel.startsWith('claude/')).map((f) => f.rel),
@@ -491,6 +494,7 @@ function renderDryRun(
       warnings: report.warnings,
       notes: plan.notes,
       rewrittenReferences: plan.summary.rewrittenReferences,
+      rewrittenByResource: plan.summary.rewrittenByResource,
       blockers: report.blockers,
     });
     return;
@@ -503,7 +507,19 @@ function renderDryRun(
   print(`Profil (CLAUDE_CONFIG_DIR): ${plan.configDir}`);
   print('');
   print('Zatwierdzenia:');
+  const hidden = verbose
+    ? []
+    : items.filter((item) => item.status === 'approved' && item.subject.warnings.length === 0);
+  if (hidden.length > 0) {
+    const packs = new Set(
+      hidden.flatMap((item) => (item.verdict?.state === 'covered' ? [item.verdict.pack] : [])),
+    );
+    print(
+      `  zatwierdzone ${hidden.length} zasobow (w tym z ${packs.size} pakietow); lista: --verbose`,
+    );
+  }
   for (const item of items) {
+    if (hidden.includes(item)) continue;
     const label = {
       approved: 'zatwierdzone',
       new: 'NOWE',
@@ -525,7 +541,11 @@ function renderDryRun(
   print(
     `Pliki do wygenerowania: profil ${byArea.profile.length}, uruchomienie ${byArea.session.length}, migawki pluginow ${byArea.plugins.length}`,
   );
-  for (const rel of [...byArea.profile, ...byArea.session, ...byArea.plugins]) print(`  ${rel}`);
+  if (verbose) {
+    for (const rel of [...byArea.profile, ...byArea.session, ...byArea.plugins]) print(`  ${rel}`);
+  } else {
+    print('  lista plikow: --verbose');
+  }
   print('');
   print('Argumenty silnika:');
   for (const arg of argv) print(`  ${arg}`);
@@ -537,6 +557,13 @@ function renderDryRun(
   for (const text of conflicts) print(`Blokada profilu: ${text}`);
   for (const line of lockSummaryLines(lock)) print(line);
   for (const text of [...report.warnings, ...plan.notes]) print(`Ostrzezenie: ${text}`);
+  if (verbose) {
+    for (const [label, count] of Object.entries(plan.summary.rewrittenByResource).sort(
+      ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
+    )) {
+      print(`  przepisane odwolania: ${label} (${count})`);
+    }
+  }
   print('');
   print(
     report.blockers.length === 0
@@ -755,6 +782,7 @@ export async function launchPrepared(
       record.store,
       lock,
       extra,
+      options.verbose === true,
     );
     if (blockers.length > 0) throw new CliError('', 1);
     return;
@@ -831,6 +859,10 @@ export function registerStart(program: Command): void {
     .option('--strict-mcp', 'dodaje --strict-mcp-config: tylko serwery MCP wygenerowane przez CWM')
     .option('--dry-run', 'wypisuje plan i stan zatwierdzen bez zapisu i bez uruchamiania silnika')
     .option('--frozen', 'odmawia startu, gdy zasoby rozni sie od lockfile (jak spec.lock: frozen)')
+    .option(
+      '--verbose',
+      'z --dry-run: pelne listy zatwierdzonych zasobow, plikow i przepisanych odwolan',
+    )
     .argument('[argumenty-silnika...]', 'argumenty przekazane silnikowi (po "--")')
     .action(async (args: string[], options: StartOptions, command: Command) => {
       denyNetwork();

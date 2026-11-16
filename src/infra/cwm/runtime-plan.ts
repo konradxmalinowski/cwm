@@ -116,6 +116,8 @@ export interface PlanSummary {
   readonly pluginDirs: number;
   /** Odwolania do natywnego katalogu konfiguracji przepisane na sciezke profilu w kopiach zasobow. */
   readonly rewrittenReferences: number;
+  /** Liczba przepisanych odwolan wedlug zasobu (etykieta zasobu, posortowane). */
+  readonly rewrittenByResource: Readonly<Record<string, number>>;
 }
 
 export interface PlannedStep {
@@ -346,6 +348,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     mcp: 0,
     pluginDirs: 0,
     rewrittenReferences: 0,
+    rewrittenByResource: {} as Record<string, number>,
   };
   const pluginDirs: string[] = [];
   const pluginSnapshots: string[] = [];
@@ -374,9 +377,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
     note(label: string, count: number): void {
       if (count === 0) return;
       summary.rewrittenReferences += count;
-      out.notes.push(
-        `${label}: przepisano ${count} odwolan do natywnego katalogu konfiguracji na sciezke profilu.`,
-      );
+      summary.rewrittenByResource[label] = (summary.rewrittenByResource[label] ?? 0) + count;
     },
   };
 
@@ -892,7 +893,7 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
 
   if (summary.rewrittenReferences > 0) {
     out.notes.push(
-      `Razem przepisano ${summary.rewrittenReferences} odwolan do natywnego katalogu konfiguracji (hooki bez zmian).`,
+      `Przepisano ${summary.rewrittenReferences} odwolan do natywnego katalogu konfiguracji na sciezke profilu w ${Object.keys(summary.rewrittenByResource).length} zasobach (hooki bez zmian; lista: --dry-run --verbose).`,
     );
   }
 
