@@ -45,10 +45,6 @@ const PLATFORM_NAME: Readonly<Record<string, string>> = {
   linux: 'Linux',
 };
 
-function yesNo(value: boolean): string {
-  return value ? 'tak' : 'nie';
-}
-
 function fence(lines: readonly string[]): string[] {
   // Trzy apostrofy zamiast potrojnego backticka: linia logu nie moze zamknac bloku.
   const safe = lines.map((line) => line.replaceAll('```', "'''"));
