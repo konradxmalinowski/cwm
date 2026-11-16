@@ -7,6 +7,15 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ## [Unreleased]
 
+### Added
+
+- Eksport raportu diagnostycznego do zgłoszenia błędu (ADR 0053). Na ekranie Diagnostyka przycisk "Eksportuj raport"
+  (skrót `e`) pokazuje całą treść przed zapisem: wersje, stan indeksu, liczby z biblioteki, wykryte narzędzia i ostatnie
+  200 linii logu. Katalog domowy, nazwa konta, nazwy elementów biblioteki, hosty w adresach, adresy e-mail, sekrety i
+  nazwy projektów w ścieżkach są zamienione na znaczniki, a lista reguł stoi na początku raportu. Plik zapisujesz
+  systemowym oknem do wybranego miejsca (`.md` albo `.txt`); aplikacja niczego nie wysyła. Szablon zgłoszenia błędu ma
+  pole na ten raport.
+
 ## [0.2.0] - 2026-11-16
 
 Wydanie przygotowane w ADR 0035: nowa nazwa produktu, polecenie `cwm` i ochrona zasobów.

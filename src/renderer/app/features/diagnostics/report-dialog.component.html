@@ -1,0 +1,80 @@
+<dialog
+  #dialog
+  class="dialog dialog--wide"
+  aria-labelledby="report-title"
+  data-testid="report-dialog"
+  (cancel)="onCancel($event)"
+>
+  <div class="dialog__body">
+    @let s = state();
+    @if (s.status === 'planning') {
+      <h2 class="dialog__title" id="report-title" tabindex="-1">Zbieram dane do raportu.</h2>
+      <p role="status" data-testid="report-planning">
+        Czytam stan biblioteki i log, potem zamieniam ścieżki, nazwy, adresy i sekrety na znaczniki.
+      </p>
+      <div class="row-actions">
+        <button type="button" class="btn" autofocus (click)="close()">Anuluj</button>
+      </div>
+    } @else if (s.status === 'error') {
+      <h2 class="dialog__title" id="report-title" tabindex="-1">
+        Nie udało się przygotować raportu.
+      </h2>
+      <p class="notice__text" role="alert" data-testid="report-error">
+        <span class="dialog__label">Błąd.</span> {{ s.message }}
+      </p>
+      <div class="row-actions">
+        <button type="button" class="btn" (click)="load()">Spróbuj ponownie</button>
+        <button type="button" class="btn" (click)="close()">Zamknij</button>
+      </div>
+    } @else if (s.status === 'saved') {
+      <h2 class="dialog__title" id="report-title" tabindex="-1">Raport zapisany.</h2>
+      <p role="status" data-testid="report-saved">
+        Plik <span class="mono">{{ s.fileName }}</span> jest w wybranym miejscu. Aplikacja niczego
+        nie wysłała: wklej jego treść do zgłoszenia albo dołącz plik ręcznie.
+      </p>
+      <div class="row-actions">
+        <button type="button" class="btn btn--primary" autofocus (click)="close()">Zamknij</button>
+      </div>
+    } @else {
+      <h2 class="dialog__title" id="report-title" tabindex="-1">
+        Raport zapisze się dokładnie w takiej postaci.
+      </h2>
+      <p class="view__sub">
+        {{ s.preview.lineCount }} linii, w tym {{ s.preview.logLineCount }} z logu. Redakcja jest
+        automatyczna, więc przeczytaj całość przed wysłaniem.
+      </p>
+      <pre
+        class="body-text body-text--dialog"
+        tabindex="0"
+        role="region"
+        aria-label="Treść raportu do zapisu"
+        data-testid="report-text"
+        >{{ s.preview.text }}</pre>
+      @if (s.note !== null) {
+        <p role="status" class="notice__text" data-testid="report-note">{{ s.note }}</p>
+      }
+      @if (s.error !== null) {
+        <p role="alert" class="notice__text" data-testid="report-save-error">
+          <span class="dialog__label">Błąd.</span> {{ s.error }}
+        </p>
+      }
+      <div class="row-actions">
+        <button type="button" class="btn" [disabled]="s.status === 'saving'" (click)="close()">
+          Anuluj
+        </button>
+        <button
+          type="button"
+          class="btn btn--primary"
+          data-testid="report-save"
+          [disabled]="s.status === 'saving'"
+          (click)="save()"
+        >
+          {{ s.status === 'saving' ? 'Zapisuję…' : 'Zapisz do pliku' }}
+        </button>
+      </div>
+      @if (s.status === 'saving') {
+        <p role="status">Wybierz miejsce w oknie systemowym.</p>
+      }
+    }
+  </div>
+</dialog>

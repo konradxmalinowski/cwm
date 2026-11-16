@@ -20,7 +20,12 @@ import { startExport } from './bootstrap/export';
 import { startImport } from './bootstrap/import';
 import { startLibrary } from './bootstrap/library';
 import { restoreLibraryIndex } from './bootstrap/library-index';
-import { registerDiagnosticsHandler, type IndexState } from './ipc/handlers/diagnostics';
+import {
+  diagnosticsSnapshot,
+  registerDiagnosticsHandler,
+  type IndexState,
+} from './ipc/handlers/diagnostics';
+import { createDiagnosticReportService } from './bootstrap/diagnostic-report';
 import { registerExportHandlers } from './ipc/handlers/export';
 import { registerSyncHandlers } from './ipc/handlers/sync';
 import { registerImportHandlers } from './ipc/handlers/import';
@@ -210,10 +215,27 @@ function start(): void {
         dataMigration.source ?? '',
       );
     }
-    registerDiagnosticsHandler(registry, () => indexState, {
+    const diagnosticsOptions = {
       dataMigration,
-      rebuild,
       startupSettled: () => startupSettled,
+    };
+    const report = createDiagnosticReportService({
+      userData,
+      home,
+      diagnostics: () => diagnosticsSnapshot(() => indexState, diagnosticsOptions),
+      library: () => libraryService,
+      importService: () => importService,
+      logUnexpected: (error) => {
+        log().error(
+          '[cwm] nieoczekiwany blad raportu diagnostycznego:',
+          error instanceof Error ? error.name : 'nieznany',
+        );
+      },
+    });
+    registerDiagnosticsHandler(registry, () => indexState, {
+      ...diagnosticsOptions,
+      rebuild,
+      report,
     });
     registerLibraryHandlers(registry, {
       service: () => libraryService,

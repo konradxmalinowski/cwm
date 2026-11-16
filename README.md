@@ -126,7 +126,8 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
   po zapisie plik jest czytany z powrotem.
 - **Synchronizacja i historia.** Stan każdego elementu względem każdego narzędzia, plan zmian,
   zapis i cofnięcie zapisu z widoku Historia.
-- **Diagnostyka.** Raport środowiska, stan indeksu i ręczna odbudowa indeksu.
+- **Diagnostyka.** Raport środowiska, stan indeksu, ręczna odbudowa indeksu i eksport raportu do zgłoszenia
+  błędu: z podglądem i redakcją ścieżek, nazw, adresów i sekretów, zapisywany do pliku bez wysyłania w sieć.
 - **Polecenie `cwm`.** Firmy, projekty i zasoby w `~/.cwm`, zatwierdzanie zasobów z polami
   wykonawczymi i uruchamianie Claude Code z profilem firmy (sekcja niżej).
 
