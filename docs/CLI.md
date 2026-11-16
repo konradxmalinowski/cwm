@@ -1,6 +1,6 @@
 # CLI `cwm`
 
-last_updated: 2026-11-15
+last_updated: 2026-11-16
 
 `cwm` zakłada i sprawdza dane CWM w `~/.cwm`: firmy, projekty i zasoby (skille, agenci, komendy,
 workflowy, ustawienia, pluginy, serwery MCP). Składa też z nich konfigurację projektu, a
@@ -14,7 +14,9 @@ Decyzje i ograniczenia: [ADR 0038](adr/0038-fundament-cli-cwm.md) (fundament),
 `Settings` i `Command`, import). Model manifestów:
 [ADR 0037](adr/0037-model-zasobow-i-resolver-warstwy-cwm.md).
 
-Stan: gałąź `feat/cwm-run` (Etap B, zbudowana na `feat/cwm-start`, czyli Etapie A), niescalona do `main`.
+Stan: CLI jest scalone do `main` (PR #1 i kolejne). Polecenia: `init`, `company`, `project`, `resource`,
+`marketplace`, `plugin`, `workflow`, `resolve`, `import`, `sync`, `pack`, `approvals`, `lock`, `start`, `run`,
+`diff`, `doctor` i `engine`.
 
 ## Uruchomienie ze źródeł
 

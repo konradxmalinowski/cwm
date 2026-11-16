@@ -15,7 +15,7 @@ Stan na 2026-11-05, po Etapie 5. Drzewo odpowiada repozytorium; to, czego jeszcz
 wymienione pod nim.
 
 ```
-universal-ai-skills-manager/
+cwm/
   docs/
     00-wymagania-zrodlowe.md
     ARCHITECTURE.md
@@ -594,7 +594,7 @@ Dowody (stan na 2026-11-11):
 #### Kryteria 4 i 5: dowody (pipeline wydania i atrapy)
 
 Status etapu: **zamknięty 2026-11-11**. Wydanie
-[v0.1.0](https://github.com/konradxmalinowski/universal-ai-skills-manager/releases/tag/v0.1.0)
+[v0.1.0](https://github.com/konradxmalinowski/cwm/releases/tag/v0.1.0)
 opublikowane 2026-11-11 z commita `6d83a46` (przebieg `release.yml` `43018775505`, CI `main`
 zielone na czterech celach i czterech paczkach). Wydanie ma osiem plików i `SHA256SUMS`;
 suma DMG arm64 sprawdzona po pobraniu. Kryteria 1 do 5 mają dowód poniżej. Krok ręczny z checklisty

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Desktop manager for AI tool configuration: skills, agents, commands, rules.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "main": "dist/main/index.js",
   "bin": {
     "cwm": "dist/cli/index.js"

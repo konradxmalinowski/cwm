@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/konradxmalinowski/cwm/discussions
+    about: Ask usage questions in GitHub Discussions. Discussions will be enabled by the maintainer; until then, use the question issue template.
+  - name: Security vulnerability
+    url: https://github.com/konradxmalinowski/cwm/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue. See SECURITY.md.

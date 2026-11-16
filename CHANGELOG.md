@@ -7,8 +7,8 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ## [Unreleased]
 
-Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersji w
-`package.json` zmieni się przy wydaniu.
+Zmiany scalone do `main`, przygotowane na v0.2.0 (ADR 0035). Numer wersji w `package.json`
+zmieni się przy wydaniu.
 
 ### Security
 
@@ -32,6 +32,11 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
   zatwierdzenia** (zamierzone: zapytają ponownie przy `cwm start`).
 
 ### Added
+
+- Pliki dla współtwórców i społeczności: `LICENSE` (MIT; pole `license` w `package.json` to teraz `MIT`),
+  `CONTRIBUTING.md`, `SECURITY.md`, szablon pull requesta, formularze zgłoszeń (błąd, propozycja, pytanie),
+  `.github/dependabot.yml`, `docs/RELEASING.md` i `docs/assets/README.md` (scenariusz demo i podgląd w mediach
+  społecznościowych). README ma angielski opis na górze i akapit o prywatności.
 
 - `cwm engine check [--json]` i `cwm engine status` (ADR 0052, ADR 0036 pkt 10, `docs/CLI.md`): sprawdzenie nowej wersji
   Claude Code bez sieci i bez modelu. Cztery polecenia metadanych pliku silnika (`--version`, `--help`,
@@ -126,8 +131,8 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
   (skille jednego repozytorium dowiązane plik po pliku), i łączy je w pakiet nazwany katalogiem
   celu dowiązania. Wcześniej trafiały do ogólnego pakietu `skills`.
 
-- Pakiety zasobów i zgoda przy imporcie (ADR 0044, `docs/CLI.md`, gałąź `feat/cwm-packs`, jeszcze
-  niescalona): `cwm import claude` grupuje zasoby w pakiety (wspólny katalog źródłowy po dowiązaniu,
+- Pakiety zasobów i zgoda przy imporcie (ADR 0044, `docs/CLI.md`):
+  `cwm import claude` grupuje zasoby w pakiety (wspólny katalog źródłowy po dowiązaniu,
   wspólny przedrostek nazwy, reszta według rodzaju, import do firmy to jeden pakiet o nazwie firmy),
   pokazuje na ekranie importu pola wykonawcze w całości (w tym hooki skilli i piny skryptów), a
   potwierdzenie importu zatwierdza pakiety. `cwm start` nie pyta o zasoby, których zaufany skrót
@@ -142,20 +147,20 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
   nowe zasoby bez ostrzeżeń. Zasoby zmienione i z ostrzeżeniem (np. skille z hookami) nadal pytają
   osobno. Wcześniej przy pierwszym starcie z zaimportowaną konfiguracją trzeba było odpowiedzieć na
   kilkadziesiąt pytań.
-- Polecenie `cwm` (CLI, gałąź `feat/cwm-cli`, jeszcze niescalona; ADR 0038, `docs/CLI.md`):
+- Polecenie `cwm` (CLI; ADR 0038, `docs/CLI.md`):
   `init`, `company add` i `company list`, `project create`, `project attach` i `project list`,
   `resource list`, `resolve` i `doctor`. Czyta i waliduje dane w `~/.cwm` (albo `CWM_HOME`),
   zapisuje tylko tam i w `<projekt>/.cwm` i nie rusza `.claude/`, `CLAUDE.md` ani `.mcp.json`.
   Manifest projektu może leżeć w projekcie (`--store local`) albo w `~/.cwm` (`--store home`).
   Nowe zależności, przypięte dokładnie: `commander` 15.0.0 i `@clack/prompts` 1.8.1. Nie ma
   jeszcze `start`, `sync`, `diff` ani `run`.
-- Polecenie `cwm import claude` (gałąź `feat/cwm-start`, jeszcze niescalona; ADR 0039,
+- Polecenie `cwm import claude` (ADR 0039,
   `docs/CLI.md`): kopiuje do rejestru CWM skille, agentów, komendy i `settings.json` z natywnego
   katalogu Claude Code (domyślnie `~/.claude`), tylko do odczytu źródła, do firmy (`--company`) albo
   do przestrzeni wspólnej (`--global`). Pokazuje plan i raport (`--dry-run`), a zapis wymaga
   potwierdzenia na terminalu. Pomija dowiązania symboliczne, pliki wyglądające na sekrety i
   frontmatter uruchamiający kod; sekrety w `env` zamienia na `envRef`; niczego nie uruchamia.
-- Polecenia `cwm start` i `cwm approvals` (gałąź `feat/cwm-run`, jeszcze niescalona; ADR 0040,
+- Polecenia `cwm start` i `cwm approvals` (ADR 0040,
   `docs/CLI.md`): `start` składa konfigurację projektu, wymaga zatwierdzenia zasobów z polami
   wykonawczymi (zapamiętanego po skrócie w `~/.cwm/approvals/`), generuje profil firmy w
   `~/.cwm/runtime/<firma>/` i uruchamia Claude Code z `CLAUDE_CONFIG_DIR` profilu, z oczyszczonym

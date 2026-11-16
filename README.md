@@ -1,12 +1,72 @@
 # CWM - Claude Workspace Manager
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Local manager for AI coding tool configuration (skills, agents, commands, instructions, hooks)
+for Claude Code and OpenAI Codex, as a desktop app and a `cwm` command line tool.
+
+**What it does.**
+
+- Desktop app (Electron + Angular, macOS, Windows, Linux): keep a library of skills, agents,
+  commands, global instructions and hooks in one place, import them from `~/.claude`, `~/.codex`
+  and `~/.agents`, and export them back with a plan, a diff preview and a backup before every write.
+- `cwm` CLI: manage companies, projects and resources in `~/.cwm`, compose a per-company profile,
+  and launch Claude Code with it. Anything with executable fields (hooks, MCP commands, plugins)
+  needs your approval first, and the approval is pinned to a content hash.
+- Local only: no backend, no accounts, no telemetry.
+
+**Install.** Download the installer for your system from the
+[Releases](https://github.com/konradxmalinowski/cwm/releases) page and check it against the
+`SHA256SUMS` file. Releases are unsigned (ADR 0003), so macOS Gatekeeper and Windows SmartScreen
+warn on first launch; the workarounds are in [`docs/INSTALACJA.md`](docs/INSTALACJA.md) (Polish).
+To run from source you need Node.js 24:
+
+```sh
+git clone https://github.com/konradxmalinowski/cwm.git && cd cwm
+npm ci
+npm run dev        # desktop app
+```
+
+**CLI quick start** (from source; `npm link` puts `cwm` on your `PATH`):
+
+```sh
+npm run build:main
+node dist/cli/index.js init
+node dist/cli/index.js company add acme
+node dist/cli/index.js project create ~/work/acme-app --company acme
+node dist/cli/index.js run --dry-run "add a test for the auth module"   # plan only, nothing is written
+node dist/cli/index.js start                                            # approve resources, launch the engine
+```
+
+**Documentation.** The documentation is in Polish: [`docs/INSTALACJA.md`](docs/INSTALACJA.md)
+(install), [`docs/CLI.md`](docs/CLI.md) (CLI reference), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md),
+[`docs/ROADMAP.md`](docs/ROADMAP.md) and [`docs/adr/`](docs/adr/) (decisions). Contributing:
+[`CONTRIBUTING.md`](CONTRIBUTING.md). Security: [`SECURITY.md`](SECURITY.md). License:
+[MIT](LICENSE).
+
+---
+
+# Po polsku
+
+# CWM - Claude Workspace Manager
+
 Aplikacja desktopowa do zarządzania konfiguracją narzędzi AI do programowania z jednego
 miejsca: skillami, agentami, komendami, instrukcjami globalnymi i hookami. Obsługuje Claude Code
 i OpenAI Codex. Działa lokalnie na macOS, Windowsie i Linuksie, bez backendu i bez kont.
 Twoja biblioteka to zwykłe pliki w katalogu danych aplikacji.
 
 Wydania są niepodpisane (ADR 0003), więc system ostrzeże cię przy pierwszym uruchomieniu.
-Postęp prac i kryteria wydania: `docs/ROADMAP.md`.
+Postęp prac i kryteria wydania: `docs/ROADMAP.md`. Licencja: [MIT](LICENSE).
+
+## Prywatność
+
+Aplikacja nie zbiera telemetrii, nie ma kont i nie łączy się z siecią z poziomu interfejsu:
+CSP ma `connect-src 'none'`, a żądania sieciowe okien są blokowane w procesie głównym
+(ADR 0008). Biblioteka i kopie zapasowe leżą w katalogu danych na twoim dysku. W CLI sieci
+używa tylko pobieranie pluginów z git (`cwm plugin add git`, `fetch`, `update`, ADR 0048);
+`start`, `run`, `diff`, `sync`, `lock` i `engine` mają ustawiony zakaz sieci (`denyNetwork`),
+a `cwm start` nie łączy się z siecią przy sprawdzaniu zatwierdzonych pluginów. Sam Claude Code,
+uruchamiany przez `cwm start`, rządzi się własnymi zasadami.
 Historia wydań i zmian: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Zmiana nazwy (ADR 0035)
@@ -67,6 +127,8 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
 - **Synchronizacja i historia.** Stan każdego elementu względem każdego narzędzia, plan zmian,
   zapis i cofnięcie zapisu z widoku Historia.
 - **Diagnostyka.** Raport środowiska, stan indeksu i ręczna odbudowa indeksu.
+- **Polecenie `cwm`.** Firmy, projekty i zasoby w `~/.cwm`, zatwierdzanie zasobów z polami
+  wykonawczymi i uruchamianie Claude Code z profilem firmy (sekcja niżej).
 
 Zastrzeżenia, które warto znać przed pierwszym użyciem (szczegóły w `docs/OGRANICZENIA.md`):
 
@@ -83,12 +145,14 @@ Zastrzeżenia, które warto znać przed pierwszym użyciem (szczegóły w `docs/
 
 ## Polecenie `cwm` (CLI)
 
-Obok aplikacji desktopowej jest polecenie `cwm`, które zakłada i sprawdza dane warstwy CWM w
-`~/.cwm`: firmy, projekty i zasoby (skille, agenci, komendy, workflowy, ustawienia, pluginy, serwery
-MCP). Umie `init`, `company add|list`, `project create|attach|list`, `resource list`, `resolve`,
-`doctor` i `import claude` (kopiuje skille, agentów, komendy i ustawienia z `~/.claude` do rejestru
-po potwierdzeniu na terminalu; źródło czyta tylko do odczytu). Niczego nie uruchamia i nie zapisuje
-w `.claude/`, `CLAUDE.md` ani `.mcp.json`. Stan: gałąź `feat/cwm-start`, niescalona.
+Obok aplikacji desktopowej jest polecenie `cwm`, scalone do `main`. Zakłada i sprawdza dane warstwy
+CWM w `~/.cwm` (albo `CWM_HOME`): firmy, projekty i zasoby (skille, agenci, komendy, workflowy,
+ustawienia, pluginy, serwery MCP), składa z nich konfigurację projektu i uruchamia Claude Code z
+profilem firmy. Polecenia: `init`, `company`, `project`, `resource`, `marketplace`, `plugin`,
+`workflow`, `resolve`, `import`, `sync`, `pack`, `approvals`, `lock`, `start`, `run`, `diff`,
+`doctor` i `engine`. Zasoby z polami wykonawczymi wymagają zatwierdzenia przed `cwm start`.
+Polecenia nie zapisują w `.claude/`, `CLAUDE.md` ani `.mcp.json`; natywne katalogi są czytane
+tylko do odczytu.
 
 ```sh
 npm run build
@@ -96,7 +160,8 @@ node dist/cli/index.js --help
 ```
 
 Opis poleceń, układ `~/.cwm`, przykładowe manifesty i kody wyjścia: [`docs/CLI.md`](docs/CLI.md).
-Decyzje: [ADR 0038](docs/adr/0038-fundament-cli-cwm.md) (fundament) i
+Decyzje: [ADR 0038](docs/adr/0038-fundament-cli-cwm.md) (fundament),
+[ADR 0040](docs/adr/0040-zatwierdzanie-profil-i-cwm-start.md) (zatwierdzanie i `cwm start`) i
 [ADR 0039](docs/adr/0039-rodzaje-settings-i-command-oraz-import-z-natywnej-konfiguracji.md)
 (rodzaje `Settings` i `Command`, import).
 
@@ -390,11 +455,13 @@ deklaruje `vitest` jako opcjonalny peer w zakresie `^3.1.1`, a jego builder
 testowy nie jest tu uzywany; wersja 3 ma otwarte zgloszenia bezpieczenstwa,
 ktorych poprawka jest dopiero w 5.
 
-Znane ostrzezenia `npm audit`: osiem pozycji o wadze moderate w drzewie
-`electron-builder` (`sprintf-js` przez `roarr` i `global-agent`). Nie ma dla
-nich poprawki poza cofnieciem `electron-builder` do starszej wersji, nie
-dotycza kodu wchodzacego do aplikacji i nie sa w sciezce wykonania u uzytkownika.
-Bramka w CI blokuje na poziomie `high` dla zaleznosci produkcyjnych.
+Stan `npm audit` na 2026-11-16: zaleznosci produkcyjne (`npm audit --omit=dev`) nie maja
+znanych podatnosci, a CI blokuje na poziomie `high` wlasnie dla nich. Pelne drzewo zglasza
+36 pozycji (1 low, 31 moderate, 4 high); wszystkie leza w narzedziach budowania i
+developmentu (`@angular/cli`, `@angular/build` z `vite`, `electron-builder`, `eslint`),
+ktore nie wchodza do aplikacji ani nie dzialaja u uzytkownika. Czesc poprawek wymaga wyjscia
+poza zakres wersji, ktory ustawia Angular, wiec czekaja na jego aktualizacje. Krok pelnego
+audytu w CI jest informacyjny.
 
 ## Wydania są niepodpisane
 
