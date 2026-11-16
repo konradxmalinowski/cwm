@@ -422,7 +422,7 @@ describe('kanaly export:zip-* (ADR 0054)', () => {
     const result = (await handlers.get('export:zip-plan')?.(
       {},
       { tool: 'codex', itemIds: ['x'] },
-    )) as Result;
+    )) as Result<unknown>;
     expect(result).toMatchObject({ ok: false, error: { code: 'internal' } });
     expect(JSON.stringify(result)).not.toContain('/home');
     expect(logged).toHaveLength(1);
