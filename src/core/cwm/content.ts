@@ -166,6 +166,16 @@ export function hasInlineCommands(text: string): boolean {
 }
 
 /**
+ * Niedomknieta wstawka (SEC-ORCH-03): po usunieciu kompletnych wstawek zostaje otwarcie bloku (```! albo ~~~!)
+ * bez zamykajacego ogrodzenia albo `!` z odwrotnym apostrofem bez zamkniecia. Silnik, ktory potraktowalby
+ * otwarta wstawke jako ciagnaca sie do konca tekstu, obejmowalby wszystko, co po niej.
+ */
+export function hasUnterminatedSnippet(text: string): boolean {
+  const rest = text.replace(BLOCK_SNIPPET, ' ').replace(INLINE_SNIPPET, ' ');
+  return /(?:`{3}|~{3})!/.test(rest) || /(?<=^|\s)!`/.test(rest);
+}
+
+/**
  * Wstawki wykonywane przy wczytaniu, w calosci i w kolejnosci wystapien (SEC-04). Ekran zatwierdzania pokazuje je
  * bez skracania.
  */

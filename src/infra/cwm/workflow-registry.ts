@@ -4,9 +4,12 @@ import { isScalar, isSeq, parseDocument, type Document } from 'yaml';
 
 import {
   API_VERSION,
+  composeOrchestration,
   ID_NAME_PATTERN,
   RESOURCE_ID_PATTERN,
   namespaceOf,
+  orderSteps,
+  renderOrchestration,
   routingTokens,
   taskReachesShell,
   validateCompanyManifest,
@@ -15,6 +18,7 @@ import {
   withTaskPlaceholder,
   type Resource,
   type Workflow,
+  type WorkflowStep,
 } from '../../core/cwm';
 import { readChecked } from '../fs/bounded-read';
 import {
@@ -63,6 +67,8 @@ export interface AddWorkflowInput {
   readonly examples: readonly string[];
   readonly priority: number;
   readonly manual: boolean;
+  /** Kroki workflow `orchestrated` (ADR 0050); puste dla `instructional`. */
+  readonly steps?: readonly WorkflowStep[];
   /** Firmy, w ktorych id trafia do `resources.enable.workflows`. */
   readonly companies: readonly string[];
   /** Lista w `config.yaml` (`resources.<lista>.workflows`) albo null. */
@@ -82,14 +88,15 @@ export interface AddWorkflowResult {
 
 export function workflowManifestDocument(
   id: string,
-  routing: Pick<AddWorkflowInput, 'keywords' | 'examples' | 'priority' | 'manual'>,
+  routing: Pick<AddWorkflowInput, 'keywords' | 'examples' | 'priority' | 'manual' | 'steps'>,
 ): unknown {
+  const steps = routing.steps ?? [];
   return {
     apiVersion: API_VERSION,
     kind: 'Workflow',
     metadata: { id, version: WORKFLOW_VERSION },
     spec: {
-      type: 'instructional',
+      type: steps.length > 0 ? 'orchestrated' : 'instructional',
       source: WORKFLOW_SOURCE_FILE,
       routing: {
         mode: routing.manual ? 'manual' : 'automatic',
@@ -97,6 +104,16 @@ export function workflowManifestDocument(
         examples: [...routing.examples],
         keywords: [...routing.keywords],
       },
+      ...(steps.length === 0
+        ? {}
+        : {
+            steps: steps.map((step) => ({
+              id: step.id,
+              agent: step.agent,
+              dependsOn: [...step.dependsOn],
+              ...(step.task === undefined ? {} : { task: step.task }),
+            })),
+          }),
     },
   };
 }
@@ -149,20 +166,43 @@ export interface SourceCheck {
 }
 
 /** Ta sama analiza tresci co przy `cwm start`: zle zrodlo to blad juz przy dodawaniu. */
-export function checkWorkflowSource(bytes: Uint8Array, id: string): SourceCheck {
+export function checkWorkflowSource(
+  bytes: Uint8Array,
+  id: string,
+  steps: readonly WorkflowStep[] = [],
+): SourceCheck {
   let text: string;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
     throw new WorkflowCommandError('Plik zrodlowy nie jest poprawnym UTF-8.');
   }
+  let commandText = withTaskPlaceholder(text);
+  let shellText = text;
+  if (steps.length > 0) {
+    // Nazwy agentow znane sa dopiero w planie (przedrostek pluginu, `name` z frontmattera): tu liczy sie ksztalt tresci.
+    const ordered = orderSteps(steps);
+    if (!ordered.ok) throw new WorkflowCommandError(ordered.reason);
+    const composed = composeOrchestration(
+      text,
+      renderOrchestration(
+        ordered.stages,
+        new Map(steps.map((step) => [step.id, step.agent.slice(step.agent.indexOf('/') + 1)])),
+      ),
+    );
+    if (composed.unterminatedSnippet) {
+      throw new WorkflowCommandError('Tresc ma niedomknieta wstawke ! przed wierszem zadania.');
+    }
+    commandText = composed.text;
+    shellText = composed.shellCheckText;
+  }
   const parsed = parseContent(
     'command',
-    new TextEncoder().encode(withTaskPlaceholder(text)),
+    new TextEncoder().encode(commandText),
     `cwm-${id.slice(id.indexOf('/') + 1)}`,
   );
   if (!parsed.ok) throw new WorkflowCommandError(`Zrodlo workflow: ${parsed.reason}.`);
-  if (taskReachesShell(text)) {
+  if (taskReachesShell(shellText)) {
     throw new WorkflowCommandError(
       'Wstawka ! uzywa $ARGUMENTS albo $1: opis zadania trafilby do powloki.',
     );
@@ -289,15 +329,28 @@ export function addWorkflowToRegistry(
   return withGlobalLock(layout, async () => {
     checkRouting(input);
     const target = await targetOf(layout, input.id);
-    const check = checkWorkflowSource(input.source, input.id);
+    const check = checkWorkflowSource(input.source, input.id, input.steps ?? []);
     const manifest = workflowManifestDocument(input.id, input);
     const validated = validateResource(manifest);
     if (!validated.ok) {
-      throw new WorkflowCommandError('Manifest workflow nie przechodzi walidacji.');
+      const first = validated.errors[0];
+      throw new WorkflowCommandError(
+        `Manifest workflow nie przechodzi walidacji${first === undefined ? '' : ` (${first.path}: ${first.message})`}.`,
+      );
     }
 
     const { ids } = await listCompanyIds(layout);
     const registry = await FileResourceRegistry.load(layout, ids);
+    for (const step of input.steps ?? []) {
+      const known = registry.entries.some(
+        (e) => e.resource.kind === 'agent' && e.resource.id === step.agent,
+      );
+      if (!known) {
+        throw new WorkflowCommandError(
+          `Krok "${step.id}": agent ${step.agent} nie istnieje w rejestrze.`,
+        );
+      }
+    }
     const existing = registry.entries.filter(
       (e) => e.resource.kind === 'workflow' && e.resource.id === input.id,
     );

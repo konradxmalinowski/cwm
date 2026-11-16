@@ -1,12 +1,14 @@
 import { join } from 'node:path';
 
 import {
+  agentNameProblem,
   approvalWarnings,
   buildMcpConfig,
   buildProfileSettings,
   buildRunSettings,
   canonicalJson,
   companyApprovalKey,
+  composeOrchestration,
   cwmPluginName,
   executionFields,
   foldName,
@@ -19,20 +21,24 @@ import {
   mcpCommandIsPath,
   mcpEnvRefs,
   needsApproval,
+  orderSteps,
   projectApprovalKey,
   refKey,
+  renderOrchestration,
   settingsEnvRefs,
   taskReachesShell,
   validateCleanupPath,
   type ApprovalSubject,
   type CompanyManifest,
   type EffectiveConfiguration,
+  type EffectiveResource,
   type GitFacts,
   type MarketplaceFacts,
   type McpServer,
   type PackMemberFacts,
   type Resource,
   type ResourceFacts,
+  type Workflow,
   sanitizeGitUrl,
   withTaskPlaceholder,
   workflowCommandName,
@@ -110,12 +116,27 @@ export interface PlanSummary {
   readonly rewrittenReferences: number;
 }
 
-/** Workflow aktywny w projekcie i polecenie, w ktore sie zamienil (`null` dla typu bez generowania). */
+export interface PlannedStep {
+  readonly id: string;
+  /** Nazwa agenta tak, jak widzi ja silnik: dla zasobu obowiazkowego z przedrostkiem pluginu CWM. */
+  readonly agent: string;
+  readonly dependsOn: readonly string[];
+  readonly task: string | null;
+}
+
+export interface PlannedStage {
+  readonly index: number;
+  readonly steps: readonly PlannedStep[];
+}
+
+/** Workflow aktywny w projekcie i polecenie, w ktore sie zamienil (`null`, gdy plan go nie wygenerowal). */
 export interface PlannedWorkflow {
   readonly id: string;
   readonly type: 'instructional' | 'orchestrated';
   /** Nazwa polecenia po `/`: `cwm-<nazwa>` w profilu, `<plugin>:cwm-<nazwa>` dla zasobu obowiazkowego. */
   readonly slash: string | null;
+  /** Etapy workflow `orchestrated` (ADR 0050); brak dla `instructional`. */
+  readonly stages?: readonly PlannedStage[];
 }
 
 export interface RuntimePlan {
@@ -325,6 +346,8 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
   const taken = new TakenNames();
   /** Nazwa z frontmattera decyduje o tym, ktory agent odpowiada: dwa zasoby o tej samej nazwie to blad. */
   const agentNames = new Map<string, string>();
+  /** Nazwa agenta w tresci komendy `orchestrated`: z frontmattera albo z nazwy pliku (ADR 0050). */
+  const agentRender = new Map<string, { name: string; inPlugin: boolean }>();
   const claimAgentName = (name: string | null, source: string, inPlugin: boolean): void => {
     if (name === null) return;
     const key = `${inPlugin ? 'plugin' : 'profile'}:${foldName(name)}`;
@@ -374,14 +397,140 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
 
   const plannedWorkflows: PlannedWorkflow[] = [];
   const workflowCommandNames = new Set<string>();
+  const deferredWorkflows: Array<{ entry: EffectiveResource; resource: Workflow }> = [];
+
+  /**
+   * Workflow to komenda `cwm-<nazwa>`: ten sam parser, te same flagi i to samo zatwierdzenie. Dla `orchestrated`
+   * tresc to zrodlo plus sekcja krokow z nazwami agentow (ADR 0050), liczona z tych samych bajtow, ktore trafia na dysk.
+   */
+  /** Nazwa agenta w komendzie: dla pluginu CWM z przedrostkiem `cwm-<firma>:`. */
+  const renderedAgent = (agent: { name: string; inPlugin: boolean }): string =>
+    agent.inPlugin ? `${cwmPluginName(companyId)}:${agent.name}` : agent.name;
+
+  const planWorkflow = async (entry: EffectiveResource, resource: Workflow): Promise<void> => {
+    const label = resource.id;
+    const inPlugin = entry.origin === 'mandatory';
+    const base = inPlugin ? `${session}/plugin` : 'claude';
+    const counters = inPlugin ? summary.plugin : summary.profile;
+    const dir = dirs.get(resource);
+    if (dir === undefined) {
+      out.errors.push(`${label}: brak katalogu zasobu w rejestrze.`);
+      return;
+    }
+    const name = workflowCommandName(resource.id);
+    const bytes = await readSourceFile(dir, stripDot(resource.source));
+    if (bytes === null) {
+      out.errors.push(
+        `${label}: brak pliku zrodlowego ${resource.source} albo jest niebezpieczny.`,
+      );
+      return;
+    }
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      out.errors.push(`${label}: plik zrodlowy nie jest poprawnym UTF-8.`);
+      return;
+    }
+    let commandText = withTaskPlaceholder(text);
+    let shellText = text;
+    let stages: PlannedStage[] | undefined;
+    if (resource.type === 'orchestrated') {
+      const ordered = orderSteps(resource.steps);
+      if (!ordered.ok) {
+        out.errors.push(`${label}: ${ordered.reason}`);
+        return;
+      }
+      const agentNames = new Map<string, string>();
+      let failed = false;
+      for (const step of resource.steps) {
+        const active = effective.resources.some(
+          (e) => e.resource.kind === 'agent' && e.resource.id === step.agent,
+        );
+        if (!active) {
+          out.errors.push(
+            `${label}: krok "${step.id}": agent ${step.agent} nie jest aktywny w profilu (wylaczony, zabroniony albo bez zrodla).`,
+          );
+          failed = true;
+          continue;
+        }
+        const agent = agentRender.get(step.agent);
+        if (agent === undefined) {
+          out.errors.push(
+            `${label}: krok "${step.id}": agent ${step.agent} nie zostal wygenerowany.`,
+          );
+          failed = true;
+          continue;
+        }
+        const rendered = renderedAgent(agent);
+        const problem = agentNameProblem(agent.name, rendered);
+        if (problem !== null) {
+          out.errors.push(`${label}: krok "${step.id}": agent ${step.agent}: ${problem}.`);
+          failed = true;
+          continue;
+        }
+        const clash = [...agentRender.entries()].find(
+          ([id, other]) => id !== step.agent && renderedAgent(other) === rendered,
+        );
+        if (clash !== undefined) {
+          out.errors.push(
+            `${label}: krok "${step.id}": nazwa agenta "${rendered}" nosi dwoch agentow (${step.agent} i ${clash[0]}).`,
+          );
+          failed = true;
+          continue;
+        }
+        agentNames.set(step.id, rendered);
+      }
+      if (failed) return;
+      const composed = composeOrchestration(text, renderOrchestration(ordered.stages, agentNames));
+      if (composed.unterminatedSnippet) {
+        out.errors.push(`${label}: tresc ma niedomknieta wstawke ! przed wierszem zadania.`);
+        return;
+      }
+      commandText = composed.text;
+      shellText = composed.shellCheckText;
+      stages = ordered.stages.map((stage) => ({
+        index: stage.index,
+        steps: stage.steps.map((step) => ({
+          id: step.id,
+          agent: agentNames.get(step.id) ?? step.agent,
+          dependsOn: step.dependsOn,
+          task: step.task ?? null,
+        })),
+      }));
+    }
+    const parsed = parseOrReport('command', encoder.encode(commandText), label, out, name);
+    if (parsed === null) return;
+    if (taskReachesShell(shellText)) {
+      out.errors.push(
+        `${label}: wstawka ! uzywa $ARGUMENTS albo $1: opis zadania trafilby do powloki.`,
+      );
+      return;
+    }
+    // Skill o tej samej nazwie odpowiada na to samo `/<nazwa>` (SEC-05).
+    if (taken.has(`${base}/commands/${name}`) || taken.has(`${base}/skills/${name}`)) {
+      out.errors.push(
+        `${label}: nazwa polecenia "${name}" jest juz zajeta przez inna komende albo skill.`,
+      );
+      return;
+    }
+    taken.add(`${base}/commands/${name}`);
+    workflowCommandNames.add(name);
+    out.add(`${base}/commands/${name}.md`, parsed.content, false, refKey(resource));
+    counters.commands += 1;
+    if (!inPlugin) profileNames.commands.push(name);
+    plannedWorkflows.push({
+      id: resource.id,
+      type: resource.type,
+      slash: inPlugin ? `${cwmPluginName(companyId)}:${name}` : name,
+      ...(stages === undefined ? {} : { stages }),
+    });
+    subject(resource, contentFacts(parsed, sha256Hex(parsed.content)));
+  };
+
   for (const entry of effective.resources) {
     const resource = entry.resource;
     const label = resource.id;
-    if (resource.kind === 'workflow' && resource.type === 'orchestrated') {
-      out.notes.push(`${label}: workflow orchestrated nie jest generowany do silnika (ADR 0049).`);
-      plannedWorkflows.push({ id: resource.id, type: resource.type, slash: null });
-      continue;
-    }
     const inPlugin = entry.origin === 'mandatory';
     const base = inPlugin ? `${session}/plugin` : 'claude';
     const counters = inPlugin ? summary.plugin : summary.profile;
@@ -469,7 +618,10 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         const parsed = parseOrReport(resource.kind, rewrittenSource.file.bytes, label, out, name);
         if (parsed === null) break;
         rewriter.note(label, rewrittenSource.count);
-        if (resource.kind === 'agent') claimAgentName(parsed.name, label, inPlugin);
+        if (resource.kind === 'agent') {
+          claimAgentName(parsed.name, label, inPlugin);
+          agentRender.set(resource.id, { name: parsed.name ?? name, inPlugin });
+        }
         if (taken.has(`${base}/${folder}/${name}`)) {
           out.errors.push(`${label}: nazwa "${name}" jest juz zajeta przez inny zasob.`);
           break;
@@ -491,55 +643,9 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
         break;
       }
       case 'workflow': {
-        if (dir === undefined) break;
-        // Workflow instructional to komenda `cwm-<nazwa>`: ten sam parser, te same flagi i to samo zatwierdzenie.
-        const name = workflowCommandName(resource.id);
-        const bytes = await readSourceFile(dir, stripDot(resource.source));
-        if (bytes === null) {
-          out.errors.push(
-            `${label}: brak pliku zrodlowego ${resource.source} albo jest niebezpieczny.`,
-          );
-          break;
-        }
-        let text: string;
-        try {
-          text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-        } catch {
-          out.errors.push(`${label}: plik zrodlowy nie jest poprawnym UTF-8.`);
-          break;
-        }
-        const parsed = parseOrReport(
-          'command',
-          encoder.encode(withTaskPlaceholder(text)),
-          label,
-          out,
-          name,
-        );
-        if (parsed === null) break;
-        if (taskReachesShell(text)) {
-          out.errors.push(
-            `${label}: wstawka ! uzywa $ARGUMENTS albo $1: opis zadania trafilby do powloki.`,
-          );
-          break;
-        }
-        // Skill o tej samej nazwie odpowiada na to samo `/<nazwa>` (SEC-05).
-        if (taken.has(`${base}/commands/${name}`) || taken.has(`${base}/skills/${name}`)) {
-          out.errors.push(
-            `${label}: nazwa polecenia "${name}" jest juz zajeta przez inna komende albo skill.`,
-          );
-          break;
-        }
-        taken.add(`${base}/commands/${name}`);
-        workflowCommandNames.add(name);
-        out.add(`${base}/commands/${name}.md`, parsed.content, false, refKey(resource));
-        counters.commands += 1;
-        if (!inPlugin) profileNames.commands.push(name);
-        plannedWorkflows.push({
-          id: resource.id,
-          type: 'instructional',
-          slash: inPlugin ? `${cwmPluginName(companyId)}:${name}` : name,
-        });
-        subject(resource, contentFacts(parsed, sha256Hex(parsed.content)));
+        // Orchestrated czeka na agentow: ich nazwy w silniku znamy dopiero po przejsciu calej listy.
+        if (resource.type === 'orchestrated') deferredWorkflows.push({ entry, resource });
+        else await planWorkflow(entry, resource);
         break;
       }
       case 'files': {
@@ -760,6 +866,8 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
       }
     }
   }
+
+  for (const { entry, resource } of deferredWorkflows) await planWorkflow(entry, resource);
 
   if (summary.rewrittenReferences > 0) {
     out.notes.push(

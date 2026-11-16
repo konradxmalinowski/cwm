@@ -274,7 +274,14 @@ spec:
   steps:
     - id: review
       agent: global/reviewer
+      task: Review the changes and list the findings.
+    - id: summary
+      agent: global/reviewer
+      dependsOn: [review]
 ```
+
+Krok ma `id`, `agent`, opcjonalne `dependsOn` i opcjonalne `task` (jedna linia do 1000 znaków, bez znaków
+sterujących; ADR 0050).
 
 Workflow `instructional` (dodawany przez `cwm workflow add`, ADR 0049) ma `routing`, który czyta
 `cwm run`; `mode: manual` wyłącza go z wyboru automatycznego:
@@ -1440,9 +1447,17 @@ wybór i plan startu jak `cwm start --dry-run`, niczego nie zapisuje i nie pyta.
 tabelę wyników wszystkich workflow. `--json` wymaga `--dry-run` i dokłada do dokumentu startu pole
 `workflow { id, basis, default, command, minScore, scores[], warnings[] }`. Zadanie: niepuste, do 4000
 znaków, bez znaków sterujących i formatujących (poza nową linią i tabulatorem); nie jest zapisywane w
-profilu ani w logu. Argumenty silnika (`--model` itp.) nie są w tym etapie przyjmowane. Workflow
-`orchestrated` kończy się odmową „nieobsługiwany”. Kody wyjścia jak w `cwm start`; `2` także dla złego
-zadania.
+profilu ani w logu. Argumenty silnika (`--model` itp.) nie są w tym etapie przyjmowane. Kody wyjścia jak w
+`cwm start`; `2` także dla złego zadania.
+
+Workflow `orchestrated` (ADR 0050) działa tak samo: jest komendą `cwm-<nazwa>` (zasób obowiązkowy:
+`/cwm-<firma>:cwm-<nazwa>`), a podsumowanie, `--dry-run` i `--explain` dokładają listę etapów (kroki jednego
+etapu mogą iść równolegle) z agentami i zależnościami. `--json` dodaje `workflow.type` i `workflow.stages[]`
+(`index`, `steps[]`: `id`, `agent`, `dependsOn`, `task`). Nazwa agenta jest taka, jaką widzi silnik: z
+frontmattera agenta albo z nazwy pliku, a dla zasobu obowiązkowego z przedrostkiem pluginu (`cwm-<firma>:<nazwa>`).
+Treść komendy to treść `source` i sekcja kroków (po angielsku), na końcu wiersz `Task: $ARGUMENTS`, gdy sam
+`source` nie ma placeholdera. Kolejność, równoległość i przekazanie wyników między krokami wykonuje model w sesji
+silnika na podstawie tej instrukcji, CWM nie uruchamia procesów na krok.
 
 Workflow `instructional` jest w profilu komendą `cwm-<nazwa>` (zasób obowiązkowy: `/cwm-<firma>:cwm-<nazwa>`
 w pluginie CWM) i podlega zatwierdzeniu jak komenda (`allowed-tools`, wstawki `!`); tekst z
@@ -1453,23 +1468,43 @@ w pluginie CWM) i podlega zatwierdzeniu jak komenda (`allowed-tools`, wstawki `!
 ```text
 cwm workflow add <id> (--from <plik.md> | --from-command <id komendy>) [--keywords a,b]
                  [--example "..."]... [--priority 0-1000] [--manual]
+                 [--type instructional|orchestrated] [--step <id>=<agent>]...
+                 [--after <id>=<dep1>,<dep2>]... [--step-task <id>=<tekst>]...
                  [--enable <firma>...] [--global optional|mandatory]
 cwm workflow list
 cwm workflow show <id>
 ```
 
-`add` tworzy workflow `instructional` (wersja `1.0.0`): `global/<nazwa>` w rejestrze, `<firma>/<nazwa>`
+`add` tworzy workflow `instructional` (domyślnie) albo `orchestrated` (wersja `1.0.0`): `global/<nazwa>` w rejestrze, `<firma>/<nazwa>`
 w `companies/<firma>/workflows/`. `--from-command` kopiuje treść komendy z rejestru. `--enable` dopisuje id
 do `resources.enable.workflows` (firma-właściciel tylko u siebie; odmowa przy `disableOptional`),
 `--global` do `config.yaml`. Zapis przez writer `~/.cwm`, z zachowaniem komentarzy, walidacją i blokadą
 `runtime/global` (jak `cwm plugin`). Treść przechodzi te same kontrole co plan startu; `add` podaje, czy będzie wymagała
 zatwierdzenia. Powtórzenie z tą samą treścią to brak zmian, z inną to odmowa. Zatwierdzenie nastąpi przy
 `cwm start`. `list` wypisuje workflow, ich routing i gdzie są włączone; `show` pokazuje routing,
-polecenie, w które workflow się zamienia, i cechy do zatwierdzenia. `--json` działa dla wszystkich.
+polecenie, w które workflow się zamienia, etapy z krokami (dla `orchestrated`) i cechy do zatwierdzenia. `--json`
+działa dla wszystkich.
+
+Workflow `orchestrated` (ADR 0050): `--type orchestrated` wymaga co najmniej jednego `--step <id>=<agent>`
+(powtarzalne; `<agent>` to id agenta z rejestru, kolejność opcji to kolejność deklaracji). `--after <id>=<a>,<b>`
+dopisuje zależności kroku (krok musi być wcześniej zadeklarowany), `--step-task <id>=<tekst>` polecenie kroku
+(jedna linia do 1000 znaków). Cykl, nieznany krok, brakujący agent, wielowierszowy `task` i `$ARGUMENTS` w `task`
+razem ze wstawką `!` w treści to odmowa; `--step`, `--after` i `--step-task` z typem `instructional` to błąd
+użycia (kod `2`). Przykład:
+
+```text
+cwm workflow add acme-a/release --type orchestrated --from release.md --keywords release --enable acme-a \
+  --step lint=global/linter --step notes=global/writer --step ship=global/shipper \
+  --after ship=lint,notes --step-task "notes=Draft the release notes."
+```
+
+Kroki `lint` i `notes` tworzą etap 1 (mogą iść równolegle), `ship` etap 2. Zmiana kroku, agenta albo `task` zmienia
+wygenerowaną treść, więc workflow wymagający zatwierdzenia (`allowed-tools` w `release.md` albo wstawka `!`, także w
+`task`) pyta o zgodę ponownie.
 
 ## Czego jeszcze nie ma
 
-Wykonanie workflow `orchestrated` i argumenty silnika w `cwm run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), lockfile, `--follow-links` w imporcie, kopiowanie skryptów
+Argumenty silnika w `cwm run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), lockfile, `--follow-links` w imporcie, kopiowanie skryptów
 hooków do rejestru (skrypt poza rejestrem jest przypięty skrótem, ale nie skopiowany), pluginy
 marketplace'y zdalne (git, http) i źródła obiektowe wpisów, pobieranie z uwierzytelnieniem (SSH, tokeny) dla pluginów `git`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
 zatwierdzeń, Windows w `cwm start` oraz import biblioteki aplikacji i pluginów. Zapis do

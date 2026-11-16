@@ -54,8 +54,9 @@ routingu i uruchamia start z tym workflow jako pierwszym poleceniem sesji, pokaz
    polecenie ma przedrostek pluginu: `/cwm-<firma>:cwm-<nazwa>`. Treść idzie przez `parseContent('command')`,
    czyli te same reguły frontmattera co komenda. Brakujący `$ARGUMENTS` (i `$1`) jest dopisywany na końcu jako wiersz
    `Task: $ARGUMENTS`, żeby silnik dostał opis zadania. Nazwa zajęta przez inną komendę to błąd planu.
-   Workflow `orchestrated` nie jest generowany (notatka w planie), a `cwm run` odmawia go z komunikatem
-   „nieobsługiwany”; wykonanie kroków i agentów to osobny etap.
+   Workflow `orchestrated` nie był w tym etapie generowany (notatka w planie), a `cwm run` odmawiał go z
+   komunikatem „nieobsługiwany”; od ADR 0050 jest kompilowany do komendy `cwm-<nazwa>` tą samą ścieżką
+   (kroki, agenci z nazwami widzianymi przez silnik, zatwierdzenie jak komenda), a `cwm run` go uruchamia.
 8. **Zatwierdzenie jak komenda.** `workflow` jest rodzajem zatwierdzenia (`ApprovalKind`, klucz
    `workflow:<id>`, `EXECUTION_RELEVANT_FIELDS.workflow`): `needsApproval` i `executionFields` liczą
    te same pola co dla komendy (`allowed-tools`, wstawki `!` w całości, skrót wygenerowanej treści).
@@ -114,7 +115,7 @@ routingu i uruchamia start z tym workflow jako pierwszym poleceniem sesji, pokaz
   przykłady trzeba podać w formach, które padają w opisach. Brak stemmingu to świadomy wybór (powtarzalność).
 - Wartości progów (4, 1, +2 za priorytet) pochodzą z rozsądnych założeń, nie z pomiaru na prawdziwych
   opisach zadań; `--explain` pokazuje pełną tabelę do dostrojenia reguł.
-- Workflow `orchestrated` zostaje bez wykonania, a `cwm run` nie przyjmuje dodatkowych argumentów
-  silnika (np. `--model`); oba odłożone.
+- Workflow `orchestrated` został odłożony do ADR 0050; `cwm run` nadal nie przyjmuje dodatkowych argumentów
+  silnika (np. `--model`).
 - `cwm run --json` działa tylko z `--dry-run`, bo sesja silnika jest interaktywna i wymieszałaby
   wyjście.

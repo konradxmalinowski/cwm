@@ -23,6 +23,7 @@ import {
   packMemberHash,
   projectApprovalKey,
   validateApprovalsFile,
+  validateResource,
   validatePackTrustFile,
   type MemberFields,
   type McpServer,
@@ -1170,5 +1171,94 @@ describe('plan drzewa git: tryb 100664, kolizje nazw i dlugie nazwy (ADR 0048)',
     const verdict = verifyGitCopy(repo.commit, repo.objects, repo.files, limits);
     expect(verdict.ok).toBe(false);
     expect(!verdict.ok && verdict.message).toContain('zbyt dluga');
+  });
+});
+
+describe('workflow orchestrated: kroki w manifescie i zatwierdzenie (ADR 0050)', () => {
+  const manifest = (steps: unknown): unknown => ({
+    apiVersion: 'cwm.dev/v1',
+    kind: 'Workflow',
+    metadata: { id: 'acme-a/flow', version: '1.0.0' },
+    spec: { type: 'orchestrated', source: 'workflow.md', steps },
+  });
+  const steps = [
+    { id: 'lint', agent: 'acme-a/linter', task: 'Check style.' },
+    { id: 'ship', agent: 'acme-a/shipper', dependsOn: ['lint'] },
+  ];
+
+  it('przyjmuje task kroku i zachowuje go w modelu', () => {
+    const result = validateResource(manifest(steps));
+    expect(result.ok).toBe(true);
+    if (result.ok && result.value.kind === 'workflow') {
+      expect(result.value.steps[0]).toMatchObject({ id: 'lint', task: 'Check style.' });
+      expect(result.value.steps[1]).not.toHaveProperty('task');
+    }
+  });
+
+  it.each([
+    ['nowa linia', 'a\nb'],
+    ['tabulator', 'a\tb'],
+    ['znak formatujacy', `a${String.fromCharCode(0x202e)}b`],
+    ['za dlugi', 'x'.repeat(1001)],
+    ['pusty', '   '],
+    ['nie tekst', 5],
+  ])('odrzuca task kroku: %s', (_label, task) => {
+    const result = validateResource(manifest([{ id: 'lint', agent: 'acme-a/linter', task }]));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors[0]?.path).toBe('spec.steps[0].task');
+  });
+
+  it('cykl i nieznany krok nadal sa odrzucane', () => {
+    expect(
+      validateResource(
+        manifest([
+          { id: 'a', agent: 'acme-a/x', dependsOn: ['b'] },
+          { id: 'b', agent: 'acme-a/x', dependsOn: ['a'] },
+        ]),
+      ).ok,
+    ).toBe(false);
+    expect(validateResource(manifest([{ id: 'a', agent: 'acme-a/x', dependsOn: ['zz'] }])).ok).toBe(
+      false,
+    );
+  });
+
+  it('komunikat o cyklu wymienia kroki', () => {
+    const result = validateResource(
+      manifest([
+        { id: 'a', agent: 'acme-a/x', dependsOn: ['b'] },
+        { id: 'b', agent: 'acme-a/x', dependsOn: ['a'] },
+      ]),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors[0]?.message).toContain('a -> b -> a');
+  });
+
+  it('zmiana agenta w wygenerowanej tresci zmienia skrot zatwierdzenia', () => {
+    const workflow: Workflow = {
+      kind: 'workflow',
+      id: 'acme-a/flow',
+      version: '1.0.0',
+      type: 'orchestrated',
+      source: 'workflow.md',
+      agents: [],
+      steps: [{ id: 'lint', agent: 'acme-a/linter', dependsOn: [] }],
+    };
+    const content = {
+      allowedTools: true,
+      allowedToolsValue: ['Task'],
+      inlineCommands: false,
+      inlineSnippets: [],
+      tools: [],
+      model: null,
+    };
+    const hashOf = (sha: string): string =>
+      approvalHash({
+        company: 'acme-a',
+        kind: 'workflow',
+        id: workflow.id,
+        fields: executionFields(workflow, { content, sourceSha256: sha }),
+      });
+    expect(needsApproval(workflow, { content, sourceSha256: 'a'.repeat(64) })).toBe(true);
+    expect(hashOf('a'.repeat(64))).not.toBe(hashOf('b'.repeat(64)));
   });
 });

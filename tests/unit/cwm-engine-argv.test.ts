@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  agentNameProblem,
   buildEngineArgv,
   checkPassThroughArgs,
+  composeOrchestration,
   decideWorkflow,
   ENGINE_SUBCOMMANDS,
   MAX_TASK_LENGTH,
+  orderSteps,
+  renderOrchestration,
   scoreWorkflows,
   validateTask,
   withTaskPlaceholder,
@@ -14,8 +18,10 @@ import {
   taskReachesShell,
   extractInlineCommands,
   hasInlineCommands,
+  hasUnterminatedSnippet,
   type ArgvInput,
   type RoutingCandidate,
+  type WorkflowStep,
 } from '../../src/core/cwm';
 
 const base: ArgvInput = {
@@ -326,5 +332,149 @@ describe('wstawki ! jak w silniku (SEC-02)', () => {
     expect(extractInlineCommands('a!`nie`')).toEqual([]);
     expect(hasInlineCommands('x ```!ls```')).toBe(true);
     expect(hasInlineCommands('zwykly `kod`')).toBe(false);
+  });
+});
+
+describe('workflow orchestrated: kolejnosc etapow i skladanie tresci (ADR 0050)', () => {
+  const step = (id: string, dependsOn: string[] = [], task?: string): WorkflowStep => ({
+    id,
+    agent: `acme-a/${id}`,
+    dependsOn,
+    ...(task === undefined ? {} : { task }),
+  });
+  const stageIds = (steps: WorkflowStep[]): string[][] => {
+    const ordered = orderSteps(steps);
+    if (!ordered.ok) throw new Error(ordered.reason);
+    return ordered.stages.map((stage) => stage.steps.map((s) => s.id));
+  };
+
+  it('kroki bez wzajemnej zaleznosci ida w jednym etapie, w kolejnosci deklaracji', () => {
+    expect(stageIds([step('ship', ['lint', 'test']), step('test'), step('lint')])).toEqual([
+      ['test', 'lint'],
+      ['ship'],
+    ]);
+    expect(
+      stageIds([step('a'), step('b', ['a']), step('c', ['a']), step('d', ['b', 'c'])]),
+    ).toEqual([['a'], ['b', 'c'], ['d']]);
+  });
+
+  it('cykl, samozaleznosc i nieznany krok to blad', () => {
+    expect(orderSteps([step('a', ['b']), step('b', ['a'])]).ok).toBe(false);
+    expect(orderSteps([step('a', ['a'])]).ok).toBe(false);
+    expect(orderSteps([step('a', ['zz'])])).toMatchObject({ ok: false });
+    expect(orderSteps([step('a'), step('a')]).ok).toBe(false);
+  });
+
+  const section = (steps: WorkflowStep[]): string => {
+    const ordered = orderSteps(steps);
+    if (!ordered.ok) throw new Error(ordered.reason);
+    return renderOrchestration(
+      ordered.stages,
+      new Map(steps.map((s) => [s.id, `cwm-acme-a:${s.id}-agent`])),
+    );
+  };
+
+  it('sekcja podaje etap, krok, agenta z przedrostkiem, zaleznosci i polecenie, bez ` ani $ ani !', () => {
+    const text = section([step('lint', [], 'Check style.'), step('ship', ['lint'])]);
+    expect(text).toContain('### Stage 1');
+    expect(text).toContain('### Stage 2');
+    expect(text).toContain('- Step lint\n  - Agent: cwm-acme-a:lint-agent\n  - Depends on: none');
+    expect(text).toContain('  - Instruction: Check style.');
+    expect(text).toContain('  - Depends on: lint\n  - Instruction: none, use the overall task');
+    const constant = section([step('lint')]);
+    expect(constant).not.toMatch(/[`$!]/);
+  });
+
+  it('wiersz zadania jest doklejany tylko gdy zrodlo nie ma placeholdera i zawsze na koncu', () => {
+    const body = section([step('lint')]);
+    const without = composeOrchestration('Intro.\n', body);
+    expect(without.text.endsWith('\nTask: $ARGUMENTS\n')).toBe(true);
+    expect(without.shellCheckText).not.toContain('Task: $ARGUMENTS');
+    const withOwn = composeOrchestration('Intro $ARGUMENTS.\n', body);
+    expect(withOwn.text).toBe(withOwn.shellCheckText);
+    expect(withOwn.text).not.toContain('Task: $ARGUMENTS');
+  });
+
+  it('placeholder w task kroku nie zmienia doklejenia zadania (SEC-01)', () => {
+    const body = section([step('lint', [], 'Look at $ARGUMENTS and $1')]);
+    const composed = composeOrchestration('Intro bez placeholdera.\n', body);
+    expect(composed.text.endsWith('\nTask: $ARGUMENTS\n')).toBe(true);
+    expect(composed.text.match(/Task: \$ARGUMENTS/g)).toHaveLength(1);
+  });
+
+  it('wstawka w task trafia do wykrytych wstawek, a z placeholderem to przypadek powloki', () => {
+    const hostile = section([step('lint', [], 'Run !`git status` now')]);
+    const composed = composeOrchestration('Intro.\n', hostile);
+    expect(extractInlineCommands(composed.text)).toEqual(['git status']);
+    expect(taskReachesShell(composed.shellCheckText)).toBe(false);
+    const both = composeOrchestration(
+      'Intro.\n',
+      section([step('lint', [], 'Run !`echo $ARGUMENTS`')]),
+    );
+    expect(taskReachesShell(both.shellCheckText)).toBe(true);
+    // Wstawka zaczeta w zrodle i zamknieta w task nie obejmuje doklejonego wiersza zadania.
+    const spanning = composeOrchestration('Intro !`echo\n', section([step('a', [], 'x`y')]));
+    const snippets = extractInlineCommands(spanning.text);
+    expect(snippets.join('\n')).not.toContain('$ARGUMENTS');
+  });
+
+  it('zrodlo z placeholderem i wstawka razem to przypadek powloki; sama wstawka nie', () => {
+    const body = section([step('lint')]);
+    expect(
+      taskReachesShell(composeOrchestration('Run !`ls` $ARGUMENTS', body).shellCheckText),
+    ).toBe(true);
+    expect(taskReachesShell(composeOrchestration('Run !`ls`', body).shellCheckText)).toBe(false);
+  });
+
+  it('polecenie orchestrated idzie do silnika jako jeden argument jak instructional', () => {
+    const prompt = workflowPrompt('cwm-acme-a:cwm-flow', '--model x; rm -rf');
+    expect(prompt).toBe('/cwm-acme-a:cwm-flow --model x; rm -rf');
+    const argv = argvOf({ userArgs: [prompt] });
+    expect(argv.slice(-2)).toEqual(['--', prompt]);
+  });
+
+  it('cykl w komunikacie wymienia kroki', () => {
+    const ordered = orderSteps([step('a', ['b']), step('b', ['c']), step('c', ['a']), step('d')]);
+    expect(ordered).toEqual({
+      ok: false,
+      reason: 'Kroki tworza cykl zaleznosci: a -> b -> c -> a.',
+    });
+    expect(orderSteps([step('x', ['x'])])).toEqual({
+      ok: false,
+      reason: 'Kroki tworza cykl zaleznosci: x -> x.',
+    });
+  });
+
+  it('nazwa agenta: dwukropek, wbudowane typy i niedozwolone znaki sa odrzucane (SEC-ORCH-01)', () => {
+    expect(agentNameProblem('reviewer', 'reviewer')).toBeNull();
+    expect(agentNameProblem('reviewer', 'cwm-acme:reviewer')).toBeNull();
+    expect(agentNameProblem('cwm-acme:reviewer', 'cwm-acme:reviewer')).toMatch(/dwukropek/);
+    for (const builtin of [
+      'general-purpose',
+      'Explore',
+      'Plan',
+      'statusline-setup',
+      'claude-code-guide',
+    ]) {
+      expect(agentNameProblem(builtin, builtin)).toMatch(/wbudowany/);
+    }
+    expect(agentNameProblem('explore', 'explore')).toMatch(/wbudowany/);
+    expect(agentNameProblem('bad name', 'bad name')).toMatch(/niedozwolone/);
+  });
+
+  it('niedomknieta wstawka przed wierszem zadania jest wykrywana (SEC-ORCH-03)', () => {
+    expect(hasUnterminatedSnippet('a ```!\nls\n')).toBe(true);
+    expect(hasUnterminatedSnippet('a ~~~!ls')).toBe(true);
+    expect(hasUnterminatedSnippet('Run !`echo hi')).toBe(true);
+    expect(hasUnterminatedSnippet('Run !`echo hi` and ```!\nls\n```')).toBe(false);
+    expect(hasUnterminatedSnippet('zwykly `kod` i tekst')).toBe(false);
+    const body = section([step('a', [], 'x !`open')]);
+    expect(composeOrchestration('Intro.\n', body).unterminatedSnippet).toBe(true);
+    expect(composeOrchestration('Intro !`echo\n', section([step('a')])).unterminatedSnippet).toBe(
+      true,
+    );
+    expect(
+      composeOrchestration('Intro.\n', section([step('a', [], 'Run !`ls`')])).unterminatedSnippet,
+    ).toBe(false);
   });
 });

@@ -98,6 +98,8 @@ export interface WorkflowStep {
   readonly id: string;
   readonly agent: string;
   readonly dependsOn: readonly string[];
+  /** Polecenie kroku (jedna linia, ADR 0050); bez niego agent dostaje samo zadanie calego workflow. */
+  readonly task?: string;
 }
 
 export interface Workflow {
