@@ -100,6 +100,35 @@ function reportIndexStartup(info: IndexStartupInfo): void {
   );
 }
 
+/**
+ * Zamkniecie indeksu przy wyjsciu nie ma prawa rzucic. Wyjatek z `before-quit` jest wyjatkiem
+ * nieobsluzonym, a na ten Electron pokazuje modalne okno bledu i czeka: proces nie konczy sie,
+ * a na Windowsie trzyma pliki katalogu danych.
+ *
+ * `close()` rzuca "busy executing a query", gdy `before-quit` wejdzie w trakcie trwajacego
+ * zapytania. W CI robi to Playwright: `app.close()` wykonuje sie przez inspektor jako przerwanie
+ * w srodku synchronicznego `.all()` (widoku Historia), stad zawis E2E po `app.close()`.
+ * Wtedy zamykamy w nastepnym obrocie petli, gdy zapytanie sie skonczy. Gdyby i to sie nie
+ * udalo, proces i tak sie konczy, a SQLite odtwarza spojny stan z dziennika przy nastepnym otwarciu.
+ */
+function closeIndexOnQuit(store: IndexState['store'], retry = true): void {
+  if (store === null) return;
+  try {
+    store.close();
+  } catch (error: unknown) {
+    if (retry) {
+      setImmediate(() => {
+        closeIndexOnQuit(store, false);
+      });
+      return;
+    }
+    log().warn(
+      '[cwm] indeks nie zostal zamkniety przy wyjsciu:',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
 function start(): void {
   if (!app.requestSingleInstanceLock()) {
     app.quit();
@@ -121,8 +150,9 @@ function start(): void {
   });
 
   app.on('before-quit', () => {
-    indexState.store?.close();
+    const store = indexState.store;
     indexState = { store: null, info: indexState.info };
+    closeIndexOnQuit(store);
   });
 
   void app.whenReady().then(() => {
