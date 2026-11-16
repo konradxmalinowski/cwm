@@ -33,6 +33,18 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- Workflow `orchestrated` jest kompilowany do komendy `cwm-<nazwa>` i uruchamiany przez `cwm run` (ADR 0050,
+  `docs/CLI.md`). Krok ma opcjonalne `task` (jedna linia do 1000 znaków). Kroki są układane w etapy (porządek
+  topologiczny, przy remisie kolejność deklaracji; kroki bez wzajemnej zależności w jednym etapie jako możliwe
+  równoległe), a treść komendy to `source`, sekcja kroków z nazwami agentów takimi, jakie widzi silnik (agent zasobu
+  obowiązkowego z przedrostkiem pluginu `cwm-<firma>:`) i wiersz `Task: $ARGUMENTS` na końcu. Zatwierdzenie jak
+  komenda, ze skrótem wygenerowanej treści; `task` nie zmienia sposobu doklejenia zadania, a `$ARGUMENTS` w `task`
+  razem ze wstawką `!` jest odrzucany. `cwm run --dry-run|--explain|--json` pokazują etapy i agentów;
+  `cwm workflow add --type orchestrated --step <id>=<agent> --after <id>=<a,b> --step-task <id>=<tekst>` i
+  `cwm workflow show` obsługują kroki. CWM nie uruchamia osobnych procesów na krok: kolejność wykonuje model w sesji
+  silnika według instrukcji.
+  Plan odrzuca nazwy agentów z dwukropkiem, równe wbudowanym typom subagentów silnika albo używane przez dwóch
+  agentów, oraz niedomknięte wstawki `!` przed wierszem zadania; komunikat o cyklu wymienia kroki.
 - `cwm run "<zadanie>"` i `cwm workflow add|list|show` (ADR 0049, `docs/CLI.md`): polecenie dobiera workflow
   `instructional` do opisu zadania deterministycznie i offline (słowa kluczowe po `foldName` na granicach słów,
   podobieństwo do przykładów, `priority`; próg 4 pkt i przewaga 1 pkt), pokazuje wybór, wynik, powód i dwóch
@@ -42,7 +54,7 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
   `routing.mode: manual` wyłącza workflow z automatu, a `workflows.default` projektu i firmy wygrywa tylko bez
   wyraźnego trafienia. Workflow jest w profilu komendą `cwm-<nazwa>` (zasób obowiązkowy w pluginie CWM) i
   przechodzi to samo zatwierdzenie co komenda (`allowed-tools`, wstawki `!`); `$ARGUMENTS` we wstawce `!` jest
-  odrzucany (także `$ARGUMENTSx`, `$10`, wstawki wielowierszowe i blokowe); `workflows.default` projektu i firmy wchodzi do ich zatwierdzeń, a `cwm run` odmawia, gdy natywny `.claude/commands/` projektu zasłania polecenie workflow. Workflow `orchestrated` kończy się komunikatem „nieobsługiwany”. Nowe pola opcjonalne:
+  odrzucany (także `$ARGUMENTSx`, `$10`, wstawki wielowierszowe i blokowe); `workflows.default` projektu i firmy wchodzi do ich zatwierdzeń, a `cwm run` odmawia, gdy natywny `.claude/commands/` projektu zasłania polecenie workflow. Workflow `orchestrated` obsługuje ADR 0050 (wpis wyżej). Nowe pola opcjonalne:
   `workflows` w `config.yaml` (`mandatory` i `optional`), `workflows.default` w `company.yaml` i `project.yaml`.
 
 - `cwm plugin add git <url> --id git/<nazwa>`, `cwm plugin fetch` i `cwm plugin update` (ADR 0048,
