@@ -24,7 +24,10 @@ Wydania są niepodpisane (ADR 0003), a autoaktualizacji nie ma.
      gałęziach,
    - dodaj nowy, pusty `## [Unreleased]` nad nim,
    - zaktualizuj linki na dole pliku: `[Unreleased]` porównuje `vX.Y.Z...HEAD`, a `[X.Y.Z]`
-     wskazuje na `releases/tag/vX.Y.Z`.
+     wskazuje na `releases/tag/vX.Y.Z`,
+   - odśwież `THIRD_PARTY_NOTICES.md`: `npm run notices`. Skrypt czyta tylko `package-lock.json`
+     (zależności produkcyjne) i przerywa, gdy pakiet nie ma pola licencji;
+     `node scripts/third-party-notices.mjs --check` pokazuje rozjazd bez zapisu.
 4. **Dokumentacja.** Sprawdź, czy `README.md`, `docs/CLI.md` i `docs/INSTALACJA.md` nie
    opisują stanu sprzed wydania, i zaktualizuj `last_updated`.
 5. **Weryfikacja lokalna.** `npm run lint`, `npm run typecheck`, `npm run test:boundaries`,

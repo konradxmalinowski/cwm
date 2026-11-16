@@ -1,6 +1,6 @@
 {
   "name": "cwm",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Desktop manager for AI tool configuration: skills, agents, commands, rules.",
   "license": "MIT",
@@ -23,6 +23,7 @@
     "format": "prettier --write .",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.tests.json --noEmit",
     "test": "vitest run",
+    "notices": "node scripts/third-party-notices.mjs",
     "test:boundaries": "node scripts/verify-boundaries.mjs",
     "test:e2e": "playwright test",
     "package": "electron-builder --dir",

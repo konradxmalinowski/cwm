@@ -7,8 +7,9 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ## [Unreleased]
 
-Zmiany scalone do `main`, przygotowane na v0.2.0 (ADR 0035). Numer wersji w `package.json`
-zmieni się przy wydaniu.
+## [0.2.0] - 2026-11-16
+
+Wydanie przygotowane w ADR 0035: nowa nazwa produktu, polecenie `cwm` i ochrona zasobów.
 
 ### Security
 
@@ -32,6 +33,13 @@ zmieni się przy wydaniu.
   zatwierdzenia** (zamierzone: zapytają ponownie przy `cwm start`).
 
 ### Added
+
+- `THIRD_PARTY_NOTICES.md` generowany z `package-lock.json` (`npm run notices`, `scripts/third-party-notices.mjs`):
+  zależności produkcyjne z wersją i licencją, czcionki i uwaga o Electronie.
+- Obsługa awarii na poziomie procesu: proces główny loguje `uncaughtException`, `unhandledRejection`,
+  `render-process-gone` i `child-process-gone` przez logger z redakcją sekretów, bez okien dialogowych.
+  Po awarii renderera okno jest przeładowywane (najwyżej trzy razy w minutę). Renderer ma globalny
+  `ErrorHandler`, którego wpisy trafiają do tego samego pliku logu bez nowego kanału IPC.
 
 - Pliki dla współtwórców i społeczności: `LICENSE` (MIT; pole `license` w `package.json` to teraz `MIT`),
   `CONTRIBUTING.md`, `SECURITY.md`, szablon pull requesta, formularze zgłoszeń (błąd, propozycja, pytanie),
@@ -331,5 +339,6 @@ Pierwsze publiczne wydanie, pod nazwą Universal AI Skills Manager. Wydanie jest
 - Pierwsze uruchomienie pobranych plików przez Gatekeepera i SmartScreen nie zostało sprawdzone
   ręcznie.
 
-[Unreleased]: https://github.com/konradxmalinowski/cwm/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/konradxmalinowski/cwm/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/konradxmalinowski/cwm/releases/tag/v0.2.0
 [0.1.0]: https://github.com/konradxmalinowski/cwm/releases/tag/v0.1.0
