@@ -33,6 +33,19 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- `cwm engine check [--json]` i `cwm engine status` (ADR 0052, ADR 0036 pkt 10, `docs/CLI.md`): sprawdzenie nowej wersji
+  Claude Code bez sieci i bez modelu. Cztery polecenia metadanych pliku silnika (`--version`, `--help`,
+  `plugin --help`, `mcp --help`) w minimalnym środowisku, w pustym katalogu tymczasowym 0700, z limitem czasu i wyjścia.
+  Brak flagi, którą CWM podaje silnikowi (`--settings`, `--mcp-config`, `--strict-mcp-config`, `--plugin-dir`), to błąd;
+  nowe podpolecenia spoza listy blokowanej po `--` i nowe flagi o nazwach związanych z uprawnieniami, katalogiem
+  konfiguracji, ustawieniami, pluginami albo MCP to ostrzeżenia. Wynik `ok` jest zapisany per wersja i związany z plikiem silnika (ścieżka, rozmiar, mtime) w
+  `~/.cwm/runtime/engine-checks.json` (skróty pomocy, bez jej tekstu); inny plik tej samej wersji jest sprawdzany
+  ponownie. Próby idą w osobnej grupie procesów (kończonej razem z potomkami), z `PATH` bez katalogu projektu i z
+  wyłączonym samoaktualizowaniem, a po dwóch przekroczeniach czasu reszta poleceń jest pomijana. Nieczytelna pomoc
+  to ostrzeżenie, nie odmowa (fail-open). `cwm start` i `cwm run` (bez `--dry-run`) robią
+  to same przy nowej wersji i odmawiają przy brakującej fladze; `--dry-run`, `cwm diff` i `cwm lock` tylko ostrzegają
+  o wersji bez sprawdzenia, a wersja z udanym sprawdzeniem nie ostrzega nigdzie. Claude Code 2.1.322 i 2.1.323 przechodzą
+  sprawdzenie. Sprawdzenie nie obejmuje zachowania sesji (V-01 do V-08).
 - `cwm start --dry-run` i `cwm run --dry-run` pokazują podsumowania zamiast pełnych list (zatwierdzone zasoby,
   pliki), a przepisane odwołania do natywnego katalogu konfiguracji to jedna linia zamiast linii na zasób, także przy
   zwykłym starcie. `--verbose` przywraca pełne listy; `--json` bez zmian, z nowym polem `rewrittenByResource`.

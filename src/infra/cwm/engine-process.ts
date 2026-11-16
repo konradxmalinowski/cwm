@@ -1,9 +1,9 @@
-import { execFile, spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { realpath } from 'node:fs/promises';
 import { constants as osConstants } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { sanitizePath } from '../../core/cwm';
+import { buildEngineProbeEnv, sanitizePath, type EngineMetadata } from '../../core/cwm';
 import { isPathInside } from '../../core/model/path-containment';
 import { lstatLoose } from './paths';
 
@@ -89,34 +89,155 @@ export async function resolveEngineBinary(input: {
   return { ok: false, reasons };
 }
 
+interface ProbeLimits {
+  readonly timeoutMs: number;
+  readonly maxBytes: number;
+}
+
+interface ProbeResult {
+  readonly stdout: string | null;
+  readonly timedOut: boolean;
+}
+
+/** SIGKILL na cala grupe procesow proby (dzieci i wnuki); bez grup (Windows) tylko na sam proces. */
+function killGroup(child: ChildProcess): void {
+  try {
+    if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // proces juz nie istnieje
+    }
+  }
+}
+
 /**
- * `claude --version` w minimalnym srodowisku, z limitem czasu i wyjscia. `scratchDir` to pusty
- * katalog tymczasowy 0700 (SEC-14): jest i katalogiem roboczym, i `CLAUDE_CONFIG_DIR`, wiec proba
- * nie dotyka ani profilu firmy, ani katalogu projektu. Null, gdy sie nie uda.
+ * Jedno polecenie metadanych silnika w minimalnym srodowisku (`buildEngineProbeEnv`), z limitem czasu i
+ * wyjscia. `scratchDir` to pusty katalog tymczasowy 0700 (SEC-14): jest i katalogiem roboczym, i
+ * `CLAUDE_CONFIG_DIR`, wiec proba nie dotyka ani profilu firmy, ani katalogu projektu. Proces startuje we
+ * wlasnej grupie (`detached`), a przekroczenie czasu lub rozmiaru, a takze samo zakonczenie procesu konczy
+ * cala grupe SIGKILL, wiec zaden wnuk (np. proces w tle skryptu powloki) nie przezywa proby.
  */
-export function queryEngineVersion(path: string, scratchDir: string): Promise<string | null> {
+function probeEngine(
+  path: string,
+  args: readonly string[],
+  scratchDir: string,
+  limits: ProbeLimits,
+  projectDir: string | null,
+): Promise<ProbeResult> {
   return new Promise((done) => {
-    execFile(
-      path,
-      ['--version'],
-      {
+    let child: ChildProcess;
+    try {
+      child = spawn(path, [...args], {
         cwd: scratchDir,
-        env: {
-          PATH: sanitizePath(process.env['PATH']),
-          HOME: process.env['HOME'] ?? '',
-          CLAUDE_CONFIG_DIR: scratchDir,
-        },
-        timeout: 5000,
-        maxBuffer: 4096,
+        env: buildEngineProbeEnv(process.env, scratchDir, projectDir),
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
         shell: false,
         windowsHide: true,
-      },
-      (error, stdout) => {
-        const match = error ? null : /(\d+\.\d+\.\d+)/.exec(stdout);
-        done(match?.[1] ?? null);
-      },
-    );
+      });
+    } catch {
+      done({ stdout: null, timedOut: false });
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    let errorBytes = 0;
+    let timedOut = false;
+    let overflow = false;
+    let failed = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killGroup(child);
+    }, limits.timeoutMs);
+    child.stdout?.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > limits.maxBytes) {
+        overflow = true;
+        killGroup(child);
+      } else chunks.push(chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      errorBytes += chunk.length;
+      if (errorBytes > limits.maxBytes) {
+        overflow = true;
+        killGroup(child);
+      }
+    });
+    child.once('error', () => {
+      failed = true;
+    });
+    child.once('exit', () => killGroup(child));
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      killGroup(child);
+      const ok = !failed && !overflow && !timedOut && code === 0;
+      done({ stdout: ok ? Buffer.concat(chunks).toString('utf8') : null, timedOut });
+    });
   });
+}
+
+/** Wynik polecenia metadanych (tekst) albo null: kod wyjscia inny niz 0, czas, rozmiar, brak pliku. */
+export async function runEngineMetadata(
+  path: string,
+  args: readonly string[],
+  scratchDir: string,
+  limits: ProbeLimits,
+  projectDir: string | null,
+): Promise<string | null> {
+  return (await probeEngine(path, args, scratchDir, limits, projectDir)).stdout;
+}
+
+const VERSION_LIMITS: ProbeLimits = { timeoutMs: 5000, maxBytes: 4096 };
+const HELP_LIMITS: ProbeLimits = { timeoutMs: 10_000, maxBytes: 256 * 1024 };
+
+const versionOf = (out: string | null): string | null =>
+  out === null ? null : (/(\d+\.\d+\.\d+)/.exec(out)?.[1] ?? null);
+
+/**
+ * `claude --version`: wersja `x.y.z` albo null. `projectDir` wycina z `PATH` elementy w katalogu projektu
+ * (null, gdy projektu nie ma).
+ */
+export async function queryEngineVersion(
+  path: string,
+  scratchDir: string,
+  projectDir: string | null,
+): Promise<string | null> {
+  return versionOf(
+    await runEngineMetadata(path, ['--version'], scratchDir, VERSION_LIMITS, projectDir),
+  );
+}
+
+/** Po tylu przekroczeniach czasu w jednym sprawdzeniu reszta polecen nie jest uruchamiana. */
+export const MAX_PROBE_TIMEOUTS = 2;
+
+/**
+ * Sprawdzenie metadanych silnika (ADR 0052): `--version`, `--help`, `plugin --help`, `mcp --help`, po
+ * kolei, w jednym pustym katalogu proby. Nic poza tymi czterema poleceniami: bez `-p`, bez logowania,
+ * bez modelu i bez sieci po stronie CWM. Po `MAX_PROBE_TIMEOUTS` przekroczeniach czasu reszta jest pomijana
+ * (wynik null), zeby zawieszony silnik nie wstrzymywal startu o 4 timeouty. `timeoutMs` zastepuje limity czasu
+ * (testy).
+ */
+export async function collectEngineMetadata(
+  path: string,
+  scratchDir: string,
+  projectDir: string | null,
+  timeoutMs?: number,
+): Promise<EngineMetadata> {
+  let timeouts = 0;
+  const run = async (args: readonly string[], limits: ProbeLimits): Promise<string | null> => {
+    if (timeouts >= MAX_PROBE_TIMEOUTS) return null;
+    const effective = timeoutMs === undefined ? limits : { ...limits, timeoutMs };
+    const result = await probeEngine(path, args, scratchDir, effective, projectDir);
+    if (result.timedOut) timeouts += 1;
+    return result.stdout;
+  };
+  const version = versionOf(await run(['--version'], VERSION_LIMITS));
+  const help = await run(['--help'], HELP_LIMITS);
+  const pluginHelp = await run(['plugin', '--help'], HELP_LIMITS);
+  const mcpHelp = await run(['mcp', '--help'], HELP_LIMITS);
+  return { version, help, pluginHelp, mcpHelp };
 }
 
 /**

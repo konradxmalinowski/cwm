@@ -5,6 +5,7 @@ export * from './cleanup-paths';
 export * from './content';
 export * from './effective';
 export * from './engine-argv';
+export * from './engine-check';
 export * from './env-policy';
 export * from './errors';
 export * from './git-objects';

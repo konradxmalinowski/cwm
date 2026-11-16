@@ -4,6 +4,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   approvalHash,
+  emptyEngineChecks,
+  engineVersionState,
+  formatEngineChecks,
+  parseEngineChecks,
+  uncheckedVersionWarning,
+  withEngineCheck,
+  type EngineCheckEntry,
   buildMcpConfig,
   canonicalJson,
   diffFields,
@@ -1479,5 +1486,104 @@ describe('lockfile projektu (ADR 0051)', () => {
     expect(lockPinsHash([sha('a'), sha('b')])).toBe(lockPinsHash([sha('b'), null, sha('a')]));
     expect(lockPinsHash([null])).toBeNull();
     expect(lockPinsHash([sha('a')])).not.toBe(lockPinsHash([sha('b')]));
+  });
+});
+
+describe('wyniki sprawdzen silnika (ADR 0052)', () => {
+  const HASH = (char: string): string => char.repeat(64);
+  const BIN = { path: '/opt/acme/claude', size: 1234, mtimeMs: 1700000000000.5 };
+  const entry = (at: string, overrides: Partial<EngineCheckEntry> = {}): EngineCheckEntry => ({
+    binary: BIN,
+    checkedAt: at,
+    helpSha256: HASH('a'),
+    pluginHelpSha256: null,
+    mcpHelpSha256: HASH('b'),
+    newSubcommands: [],
+    suspiciousFlags: [],
+    ...overrides,
+  });
+
+  it('zapis jest deterministyczny, posortowany i wraca przez parse bez zmian', () => {
+    const file = withEngineCheck(
+      withEngineCheck(emptyEngineChecks(), '2.1.323', entry('2026-11-16T10:00:00.000Z')),
+      '2.1.1',
+      entry('2026-11-15T10:00:00.000Z', { newSubcommands: ['ide'] }),
+    );
+    const text = formatEngineChecks(file);
+    expect(text.endsWith('}\n')).toBe(true);
+    expect(text.indexOf('"2.1.1"')).toBeLessThan(text.indexOf('"2.1.323"'));
+    const parsed = parseEngineChecks(text);
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.errors));
+    expect(formatEngineChecks(parsed.value)).toBe(text);
+    expect(parsed.value.checks['2.1.1']?.newSubcommands).toEqual(['ide']);
+  });
+
+  it('niezaufany plik: obca wersja, nieznane pole, zly skrot albo klucz to blad', () => {
+    const good = JSON.parse(
+      formatEngineChecks(
+        withEngineCheck(emptyEngineChecks(), '2.1.5', entry('2026-11-16T10:00:00Z')),
+      ),
+    ) as Record<string, unknown>;
+    const bad = (mutate: (doc: Record<string, unknown>) => void): boolean => {
+      const doc = structuredClone(good);
+      mutate(doc);
+      return parseEngineChecks(JSON.stringify(doc)).ok;
+    };
+    expect(bad(() => undefined)).toBe(true);
+    expect(parseEngineChecks('nie json').ok).toBe(false);
+    expect(parseEngineChecks('[]').ok).toBe(false);
+    expect(bad((doc) => (doc['apiVersion'] = 'cwm.dev/v2'))).toBe(false);
+    expect(bad((doc) => (doc['kind'] = 'Lock'))).toBe(false);
+    expect(bad((doc) => (doc['extra'] = 1))).toBe(false);
+    const checks = (doc: Record<string, unknown>): Record<string, Record<string, unknown>> =>
+      doc['checks'] as Record<string, Record<string, unknown>>;
+    expect(bad((doc) => (checks(doc)['2.1.5']!['helpSha256'] = 'abc'))).toBe(false);
+    expect(bad((doc) => (checks(doc)['2.1.5']!['checkedAt'] = 'wczoraj'))).toBe(false);
+    expect(bad((doc) => (checks(doc)['2.1.5']!['newSubcommands'] = ['Zly Nazwa']))).toBe(false);
+    expect(bad((doc) => (checks(doc)['2.1.5']!['dodatkowe'] = 1))).toBe(true);
+    const binary = (doc: Record<string, unknown>): Record<string, unknown> =>
+      checks(doc)['2.1.5']!['binary'] as Record<string, unknown>;
+    expect(bad((doc) => delete checks(doc)['2.1.5']!['binary'])).toBe(false);
+    expect(bad((doc) => (binary(doc)['path'] = 'wzgledna/sciezka'))).toBe(false);
+    expect(bad((doc) => (binary(doc)['path'] = '/opt/a\nb'))).toBe(false);
+    expect(bad((doc) => (binary(doc)['size'] = -1))).toBe(false);
+    expect(bad((doc) => (binary(doc)['size'] = 1.5))).toBe(false);
+    expect(bad((doc) => (binary(doc)['mtimeMs'] = 'dzis'))).toBe(false);
+    expect(bad((doc) => (binary(doc)['extra'] = 1))).toBe(false);
+    expect(bad((doc) => (checks(doc)['latest'] = checks(doc)['2.1.5']!))).toBe(false);
+    const proto = '{"apiVersion":"cwm.dev/v1","kind":"EngineChecks","checks":{"__proto__":{}}}';
+    expect(parseEngineChecks(proto).ok).toBe(false);
+  });
+
+  it('trzyma najwyzej 32 wersje, wypadaja najstarsze sprawdzenia', () => {
+    let file = emptyEngineChecks();
+    for (let i = 0; i < 40; i += 1) {
+      const day = String(i + 1).padStart(2, '0');
+      file = withEngineCheck(file, `2.1.${i}`, entry(`2026-0${(i % 9) + 1}-${day}T00:00:00Z`));
+    }
+    expect(Object.keys(file.checks)).toHaveLength(32);
+    expect(parseEngineChecks(formatEngineChecks(file)).ok).toBe(true);
+    const newest = withEngineCheck(file, '3.0.0', entry('2030-01-01T00:00:00Z'));
+    expect(newest.checks['3.0.0']).toBeDefined();
+    expect(Object.keys(newest.checks)).toHaveLength(32);
+  });
+
+  it('stan wersji: przetestowana, sprawdzona (ten sam plik), inny plik albo niesprawdzona', () => {
+    const file = withEngineCheck(emptyEngineChecks(), '2.1.323', entry('2026-11-16T10:00:00Z'));
+    expect(engineVersionState('2.1.322', '2.1.322', file, BIN)).toBe('expected');
+    expect(engineVersionState('2.1.322', '2.1.322', file, null)).toBe('expected');
+    expect(engineVersionState('2.1.323', '2.1.322', file, { ...BIN })).toBe('checked');
+    expect(engineVersionState('2.1.324', '2.1.322', file, BIN)).toBe('unchecked');
+    expect(engineVersionState('2.1.323', '2.1.322', emptyEngineChecks(), BIN)).toBe('unchecked');
+    // Ta sama wersja, ale inna sciezka, rozmiar, mtime albo brak tozsamosci: do ponownego sprawdzenia (SEC-E2).
+    for (const other of [
+      { ...BIN, path: '/opt/other/claude' },
+      { ...BIN, size: BIN.size + 1 },
+      { ...BIN, mtimeMs: BIN.mtimeMs + 1 },
+      null,
+    ]) {
+      expect(engineVersionState('2.1.323', '2.1.322', file, other)).toBe('other-binary');
+    }
+    expect(uncheckedVersionWarning('2.1.324', '2.1.322')).toMatch(/cwm engine check/);
   });
 });

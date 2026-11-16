@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  emptyEngineChecks,
+  formatEngineChecks,
+  parseEngineChecks,
+  withEngineCheck,
   analyzeContent,
   buildLock,
   composeOrchestration,
@@ -789,5 +793,37 @@ describe('lockfile nie zawiera wartosci sekretow (ADR 0051)', () => {
 
   it('envRef trafia do skrotu tylko jako nazwa, a sam dokument jej nie wypisuje', () => {
     expect(lockOf(settingsWith('x'))).not.toContain('ACME_API_TOKEN');
+  });
+});
+
+describe('wyniki sprawdzen silnika nie zawieraja tekstu pomocy ani sekretow (ADR 0052)', () => {
+  const entry = {
+    binary: { path: '/opt/acme/claude', size: 10, mtimeMs: 1 },
+    checkedAt: '2026-11-16T10:00:00.000Z',
+    helpSha256: 'a'.repeat(64),
+    pluginHelpSha256: null,
+    mcpHelpSha256: null,
+    newSubcommands: ['ide'],
+    suspiciousFlags: ['--config-dir'],
+  };
+
+  it('dokument ma tylko skroty i nazwy; obce pole z tekstem nie wraca, a nazwa z tekstem to odmowa', () => {
+    const text = formatEngineChecks(withEngineCheck(emptyEngineChecks(), '2.1.323', entry));
+    expect(findHardSecret(new TextEncoder().encode(text))).toBeNull();
+    expect(Object.keys(JSON.parse(text) as object).sort()).toEqual([
+      'apiVersion',
+      'checks',
+      'kind',
+    ]);
+    const doc = JSON.parse(text) as { checks: Record<string, Record<string, unknown>> };
+    const injected = structuredClone(doc);
+    injected.checks['2.1.323'] = { ...entry, help: `Usage: ${ANTHROPIC_LIKE}` };
+    // Nieznane pole we wpisie jest pomijane przy odczycie, wiec sekret nie wraca do pamieci CWM.
+    const parsed = parseEngineChecks(JSON.stringify(injected));
+    if (!parsed.ok) throw new Error('parse');
+    expect(formatEngineChecks(parsed.value)).not.toContain(ANTHROPIC_LIKE);
+    const badName = structuredClone(doc);
+    badName.checks['2.1.323'] = { ...entry, suspiciousFlags: [`--flaga ${ANTHROPIC_LIKE}`] };
+    expect(parseEngineChecks(JSON.stringify(badName)).ok).toBe(false);
   });
 });

@@ -7,6 +7,14 @@ import {
   composeOrchestration,
   decideWorkflow,
   ENGINE_SUBCOMMANDS,
+  evaluateEngineHelp,
+  engineCheckWarnings,
+  missingFlagsMessage,
+  MANAGED_FLAGS,
+  parseHelp,
+  REFUSED_FLAGS,
+  REQUIRED_ENGINE_FLAGS,
+  SUSPICIOUS_FLAG_BASELINE,
   MAX_TASK_LENGTH,
   orderSteps,
   renderOrchestration,
@@ -20,6 +28,7 @@ import {
   hasInlineCommands,
   hasUnterminatedSnippet,
   type ArgvInput,
+  type EngineMetadata,
   type RoutingCandidate,
   type WorkflowStep,
 } from '../../src/core/cwm';
@@ -476,5 +485,202 @@ describe('workflow orchestrated: kolejnosc etapow i skladanie tresci (ADR 0050)'
     expect(
       composeOrchestration('Intro.\n', section([step('a', [], 'Run !`ls`')])).unterminatedSnippet,
     ).toBe(false);
+  });
+});
+
+describe('sprawdzenie flag i podpolecen silnika (ADR 0052)', () => {
+  /** Pomoc w ukladzie commandera: definicje z wcieciem 2, opisy i ciag dalszy z duzym wcieciem. */
+  function helpOf(flags: readonly string[], commands: readonly string[]): string {
+    const lines = ['Usage: claude [options] [command] [prompt]', '', 'Options:'];
+    for (const flag of flags) {
+      lines.push(`  ${flag} <value>`.padEnd(40) + 'Opis, ktory wspomina --bare i --settings.');
+      lines.push(`${' '.repeat(40)}--duch-flaga w drugim wierszu opisu`);
+    }
+    lines.push('', 'Commands:');
+    for (const command of commands) {
+      lines.push(`  ${command} [options]`.padEnd(40) + 'Opis polecenia');
+      lines.push(`${' '.repeat(40)}dalszy ciag opisu`);
+    }
+    return `${lines.join('\n')}\n`;
+  }
+
+  const KNOWN_FLAGS = [...MANAGED_FLAGS, ...REFUSED_FLAGS, '--model'];
+  const meta = (overrides: Partial<EngineMetadata> = {}): EngineMetadata => ({
+    version: '9.9.9',
+    help: helpOf(KNOWN_FLAGS, ['mcp', 'plugin|plugins', 'update|upgrade', 'stop|kill <id>']),
+    pluginHelp: 'Usage: claude plugin',
+    mcpHelp: 'Usage: claude mcp',
+    ...overrides,
+  });
+
+  it('flagi CWM podaje silnikowi z listy zarzadzanych; kazda jest wymagana', () => {
+    for (const flag of REQUIRED_ENGINE_FLAGS) expect(MANAGED_FLAGS).toContain(flag);
+    const argv = buildEngineArgv({
+      ...base,
+      strictMcp: true,
+    });
+    if (!argv.ok) throw new Error('argv');
+    const names = argv.argv.filter((arg) => arg.startsWith('--')).map((arg) => arg.split('=')[0]);
+    for (const name of names) expect(REQUIRED_ENGINE_FLAGS).toContain(name);
+    expect(new Set(names)).toEqual(new Set(REQUIRED_ENGINE_FLAGS));
+  });
+
+  it('czyta flagi tylko z wierszy definicji, a podpolecenia z aliasami z sekcji Commands', () => {
+    const parsed = parseHelp(
+      helpOf(
+        ['-m, --model', '--allowedTools, --allowed-tools'],
+        ['stop|kill <id>', 'help [command]'],
+      ),
+    );
+    expect(parsed.hasOptions).toBe(true);
+    expect(parsed.flags).toEqual(['--allowed-tools', '--allowedTools', '--model']);
+    expect(parsed.subcommands).toEqual(['kill', 'stop']);
+    expect(parseHelp('Nic tu nie ma\n').hasOptions).toBe(false);
+  });
+
+  it('komplet flag i znane podpolecenia to ok, bez ostrzezen', () => {
+    const report = evaluateEngineHelp(meta());
+    expect(report.verdict).toBe('ok');
+    expect(report.version).toBe('9.9.9');
+    expect(report.missingFlags).toEqual([]);
+    expect(report.newSubcommands).toEqual([]);
+    expect(report.suspiciousFlags).toEqual([]);
+    expect(report.goneFlags).toEqual([]);
+    expect(engineCheckWarnings(report)).toEqual([]);
+  });
+
+  it('brak flagi, ktora CWM podaje, to missing-flags; wzmianka w opisie innej flagi nie liczy sie', () => {
+    const flags = KNOWN_FLAGS.filter((flag) => flag !== '--strict-mcp-config');
+    const report = evaluateEngineHelp(meta({ help: helpOf(flags, ['mcp']) }));
+    expect(report.verdict).toBe('missing-flags');
+    expect(report.missingFlags).toEqual(['--strict-mcp-config']);
+    expect(missingFlagsMessage(report)).toMatch(/--strict-mcp-config/);
+    // Opis kazdej flagi wspomina --settings, a brak jej wlasnego wiersza i tak ma byc widoczny.
+    const noSettings = evaluateEngineHelp(
+      meta({
+        help: helpOf(
+          KNOWN_FLAGS.filter((flag) => flag !== '--settings'),
+          [],
+        ),
+      }),
+    );
+    expect(noSettings.missingFlags).toEqual(['--settings']);
+  });
+
+  it('nowe podpolecenie spoza ENGINE_SUBCOMMANDS to ostrzezenie z nazwa, ale nie blokada', () => {
+    const report = evaluateEngineHelp(
+      meta({ help: helpOf(KNOWN_FLAGS, ['mcp', 'ide <x>', 'sandbox|sb']) }),
+    );
+    expect(report.verdict).toBe('ok');
+    expect(report.newSubcommands).toEqual(['ide', 'sandbox', 'sb']);
+    expect(engineCheckWarnings(report).join('\n')).toMatch(/ide, sandbox, sb/);
+    expect(ENGINE_SUBCOMMANDS).not.toContain('ide');
+  });
+
+  it('nowa flaga o podejrzanej nazwie jest ostrzezeniem; znane i nieszkodliwe nie', () => {
+    const report = evaluateEngineHelp(
+      meta({
+        help: helpOf(
+          [
+            ...KNOWN_FLAGS,
+            '--config-dir',
+            '--allow-skip-permissions-for-ci',
+            '--plugin-registry',
+            '--mcp-debug',
+            '--setting-overrides',
+            '--theme',
+          ],
+          ['mcp'],
+        ),
+      }),
+    );
+    expect(report.verdict).toBe('ok');
+    expect(report.suspiciousFlags).toEqual([
+      '--allow-skip-permissions-for-ci',
+      '--config-dir',
+      '--mcp-debug',
+      '--plugin-registry',
+      '--setting-overrides',
+    ]);
+    expect(engineCheckWarnings(report).join('\n')).toMatch(/--config-dir/);
+  });
+
+  it('baza flag znanych z 2.1.322 i 2.1.323 nie ostrzega, nowe flagi o groznych nazwach tak (SEC-E6)', () => {
+    const quiet = evaluateEngineHelp(
+      meta({ help: helpOf([...KNOWN_FLAGS, ...SUSPICIOUS_FLAG_BASELINE], ['mcp']) }),
+    );
+    expect(quiet.suspiciousFlags).toEqual([]);
+    expect(SUSPICIOUS_FLAG_BASELINE).toEqual(
+      expect.arrayContaining(['--add-dir', '--permission-mode', '--allowedTools']),
+    );
+    const loud = evaluateEngineHelp(
+      meta({
+        help: helpOf(
+          [
+            ...KNOWN_FLAGS,
+            ...SUSPICIOUS_FLAG_BASELINE,
+            '--yolo',
+            '--trust-all',
+            '--sandbox-off',
+            '--allow-everything',
+            '--dangerous-mode',
+            '--bypass-checks',
+            '--hooks-dir',
+            '--add-dir-global',
+            '--skip-trust',
+            '--permission-override',
+            '--color',
+          ],
+          ['mcp'],
+        ),
+      }),
+    );
+    expect(loud.suspiciousFlags).toEqual([
+      '--add-dir-global',
+      '--allow-everything',
+      '--bypass-checks',
+      '--dangerous-mode',
+      '--hooks-dir',
+      '--permission-override',
+      '--sandbox-off',
+      '--skip-trust',
+      '--trust-all',
+      '--yolo',
+    ]);
+  });
+
+  it('wersja z --version inna niz wykryta wczesniej to unverified (SEC-E7)', () => {
+    expect(evaluateEngineHelp(meta(), '9.9.9').verdict).toBe('ok');
+    expect(evaluateEngineHelp(meta(), undefined).verdict).toBe('ok');
+    const changed = evaluateEngineHelp(meta(), '9.9.8');
+    expect(changed.verdict).toBe('unverified');
+    expect(changed.problems.join(' ')).toMatch(/rozni sie od wykrytej/);
+  });
+
+  it('zniknieta flaga z listy odmow jest informacja, nie blokada ani ostrzezeniem', () => {
+    const flags = KNOWN_FLAGS.filter((flag) => flag !== '--teleport');
+    const report = evaluateEngineHelp(meta({ help: helpOf(flags, []) }));
+    expect(report.verdict).toBe('ok');
+    expect(report.goneFlags).toEqual(['--teleport']);
+    expect(engineCheckWarnings(report)).toEqual([]);
+  });
+
+  it('brak wersji, pomocy albo znanego ukladu pomocy to unverified, nie sukces', () => {
+    expect(evaluateEngineHelp(meta({ version: null })).verdict).toBe('unverified');
+    expect(evaluateEngineHelp(meta({ version: 'abc' })).verdict).toBe('unverified');
+    const noHelp = evaluateEngineHelp(meta({ help: null }));
+    expect(noHelp.verdict).toBe('unverified');
+    expect(noHelp.problems.join(' ')).toMatch(/--help/);
+    const strange = evaluateEngineHelp(meta({ help: 'Zupelnie inny format\n' }));
+    expect(strange.verdict).toBe('unverified');
+    expect(strange.missingFlags).toEqual([]);
+    expect(engineCheckWarnings(strange)[0]).toMatch(/nie powiodlo sie/);
+  });
+
+  it('plugin --help i mcp --help bez wyniku to tylko informacja o niedostepnosci', () => {
+    const report = evaluateEngineHelp(meta({ pluginHelp: null, mcpHelp: null }));
+    expect(report.verdict).toBe('ok');
+    expect(report.unavailable).toEqual(['plugin --help', 'mcp --help']);
+    expect(engineCheckWarnings(report)).toEqual([]);
   });
 });

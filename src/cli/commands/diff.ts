@@ -11,9 +11,10 @@ import {
   denyNetwork,
 } from '../../infra/cwm';
 import { CliError, contextOf, print, printJson, type Context } from '../context';
+import { engineGateReadOnly } from '../engine-flow';
 import { evaluateLock, lockJson, lockSummaryLines, type LockReport } from '../lock-flow';
 import {
-  detectEngineVersion,
+  detectEngine,
   isPackPending,
   loadApprovalState,
   prepareRun,
@@ -171,12 +172,15 @@ async function diffCommand(ctx: Context, options: DiffOptions): Promise<void> {
       [],
     );
     // Lockfile jest tylko czytany; wersja silnika to ta sama proba co w `cwm start` (null, gdy sie nie uda).
+    const engine = await detectEngine(company, projectDir);
+    const engineVersion = engine.version;
+    const gate = await engineGateReadOnly(ctx.layout, engineVersion, engine.path);
     const lock = await evaluateLock({
       layout: ctx.layout,
       record,
       effective,
       facts: plan.lockFacts,
-      engineVersion: await detectEngineVersion(company, projectDir),
+      engineVersion,
       frozenFlag: options.frozen === true,
     });
     const { items } = await loadApprovalState(ctx, plan);
@@ -185,7 +189,9 @@ async function diffCommand(ctx: Context, options: DiffOptions): Promise<void> {
     const live = root === null ? [] : await liveSessions(root, false);
     const others = live.filter((marker) => marker.pid !== process.pid);
     const livePlugins = new Set(others.flatMap((marker) => marker.plugins ?? []));
-    const diff = await diffRuntime(root, plan, { stat: options.stat === true, livePlugins });
+    const computed = await diffRuntime(root, plan, { stat: options.stat === true, livePlugins });
+    // Ostrzezenie o wersji silnika bez sprawdzenia (ADR 0052): `diff` tylko czyta zapisany wynik.
+    const diff = { ...computed, warnings: [...computed.warnings, ...gate.warnings] };
     result = {
       plan,
       diff,

@@ -70,6 +70,7 @@ cwm init
   approvals/packs/<przestrzeń>/<nazwa>.json   zaufane skróty pakietów (tworzy `cwm import`, odnawia `cwm start`)
   packs/<przestrzeń>/<nazwa>.yaml definicje pakietów: lista zasobów (tworzy `cwm import`, zob. `cwm pack`)
   runtime/<firma>/                profil i pliki uruchomienia (tworzy `cwm start`, zob. niżej)
+  runtime/engine-checks.json      wyniki sprawdzenia flag silnika per wersja (tworzy `cwm engine check` i `cwm start`, ADR 0052)
   sources/git/<skrót adresu>/<commit>/   kopie pluginów z git, bez `.git` (tworzy `cwm plugin add git|fetch|update`)
   cache/  locks/                  zarezerwowane, na razie puste
 ```
@@ -470,7 +471,7 @@ i tabulator zostają.
 | Kod | Znaczenie |
 |---|---|
 | `0` | sukces; także `-h` i `-V` |
-| `1` | błąd walidacji, polityki albo stanu na dysku (brak `cwm init`, firma już istnieje, błąd w manifeście, przerwane pytanie, nieoczekiwany błąd); dla `import claude` i `sync` także zmiany do zapisania bez terminala (zob. niżej), a dla `sync` zablokowane usunięcie (zasób obowiązkowy albo wymagany) i źródło, którego nie da się przejrzeć; dla `start` niezatwierdzone zasoby bez terminala, brak zmiennej `envRef`, trwająca sesja firmy z innym profilem, odmowa zatwierdzenia, dryf, brak lub uszkodzenie lockfile w trybie frozen; dla `lock --check` dryf; po uruchomieniu silnika `start` zwraca jego kod wyjścia |
+| `1` | błąd walidacji, polityki albo stanu na dysku (brak `cwm init`, firma już istnieje, błąd w manifeście, przerwane pytanie, nieoczekiwany błąd); dla `import claude` i `sync` także zmiany do zapisania bez terminala (zob. niżej), a dla `sync` zablokowane usunięcie (zasób obowiązkowy albo wymagany) i źródło, którego nie da się przejrzeć; dla `start` niezatwierdzone zasoby bez terminala, brak zmiennej `envRef`, trwająca sesja firmy z innym profilem, odmowa zatwierdzenia, dryf, brak lub uszkodzenie lockfile w trybie frozen; dla `lock --check` dryf; dla `start` i `run` także silnik bez flagi, którą CWM mu podaje (ADR 0052); dla `engine check` brak takiej flagi albo nieczytelna pomoc silnika; po uruchomieniu silnika `start` zwraca jego kod wyjścia |
 | `2` | błędne użycie: nieznane polecenie lub opcja, brak wymaganego argumentu, niepoprawne id, zła wartość `--store`, `CWM_HOME` niebezwzględny; dla `import claude` brak `--company` i `--global` bez terminala albo oba naraz; dla `start` niedozwolone argumenty silnika po `--`, dla `approvals revoke` zły zestaw selektorów; dla `diff` także każdy błąd ustawienia (brak manifestu projektu, uszkodzony manifest firmy), bo `1` oznacza tam różnicę: start coś zmieni albo odmówi; dla `lock --check` brak lub uszkodzenie lockfile i błąd ustawienia (`1` to dryf) |
 
 `cwm` bez argumentów i `cwm help` wypisują pomoc, ale kończą się kodem `2`. Do pomocy z kodem `0`
@@ -1218,12 +1219,12 @@ obcy (inna wersja formatu, nieznane pole), będący dowiązaniem albo większy n
 (jak w `cwm diff`, gdzie `1` oznacza różnicę). Bez `--check` uszkodzony lockfile nie jest nadpisywany: usuń go
 ręcznie i uruchom `cwm lock` ponownie (może pochodzić z nowszej wersji CWM). `cwm lock` i `cwm diff` uruchamiają `claude --version`
 (w katalogu tymczasowym systemu, z limitem czasu; każdy błąd to wersja `null`). `--json`: zapis
-`{ ok, written, created, file, resources, engine, drift }`, `--check` `{ ok, state, drift }`.
+`{ ok, written, created, file, resources, engine, drift, warnings }`, `--check` `{ ok, state, drift, warnings }` (`warnings`: wersja silnika bez sprawdzenia flag, zob. `cwm engine`).
 
 **Użycie w `cwm start`, `cwm run` i `cwm diff`.** Gdy lockfile istnieje, po rozwiązaniu i przed
 zatwierdzeniami start porównuje go z aktualnym stanem. Dryf zasobów to ostrzeżenie z podsumowaniem
 (`dodane N, usuniete N, zmienione N`) i podpowiedzią `cwm lock --check` oraz `cwm lock`; start idzie dalej.
-Inna wersja silnika to zawsze tylko ostrzeżenie (ADR 0036 pkt 10). Tryb **frozen** zamienia dryf zasobów
+Inna wersja silnika to w lockfile zawsze tylko ostrzeżenie (ADR 0036 pkt 10; sprawdzenie flag silnika to osobna rzecz, zob. `cwm engine`). Tryb **frozen** zamienia dryf zasobów
 w odmowę startu (kod `1`, przed pytaniami): `--frozen` w `cwm start`, `cwm run` i `cwm diff` albo
 `spec.lock: frozen` w `project.yaml`; w tym trybie także brak lockfile jest odmową z podpowiedzią
 `cwm lock`. Uszkodzony lockfile bez frozen to ostrzeżenie z podpowiedzią usunięcia pliku (`cwm lock` go nie nadpisuje, `cwm lock
@@ -1355,7 +1356,9 @@ Usuwane są też `envRef` z rejestru, których ta firma nie używa, oraz wartoś
 (prefiksy dostawców, JWT, PEM, `://user:hasło@`). `SSH_AUTH_SOCK` jest usuwany; wraca przez
 `runtime.env.passthrough`. `envRef` z `Settings.env`
 trafia wyłącznie do środowiska dziecka. Brak albo pusta zmienna `envRef` kończy się kodem `1`.
-Na Windowsie `start` odmawia. Silnik inny niż 2.1.322 daje ostrzeżenie.
+Na Windowsie `start` odmawia. Wersja silnika inna niż 2.1.322 i bez zapisanego sprawdzenia daje ostrzeżenie
+z podpowiedzią `cwm engine check`; `cwm start` i `cwm run` (bez `--dry-run`) robią takie sprawdzenie same, patrz
+`cwm engine`: brak flagi, którą CWM podaje silnikowi, to odmowa kodem `1` przed pytaniami i zapisem profilu.
 
 **Argumenty silnika** (po `--`) trafiają do silnika po flagach CWM (`--plugin-dir=...`,
 `--mcp-config=...`, `--strict-mcp-config`, na końcu `--settings <plik>`). Samo `--` jest dodawane
@@ -1459,6 +1462,65 @@ pełne skróty przed i po, `lines`, `hunks`, `hidden`, `notes`. Kody wyjścia: `
 coś zmieni albo odmówi (zob. wyżej), `2` błąd użycia lub ustawienia (brak manifestu projektu,
 uszkodzony manifest, zła opcja). Pominięte w porównaniu: `generated/manifest.json`, `.lock`, `active/`,
 `tmp/`.
+
+### `cwm engine`
+
+```text
+cwm engine check  [--project <katalog>] [--json]
+cwm engine status [--project <katalog>] [--json]
+```
+
+Sprawdzenie nowej wersji silnika (ADR 0052, ADR 0036 pkt 10). Claude Code aktualizuje się sam, więc po każdym
+wydaniu wersja różni się od przetestowanej (2.1.322). Zamiast ostrzegać za każdym razem, CWM sprawdza, czy flagi, na
+których stoi, nadal istnieją, i zapamiętuje wynik dla tej wersji.
+
+`check` uruchamia cztery polecenia metadanych pliku silnika: `--version`, `--help`, `plugin --help`, `mcp --help`.
+Nic więcej: bez `-p`, bez logowania, bez modelu. Plik silnika jest wybierany jak w `cwm start` (`runtime.claude.path`
+firmy projektu albo `PATH`; bez projektu tylko `PATH`), środowisko jak przy `claude --version` (minimalne, z
+`CLAUDE_CONFIG_DIR` w pustym katalogu tymczasowym 0700, który jest usuwany po sprawdzeniu), z limitem czasu (10 s na
+polecenie) i wyjścia; z `PATH` próby wypadają elementy w katalogu projektu, a proces i jego potomkowie są kończeni
+razem (osobna grupa procesów); po dwóch przekroczeniach czasu reszta poleceń jest pomijana. Wynik:
+
+| Wynik | Znaczenie | Kod |
+|---|---|---|
+| `ok` | wszystkie flagi, które CWM podaje silnikowi (`--settings`, `--mcp-config`, `--strict-mcp-config`, `--plugin-dir`), są w `--help`; wynik jest zapisany w `~/.cwm/runtime/engine-checks.json` (skrót pomocy, bez jej tekstu) | `0` |
+| `missing-flags` | którejś z tych flag nie ma; silnik nie zrozumie argumentów; nic nie jest zapisane | `1` |
+| `unverified` | nie udało się odczytać wersji albo pomocy, pomoc ma nieznany układ, albo `--version` w trakcie sprawdzenia dało inną wersję niż przed nim; nic nie jest zapisane | `1` |
+
+Do wyniku `ok` dochodzą ostrzeżenia (nie blokują): podpolecenia w `--help` spoza listy, którą CWM blokuje po `--`
+(`cwm start -- <podpolecenie>` jest dla nich otwarte), oraz nowe flagi o nazwach zawierających `dangerous`, `permission`, `bypass`, `yolo`, `trust`, `allow`, `sandbox`,
+`add-dir`, `hook`, `config`, `setting`, `plugin`, `mcp` albo `skip`, których CWM nie zna (flagi pasujące do wzorca, ale
+obecne już w 2.1.322 i 2.1.323, jak `--add-dir` czy `--permission-mode`, są w bazie i nie ostrzegają). Flagi z list CWM, których silnik już nie ma, i
+polecenia metadanych bez wyniku są tylko wypisane. Sprawdzenie dotyczy wyłącznie interfejsu wiersza polecen: nie
+dowodzi, że zachowanie sesji (hooki, MCP, izolacja profilu; V-01 do V-08 w ADR 0036) jest takie jak w 2.1.322.
+
+**Wynik jest związany z plikiem silnika** (ścieżka po `realpath`, rozmiar, czas modyfikacji). Ta sama wersja w innym
+pliku albo po jego zmianie to „inny plik”: jak niesprawdzona, więc `start` sprawdza ponownie, a `--dry-run`, `diff` i
+`lock` ostrzegają. To zgodność z uczciwym dryfem (aktualizacja, inna wersja), nie obrona przed wrogim plikiem silnika.
+
+**Fail-open.** Gdy sprawdzenia nie da się ocenić (`unverified`), `cwm start` ostrzega i uruchamia silnik, bez zapisu
+wyniku. Odmowa dotyczy wyłącznie udowodnionego braku flagi, którą CWM podaje silnikowi.
+
+`status` pokazuje plik i wersję silnika oraz stan: przetestowana (2.1.322), sprawdzona (z datą, skrótem pomocy i
+zapisanymi ostrzeżeniami), wynik dla innego pliku (z zapisaną ścieżką i rozmiarem) albo niesprawdzona, i listę
+sprawdzonych wersji. Tylko odczyt.
+
+**Kiedy to się dzieje samo.** `cwm start` i `cwm run` bez `--dry-run`, przy wersji innej niż przetestowana i bez
+zapisanego wyniku, wykonują sprawdzenie przed zatwierdzeniami (kilka sekund) i zapisują wynik `ok`. Brak flagi kończy
+się odmową z kodem `1` i silnik się nie uruchamia; nieudane sprawdzenie (`unverified`) daje ostrzeżenie i start idzie
+dalej, a następny start powtórzy próbę. Drugi start tej samej wersji nie ostrzega ani nie sprawdza. `--dry-run`,
+`cwm diff` i `cwm lock` tylko czytają zapisany wynik: przy wersji bez wyniku ostrzegają (`cwm engine check`), niczego
+nie uruchamiają i nie zapisują (poza `claude --version`, jak dotąd). W `--dry-run --json` pole `engine.check` to
+`expected`, `checked`, `other-binary` albo `unchecked`.
+
+```sh
+cwm engine status
+cwm engine check --json
+```
+
+Z `--json` (`check`): `{ ok, engine: { path, source, version }, expectedVersion, verdict, missingFlags[],
+newSubcommands[], suspiciousFlags[], goneFlags[], unavailable[], problems[], stored, warnings[] }`; `status`:
+`{ ok, engine, expectedVersion, state, check, checkedVersions[] }`.
 
 ### `cwm pack`
 

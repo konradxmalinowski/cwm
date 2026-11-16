@@ -16,6 +16,14 @@ export const MANAGED_FLAGS: readonly string[] = [
   '--safe-mode',
 ];
 
+/** Flagi, ktore CWM sam podaje silnikowi (`buildEngineArgv`): ich brak w `--help` to blokada startu (ADR 0052). */
+export const REQUIRED_ENGINE_FLAGS: readonly string[] = [
+  '--settings',
+  '--mcp-config',
+  '--strict-mcp-config',
+  '--plugin-dir',
+];
+
 /** Flagi omijajace uprawnienia albo kierujace sesje poza profil CWM; odblokowanie to osobny etap. */
 export const REFUSED_FLAGS: readonly string[] = [
   '--dangerously-skip-permissions',
