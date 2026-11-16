@@ -1,0 +1,33 @@
+name: npm ci z ograniczona powtorka
+description: >
+  npm ci z najwyzej trzema probami. Powtarza tylko instalacje (siec), nigdy testy.
+
+# Dlaczego powtorka: better-sqlite3 przy instalacji pobiera gotowa binarke albo naglowki Node
+# dla node-gyp. Na runnerze Windows pobranie naglowkow potrafi urwac sie bez bledu sieci
+# ("gyp ERR! Completion callback never invoked"), a wtedy npm ci pada, choc lockfile i kod
+# sa w porzadku. To blad transportu, nie projektu, wiec druga proba jest wlasciwa reakcja.
+# Trzy proby i staly odstep: blad, ktory powtarza sie trzy razy, jest prawdziwy i ma byc czerwony.
+runs:
+  using: composite
+  steps:
+    - name: npm ci
+      shell: bash
+      env:
+        # Wewnetrzne powtorki pobran npm z rejestru, zanim w ogole dojdzie do drugiej proby.
+        npm_config_fetch_retries: '4'
+        npm_config_fetch_retry_mintimeout: '10000'
+        npm_config_fetch_retry_maxtimeout: '60000'
+      run: |
+        set -uo pipefail
+        attempts=3
+        for attempt in $(seq 1 "$attempts"); do
+          if npm ci; then
+            exit 0
+          fi
+          if [ "$attempt" -lt "$attempts" ]; then
+            echo "::warning::npm ci nie powiodlo sie (proba $attempt z $attempts), ponawiam za 20 s"
+            sleep 20
+          fi
+        done
+        echo "::error::npm ci nie powiodlo sie $attempts razy z rzedu"
+        exit 1
