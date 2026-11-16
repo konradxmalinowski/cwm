@@ -52,8 +52,7 @@
         <ul class="notice__list" data-testid="unrecoverable-list">
           @for (file of p.unrecoverable; track file.path) {
             <li>
-              <span class="mono">{{ file.path }}</span
-              >: {{ file.reason }}
+              <span class="mono">{{ file.path }}</span>: {{ file.reason }}
             </li>
           }
         </ul>
