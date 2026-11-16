@@ -101,6 +101,8 @@ export interface ProjectManifest {
       readonly default?: string;
     };
     readonly native: { readonly preserve: boolean | null };
+    /** Rozszerzenie wlasciciela (ADR 0051): `frozen` zamienia dryf wzgledem lockfile w odmowe startu. */
+    readonly lock?: 'frozen' | 'warn';
     readonly imports: readonly ProjectImport[];
   };
 }

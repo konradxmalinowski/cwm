@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   analyzeContent,
+  buildLock,
   composeOrchestration,
+  formatLock,
+  lockDefinition,
   orderSteps,
   renderOrchestration,
   classifyEnvValue,
@@ -16,6 +19,7 @@ import {
   hasInlineCommands,
   mergeSettings,
   textHasSecret,
+  type EffectiveConfiguration,
   type Settings,
   type WorkflowStep,
   isSettingsEnvNameDenied,
@@ -745,5 +749,45 @@ describe('tresc komendy workflow orchestrated przez parseContent (ADR 0050)', ()
       expect(new TextDecoder().decode(parsed.content).startsWith('## Orchestrated steps')).toBe(
         true,
       );
+  });
+});
+
+describe('lockfile nie zawiera wartosci sekretow (ADR 0051)', () => {
+  const settingsWith = (value: string): Settings => ({
+    kind: 'settings',
+    id: 'acme-a/env',
+    version: '1.0.0',
+    hooks: {},
+    permissions: { allow: [], deny: [], ask: [], additionalDirectories: [] },
+    env: { API_MODE: { value }, API_TOKEN: { envRef: 'ACME_API_TOKEN' } },
+    enforce: false,
+  });
+  const lockOf = (resource: Settings): string =>
+    formatLock(
+      buildLock({
+        effective: {
+          apiVersion: 'cwm.dev/v1',
+          kind: 'EffectiveConfiguration',
+          profile: { company: 'acme-a', project: 'demo', engine: 'claude' },
+          resources: [{ origin: 'optional', layer: 'company', resource }],
+        } as unknown as EffectiveConfiguration,
+        facts: [],
+        engineVersion: null,
+      }),
+    );
+
+  it.each([OPENAI_LIKE, ANTHROPIC_LIKE, GITHUB_LIKE, GITLAB_LIKE, AWS_LIKE, SLACK_LIKE])(
+    'wartosc wpisana wprost nie trafia do dokumentu, ale zmienia skrot definicji',
+    (secret) => {
+      const text = lockOf(settingsWith(secret));
+      expect(text).not.toContain(secret);
+      expect(findHardSecret(new TextEncoder().encode(text))).toBeNull();
+      expect(lockDefinition(settingsWith(secret))).not.toBe(lockDefinition(settingsWith('inna')));
+      expect(text).not.toBe(lockOf(settingsWith('inna')));
+    },
+  );
+
+  it('envRef trafia do skrotu tylko jako nazwa, a sam dokument jej nie wypisuje', () => {
+    expect(lockOf(settingsWith('x'))).not.toContain('ACME_API_TOKEN');
   });
 });

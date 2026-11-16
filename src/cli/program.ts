@@ -9,6 +9,7 @@ import { registerDiff } from './commands/diff';
 import { registerDoctor } from './commands/doctor';
 import { registerImport } from './commands/import';
 import { registerInit } from './commands/init';
+import { registerLock } from './commands/lock';
 import { registerMarketplace } from './commands/marketplace';
 import { registerPlugin } from './commands/plugin';
 import { registerPack } from './commands/pack';
@@ -55,6 +56,7 @@ export function buildProgram(): Command {
   registerSync(program);
   registerPack(program);
   registerApprovals(program);
+  registerLock(program);
   registerStart(program);
   registerRun(program);
   registerDiff(program);

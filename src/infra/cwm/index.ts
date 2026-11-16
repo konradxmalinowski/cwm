@@ -8,6 +8,7 @@ export * from './import-plan';
 export * from './import-source';
 export * from './import-types';
 export * from './layout';
+export * from './lockfile';
 export * from './marketplace';
 export * from './network-guard';
 export * from './pack-derive';

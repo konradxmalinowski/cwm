@@ -12,6 +12,9 @@ zmieni się względem profilu, który już leży w `~/.cwm/runtime/<firma>/`. Po
 manifestu albo po edycji zasobu w rejestrze użytkownik chce zobaczyć różnicę przed startem, bez
 ryzyka, że sprawdzanie samo coś zapisze albo zablokuje działającą sesję.
 
+Uzupełnienie (ADR 0051): `cwm diff` uruchamia dodatkowo `claude --version` (w katalogu tymczasowym systemu, z limitem
+czasu, błąd to `null`), żeby ocenić lockfile projektu; to jedyny proces, jaki uruchamia.
+
 ## Decyzje
 
 1. **Ten sam plan co start.** `cwm diff` woła `prepareRun` i `loadApprovalState`, wydzielone z

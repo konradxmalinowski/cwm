@@ -65,6 +65,7 @@ cwm init
       files/<nazwa>/files.yaml
       workflows/<nazwa>/workflow.yaml
       projects/<id>.yaml          manifesty projektów z `--store home`
+      projects/<id>.lock          lockfile projektu z `--store home` (tworzy `cwm lock`)
   approvals/<firma>.yaml          zatwierdzenia zasobów z polami wykonawczymi (tworzy `cwm start`)
   approvals/packs/<przestrzeń>/<nazwa>.json   zaufane skróty pakietów (tworzy `cwm import`, odnawia `cwm start`)
   packs/<przestrzeń>/<nazwa>.yaml definicje pakietów: lista zasobów (tworzy `cwm import`, zob. `cwm pack`)
@@ -199,6 +200,7 @@ spec:
     default: acme-a/bugfix        # opcjonalne (ADR 0049): przesłania workflow domyślny firmy
   native:
     preserve: true
+  lock: warn               # `frozen`: dryf wobec lockfile to odmowa startu (ADR 0051); pole opcjonalne
 ```
 
 Projekt z manifestem w `~/.cwm`, `companies/acme-a/projects/acme-legacy.yaml`. Różni się od
@@ -468,8 +470,8 @@ i tabulator zostają.
 | Kod | Znaczenie |
 |---|---|
 | `0` | sukces; także `-h` i `-V` |
-| `1` | błąd walidacji, polityki albo stanu na dysku (brak `cwm init`, firma już istnieje, błąd w manifeście, przerwane pytanie, nieoczekiwany błąd); dla `import claude` i `sync` także zmiany do zapisania bez terminala (zob. niżej), a dla `sync` zablokowane usunięcie (zasób obowiązkowy albo wymagany) i źródło, którego nie da się przejrzeć; dla `start` niezatwierdzone zasoby bez terminala, brak zmiennej `envRef`, trwająca sesja firmy z innym profilem, odmowa zatwierdzenia; po uruchomieniu silnika `start` zwraca jego kod wyjścia |
-| `2` | błędne użycie: nieznane polecenie lub opcja, brak wymaganego argumentu, niepoprawne id, zła wartość `--store`, `CWM_HOME` niebezwzględny; dla `import claude` brak `--company` i `--global` bez terminala albo oba naraz; dla `start` niedozwolone argumenty silnika po `--`, dla `approvals revoke` zły zestaw selektorów; dla `diff` także każdy błąd ustawienia (brak manifestu projektu, uszkodzony manifest firmy), bo `1` oznacza tam różnicę: start coś zmieni albo odmówi |
+| `1` | błąd walidacji, polityki albo stanu na dysku (brak `cwm init`, firma już istnieje, błąd w manifeście, przerwane pytanie, nieoczekiwany błąd); dla `import claude` i `sync` także zmiany do zapisania bez terminala (zob. niżej), a dla `sync` zablokowane usunięcie (zasób obowiązkowy albo wymagany) i źródło, którego nie da się przejrzeć; dla `start` niezatwierdzone zasoby bez terminala, brak zmiennej `envRef`, trwająca sesja firmy z innym profilem, odmowa zatwierdzenia, dryf, brak lub uszkodzenie lockfile w trybie frozen; dla `lock --check` dryf; po uruchomieniu silnika `start` zwraca jego kod wyjścia |
+| `2` | błędne użycie: nieznane polecenie lub opcja, brak wymaganego argumentu, niepoprawne id, zła wartość `--store`, `CWM_HOME` niebezwzględny; dla `import claude` brak `--company` i `--global` bez terminala albo oba naraz; dla `start` niedozwolone argumenty silnika po `--`, dla `approvals revoke` zły zestaw selektorów; dla `diff` także każdy błąd ustawienia (brak manifestu projektu, uszkodzony manifest firmy), bo `1` oznacza tam różnicę: start coś zmieni albo odmówi; dla `lock --check` brak lub uszkodzenie lockfile i błąd ustawienia (`1` to dryf) |
 
 `cwm` bez argumentów i `cwm help` wypisują pomoc, ale kończą się kodem `2`. Do pomocy z kodem `0`
 służy `-h`.
@@ -1156,10 +1158,87 @@ tej grupy: jej zasoby zostają bez zmian, a polecenie kończy się kodem `1`. `-
 planu importu (`items`, `skipped`, `flagged`, `packs`) oraz `state` (`ok`, `missing`, `error`),
 `autoIncluded` i `changedFlagged`.
 
+### `cwm lock`
+
+```text
+cwm lock [--project <katalog>] [--check] [--json]
+```
+
+Zapisuje lockfile projektu (ADR 0051): powtarzalny obraz tego, co projekt dostaje po rozwiązaniu, do
+wykrywania dryfu między sesjami (zmiana w rejestrze, firmie, pluginie z git albo wersji silnika). Liczy go
+z tego samego rozwiązania i planu co `cwm start` (te same błędy, te same pliki zasobów), ale nie generuje
+profilu, nie pyta o zatwierdzenia i nie łączy się z siecią. To **nie jest zatwierdzenie**: lockfile niczego
+nie zatwierdza ani nie zastępuje zatwierdzeń z `cwm start`.
+
+Plik leży obok manifestu projektu, w tym samym magazynie i z tym samym zakresem zapisu (atomowo, tryb
+`0600`, bez dowiązań): `<projekt>/.cwm/cwm.lock` dla `--store local`,
+`~/.cwm/companies/<firma>/projects/<id>.lock` dla `--store home`. Jest to JSON z posortowanymi kluczami i
+zasobami (`rodzaj:id`), więc dwa zapisy tego samego stanu dają identyczne bajty, a polecenie bez zmian nie
+dotyka pliku (`Lockfile bez zmian`).
+
+```json
+{
+  "apiVersion": "cwm.dev/v1",
+  "company": "acme-a",
+  "engine": { "name": "claude-code", "version": "2.1.322" },
+  "kind": "Lock",
+  "project": "demo",
+  "resources": [
+    {
+      "content": "<sha256 treści>",
+      "definition": "<sha256 definicji z manifestu>",
+      "id": "acme-a/lint",
+      "kind": "skill",
+      "layer": "company",
+      "origin": "optional",
+      "version": "1.0.0"
+    }
+  ]
+}
+```
+
+Wpis zasobu: `definition` to skrót kanonicznego JSON definicji z manifestu (bez `nativeDir`; wartości `env`
+wpisane wprost i nazwy `envRef` wchodzą do skrótu, więc ich zmiana jest dryfem); `content` to skrót treści z plików
+źródłowych (przed przepisywaniem odwołań, więc niezależny od maszyny): drzewo skilla i `Files` (`treeSha256`),
+plik agenta i komendy, wygenerowana komenda workflow, drzewo pluginu, plik polecenia MCP będącego ścieżką;
+`null` dla `Settings` i MCP bez pliku. `pins` to skrót skrótów skryptów hooków przypiętych przez plan.
+Plugin z git ma `git: { commit, tree }`, plugin z marketplace'u `marketplace: { name, version }`. Wersja
+silnika pochodzi z `claude --version` (ta sama proba co w `cwm start`: bezpieczny plik silnika, minimalne
+środowisko, limit czasu); brak silnika albo nieudana proba to `null`, nie błąd. W pliku nie ma czasu, nazwy
+hosta, ścieżek bezwzględnych ani jawnych wartości (tylko nazwy, wersje i skróty). Skróty nie są jednak tajne
+(bez HMAC): krótki sekret osadzony w `args` serwera MCP albo w poleceniu hooka dałoby się zgadnąć ze skrótu, więc
+nie commituj lockfile projektów, których zasoby osadzają dane uwierzytelniające (użyj `envRef`). Plik zawiera id
+zasobów (także prywatnych), firmy i projektu, więc jego udostępnienie ujawnia te nazwy.
+
+`--check` niczego nie zapisuje i porównuje zapisany lockfile z aktualnym stanem: kod `0` przy zgodności, `1`
+przy dryfie (zasób dodany, usunięty, ze zmienionym polem: `version`, `definition`, `content`, `pins`, `git`,
+`marketplace`, `origin`, `layer`; zmieniona firma lub projekt; zmieniona wersja silnika, gdy znane są obie), z
+listą różnic. Wersja silnika nieznana po jednej ze stron nie jest dryfem. Brak lockfile, plik uszkodzony,
+obcy (inna wersja formatu, nieznane pole), będący dowiązaniem albo większy niż 8 MiB to błąd z kodem `2`
+(jak w `cwm diff`, gdzie `1` oznacza różnicę). Bez `--check` uszkodzony lockfile nie jest nadpisywany: usuń go
+ręcznie i uruchom `cwm lock` ponownie (może pochodzić z nowszej wersji CWM). `cwm lock` i `cwm diff` uruchamiają `claude --version`
+(w katalogu tymczasowym systemu, z limitem czasu; każdy błąd to wersja `null`). `--json`: zapis
+`{ ok, written, created, file, resources, engine, drift }`, `--check` `{ ok, state, drift }`.
+
+**Użycie w `cwm start`, `cwm run` i `cwm diff`.** Gdy lockfile istnieje, po rozwiązaniu i przed
+zatwierdzeniami start porównuje go z aktualnym stanem. Dryf zasobów to ostrzeżenie z podsumowaniem
+(`dodane N, usuniete N, zmienione N`) i podpowiedzią `cwm lock --check` oraz `cwm lock`; start idzie dalej.
+Inna wersja silnika to zawsze tylko ostrzeżenie (ADR 0036 pkt 10). Tryb **frozen** zamienia dryf zasobów
+w odmowę startu (kod `1`, przed pytaniami): `--frozen` w `cwm start`, `cwm run` i `cwm diff` albo
+`spec.lock: frozen` w `project.yaml`; w tym trybie także brak lockfile jest odmową z podpowiedzią
+`cwm lock`. Uszkodzony lockfile bez frozen to ostrzeżenie z podpowiedzią usunięcia pliku (`cwm lock` go nie nadpisuje, `cwm lock
+--check` daje kod `2`), we frozen odmowa. `--dry-run` i `--json` pokazują stan
+(`lock.state`: `absent`, `match`, `drift`, `invalid`). Frozen to wykrywanie dryfu, nie ochrona integralności i
+nie zastępuje zatwierdzeń: kto zmieni zasoby, może zapisać też lockfile.
+
+Lockfile nie obejmuje plików spoza rejestru poza przypiętymi skryptami hooków ani zmian samego profilu
+(od tego jest `cwm diff`). `<projekt>/.cwm/` jest zwykle ignorowane przez git; żeby dzielić lockfile z
+zespołem, wyłącz ignorowanie samego `cwm.lock`.
+
 ### `cwm start`
 
 ```text
-cwm start [--project <katalog>] [--strict-mcp] [--dry-run] [--json] [-- <argumenty silnika>]
+cwm start [--project <katalog>] [--strict-mcp] [--frozen] [--dry-run] [--json] [-- <argumenty silnika>]
 ```
 
 Składa konfigurację projektu (jak `cwm resolve`), generuje profil firmy i uruchamia Claude Code
@@ -1331,14 +1410,14 @@ pakietu). `--json` w `--dry-run` ma przy takich zasobach pola `pack`, `packState
 ### `cwm diff`
 
 ```text
-cwm diff [--project <katalog>] [--stat] [--json]
+cwm diff [--project <katalog>] [--stat] [--frozen] [--json]
 ```
 
 Pokazuje, co zmieni najbliższy `cwm start` w profilu firmy (ADR 0047). Buduje ten sam plan co start
 (rejestr, resolver, pakiety, zatwierdzenia) i porównuje go z plikami w `~/.cwm/runtime/<firma>/` oraz z
 manifestem `generated/manifest.json`. Działa **tylko na odczyt**: nie zapisuje niczego w `~/.cwm` ani w
 projekcie, nie tworzy katalogu firmy, nie bierze blokady `.lock` (nie przeszkadza działającej sesji ani
-`cwm start`) i nie uruchamia silnika. Projekt jest wyszukiwany jak w `cwm start` (bieżący katalog i
+`cwm start`) i nie uruchamia silnika (poza `claude --version` dla stanu lockfile). Projekt jest wyszukiwany jak w `cwm start` (bieżący katalog i
 wyżej albo `--project`).
 
 Wynik w grupach:
@@ -1354,7 +1433,10 @@ Wynik w grupach:
   między migawkami, usuwany).
 - **Zostają na miejscu:** pliki z manifestu zmienione poza CWM, których start nie usunie.
 - **Start zostałby odrzucony:** plik spoza CWM w miejscu pliku z planu, niebezpieczny plik w profilu,
-  trwająca sesja firmy z innym profilem.
+  trwająca sesja firmy z innym profilem albo (w trybie frozen) uszkodzony lockfile, brak lockfile lub dryf.
+- **Lockfile:** jedna linia stanu (`zgodny`, `dryf` z listą różnic, `brak lockfile`, `uszkodzony`; ADR 0051) z
+  tą samą oceną co w `cwm start`. Sam dryf (bez frozen) jest informacją i nie zmienia kodu wyjścia; do
+  porównania wersji silnika diff uruchamia `claude --version` (jedyny proces, null przy niepowodzeniu).
 
 Pliki uruchomienia (`sessions/<projekt>/settings.json`, `mcp.json`, `plugin/`) są porównane ze stanem
 po ostatniej sesji tego projektu; bez niej są „dodane”. Zatwierdzenia: jedna linia z liczbą zasobów do
@@ -1367,7 +1449,7 @@ znacznikiem, a zmiana jest zgłoszona słowami (`env zmieniony (treść ukryta)`
 
 `--stat` pomija wiersze diffu. `--json` wypisuje `{ ok, differs, company, project, profile{dir, exists,
 manifest}, approvals{total, approved, pending, pendingResources[], packsToReapprove[]}, files[],
-plugins[], kept[], unchanged, blockers[], warnings[] }`; `files[]` ma `path`, `area`
+plugins[], kept[], unchanged, lock{state, frozen, error, drift, blockers, warnings}, blockers[], warnings[] }`; `files[]` ma `path`, `area`
 (`profile`, `session`), `status` (`added`, `changed`, `removed`), `outsideCwm`, `action`, rozmiary i
 pełne skróty przed i po, `lines`, `hunks`, `hidden`, `notes`. Kody wyjścia: `0` brak różnic, `1` start
 coś zmieni albo odmówi (zob. wyżej), `2` błąd użycia lub ustawienia (brak manifestu projektu,
@@ -1422,7 +1504,7 @@ Uszkodzony plik zatwierdzeń oznacza „nic nie jest zatwierdzone”
 ### `cwm run`
 
 ```text
-cwm run <zadanie...> [--workflow <id>] [--project <katalog>] [--strict-mcp] [--dry-run] [--explain] [--json]
+cwm run <zadanie...> [--workflow <id>] [--project <katalog>] [--strict-mcp] [--frozen] [--dry-run] [--explain] [--json]
 ```
 
 Dobiera workflow do opisu zadania i uruchamia `cwm start` z poleceniem tego workflow jako
@@ -1504,7 +1586,7 @@ wygenerowaną treść, więc workflow wymagający zatwierdzenia (`allowed-tools`
 
 ## Czego jeszcze nie ma
 
-Argumenty silnika w `cwm run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), lockfile, `--follow-links` w imporcie, kopiowanie skryptów
+Argumenty silnika w `cwm run`, zmiana `nativeDir` istniejących zasobów (przeniesione źródło), `--follow-links` w imporcie, kopiowanie skryptów
 hooków do rejestru (skrypt poza rejestrem jest przypięty skrótem, ale nie skopiowany), pluginy
 marketplace'y zdalne (git, http) i źródła obiektowe wpisów, pobieranie z uwierzytelnieniem (SSH, tokeny) dla pluginów `git`, tryb `scrub` środowiska, HMAC zatwierdzeń, dziennik
 zatwierdzeń, Windows w `cwm start` oraz import biblioteki aplikacji i pluginów. Zapis do
