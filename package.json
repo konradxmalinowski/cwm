@@ -39,7 +39,7 @@
   "devDependencies": {
     "@angular/build": "20.3.40",
     "@angular/cli": "20.3.40",
-    "@angular/common": "20.3.34",
+    "@angular/common": "22.2.6",
     "@angular/compiler": "20.3.34",
     "@angular/compiler-cli": "20.3.34",
     "@angular/core": "20.3.34",
