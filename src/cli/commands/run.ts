@@ -21,6 +21,7 @@ interface RunOptions {
   readonly dryRun?: boolean;
   readonly explain?: boolean;
   readonly frozen?: boolean;
+  readonly verbose?: boolean;
 }
 
 type Basis = 'forced' | 'score' | 'default' | 'default-tiebreak' | 'chosen';
@@ -304,8 +305,9 @@ async function runCommand(
 
 const flags = (
   options: RunOptions,
-): { strictMcp?: boolean; dryRun?: boolean; frozen?: boolean } => ({
+): { strictMcp?: boolean; dryRun?: boolean; frozen?: boolean; verbose?: boolean } => ({
   ...(options.strictMcp === true ? { strictMcp: true } : {}),
+  ...(options.verbose === true ? { verbose: true } : {}),
   ...(options.frozen === true ? { frozen: true } : {}),
   ...(options.dryRun === true ? { dryRun: true } : {}),
 });
@@ -329,6 +331,10 @@ export function registerRun(program: Command): void {
     )
     .option('--explain', 'pelna tabela wynikow wszystkich workflow')
     .option('--frozen', 'odmawia startu, gdy zasoby rozni sie od lockfile (jak spec.lock: frozen)')
+    .option(
+      '--verbose',
+      'z --dry-run: pelne listy zatwierdzonych zasobow, plikow i przepisanych odwolan',
+    )
     .action(async (words: string[], options: RunOptions, command: Command) => {
       denyNetwork();
       return runCommand(contextOf(command), words, options);
