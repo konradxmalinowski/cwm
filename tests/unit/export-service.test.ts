@@ -389,9 +389,11 @@ describe('buildZip', () => {
   it('limit liczby plikow: manifest tez sie liczy', () => {
     const many = (n: number) =>
       Array.from({ length: n }, (_, i) => ({ path: `d/${i}.md`, bytes: bytes('x') }));
-    expect(() => buildZip(many(ZIP_MAX_FILES - 1), ZIP_OPTIONS)).not.toThrow();
-    expect(() => buildZip(many(ZIP_MAX_FILES), ZIP_OPTIONS)).toThrow(ZipError);
-  });
+    // Bez kompresji: test sprawdza licznik, a deflate tysiecy plikow spowalnia wolne maszyny CI.
+    const raw = { ...ZIP_OPTIONS, deflate: (b: Uint8Array) => b };
+    expect(() => buildZip(many(ZIP_MAX_FILES - 1), raw)).not.toThrow();
+    expect(() => buildZip(many(ZIP_MAX_FILES), raw)).toThrow(ZipError);
+  }, 30_000);
 });
 
 describe('ZipExportService', () => {

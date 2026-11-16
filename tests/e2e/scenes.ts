@@ -1695,6 +1695,7 @@ export const MUTATING_SCENES: readonly Scene[] = [
       await c.page
         .locator('[data-testid="zip-held-item"][data-slug="acme-flat"] input[type="checkbox"]')
         .check();
+      await expect(heading(c.page)).toContainText('Archiwum będzie zawierać');
       await t(c.page, 'export-stats').waitFor();
     },
     assert: async ({ page }) => {
