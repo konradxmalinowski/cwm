@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { existsSync, realpathSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { join } from 'node:path';
 
@@ -57,6 +58,21 @@ async function pickReportPath(fileName: string): Promise<string | null> {
   return result.canceled || result.filePath === '' ? null : result.filePath;
 }
 
+/** Katalogi konfiguracji narzedzi i danych aplikacji, takze z nadpisan zmiennymi srodowiska. */
+function protectedRoots(home: string, userData: string): string[] {
+  const overrides = [process.env['CLAUDE_CONFIG_DIR'], process.env['CODEX_HOME']].filter(
+    (value): value is string => value !== undefined && value.trim() !== '',
+  );
+  return [
+    join(home, '.claude'),
+    join(home, '.codex'),
+    join(home, '.agents'),
+    join(home, '.cwm'),
+    userData,
+    ...overrides,
+  ];
+}
+
 /**
  * Sklada serwis eksportu raportu z elementami Electrona i dysku (ADR 0053). Serwis zna tylko
  * wstrzykniete funkcje, wiec jego logike da sie sprawdzic bez okna i bez zapisu.
@@ -75,9 +91,17 @@ export function createDiagnosticReportService(
     clock: systemClock,
     newId: () => randomUUID(),
     pickPath: pickReportPath,
-    writeFile: (path, text) =>
-      writeFileAtomic(path, new TextEncoder().encode(text), { mode: 0o644 }),
-    protectedRoots: [join(home, '.claude'), join(home, '.codex'), join(home, '.cwm'), userData],
+    // Bez `mode`: nowy plik dostaje 0600, a istniejacy zachowuje swoj tryb.
+    writeFile: (path, text) => writeFileAtomic(path, new TextEncoder().encode(text)),
+    exists: existsSync,
+    realpath: (path) => {
+      try {
+        return realpathSync(path);
+      } catch {
+        return path;
+      }
+    },
+    protectedRoots: protectedRoots(home, userData),
     logUnexpected: wiring.logUnexpected,
   });
 }

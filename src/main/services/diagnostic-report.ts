@@ -1,4 +1,4 @@
-import { basename, extname, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 
 import type { DiagnosticsReport } from '../../core/model/diagnostics';
 import type { ListResult } from '../../core/services/library/library-service';
@@ -22,6 +22,8 @@ import type { Result } from '../../shared/ipc/library-contract';
 /** Podglad zyje krotko: po tym czasie uzytkownik dostaje swiezy raport, nie stary stan. */
 export const PREVIEW_TTL_MS = 10 * 60 * 1000;
 const MAX_PREVIEWS = 4;
+/** Ponowne otwarcie okna w tym czasie dostaje ten sam podglad zamiast kolejnego odczytu logu. */
+const PREVIEW_COOLDOWN_MS = 1500;
 const ALLOWED_EXTENSIONS = new Set(['.md', '.txt']);
 
 export interface DiagnosticReportDeps {
@@ -38,6 +40,10 @@ export interface DiagnosticReportDeps {
   /** Okno zapisu wybiera main. `null` znaczy, ze uzytkownik je zamknal bez wyboru. */
   readonly pickPath: (suggestedName: string) => Promise<string | null>;
   readonly writeFile: (path: string, text: string) => Promise<void>;
+  /** Czy plik albo katalog istnieje (rozszerzenie dopisane po oknie zapisu nie nadpisuje po cichu). */
+  readonly exists: (path: string) => boolean;
+  /** Sciezka po rozwinieciu dowiazan; gdy sie nie da, ta sama sciezka. */
+  readonly realpath: (path: string) => string;
   /** Katalogi konfiguracji narzedzi i danych aplikacji: raport nie trafia do nich. */
   readonly protectedRoots: readonly string[];
   readonly logUnexpected: (error: unknown) => void;
@@ -113,10 +119,35 @@ export function isInside(candidate: string, root: string): boolean {
 
 export class DiagnosticReportService {
   private readonly previews = new Map<string, StoredPreview>();
+  private inFlight: Promise<Result<ReportPreviewDto>> | null = null;
+  private last: { readonly at: number; readonly result: Result<ReportPreviewDto> } | null = null;
 
   constructor(private readonly deps: DiagnosticReportDeps) {}
 
-  async preview(): Promise<Result<ReportPreviewDto>> {
+  /** Rownolegle wywolania dziela jeden odczyt, a seria klikniec nie czyta logu za kazdym razem. */
+  preview(): Promise<Result<ReportPreviewDto>> {
+    const now = this.deps.clock.now().getTime();
+    const cached = this.last;
+    if (
+      cached !== null &&
+      cached.result.ok &&
+      now - cached.at < PREVIEW_COOLDOWN_MS &&
+      this.previews.has(cached.result.value.previewId)
+    ) {
+      return Promise.resolve(cached.result);
+    }
+    this.inFlight ??= this.buildPreview()
+      .then((result) => {
+        this.last = { at: this.deps.clock.now().getTime(), result };
+        return result;
+      })
+      .finally(() => {
+        this.inFlight = null;
+      });
+    return this.inFlight;
+  }
+
+  private async buildPreview(): Promise<Result<ReportPreviewDto>> {
     try {
       const diagnostics = await this.deps.diagnostics();
       const listing = await this.safe(() => this.deps.list());
@@ -160,10 +191,18 @@ export class DiagnosticReportService {
     try {
       const chosen = await this.deps.pickPath(stored.fileName);
       if (chosen === null) return ok({ status: 'cancelled' });
-      const target = ALLOWED_EXTENSIONS.has(extname(chosen).toLowerCase())
-        ? chosen
-        : `${chosen}.md`;
-      if (this.deps.protectedRoots.some((root) => isInside(target, root))) {
+      const hasExtension = ALLOWED_EXTENSIONS.has(extname(chosen).toLowerCase());
+      const target = hasExtension ? chosen : `${chosen}.md`;
+      // Okno zapisu pytalo o nadpisanie nazwy bez rozszerzenia, a nie tej z `.md`.
+      if (!hasExtension && this.deps.exists(target)) {
+        return err(
+          'target-exists',
+          `Plik ${basename(target)} już istnieje. Wybierz nazwę z rozszerzeniem .md albo .txt, albo inne miejsce.`,
+        );
+      }
+      const real = join(this.deps.realpath(dirname(target)), basename(target));
+      const roots = this.deps.protectedRoots.flatMap((root) => [root, this.deps.realpath(root)]);
+      if (roots.some((root) => isInside(target, root) || isInside(real, root))) {
         return err(
           'forbidden-location',
           'Raport nie zapisze się w katalogu konfiguracji narzędzia ani w katalogu danych aplikacji. Wybierz inne miejsce.',
