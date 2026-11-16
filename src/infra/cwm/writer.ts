@@ -29,6 +29,17 @@ export interface WriteScope {
   readonly root: string;
   /** Tylko `~/.cwm` moze byc dowiazaniem do innego miejsca (wybor uzytkownika); `<projekt>/.cwm` nie. */
   readonly allowSymlinkRoot: boolean;
+  /**
+   * Katalog pod korzeniem, w ktorym nazwy chronione (`.claude`, `CLAUDE.md`, `.mcp.json`) sa dozwolone,
+   * bo to kopia obcej tresci, a nie natywna konfiguracja (kopie pluginow z git w `sources/git`; tresc jest
+   * weryfikowana skrotem). Dowiazania i wyjscie poza korzen sa sprawdzane tak samo.
+   */
+  readonly unprotectedUnder?: string;
+}
+
+/** Zakres zapisu kopii pluginow z git: jak `homeScope`, ale nazwy chronione wolno miec w `sources/git`. */
+export function sourcesScope(home: string, sourcesRoot: string): WriteScope {
+  return { ...homeScope(home), unprotectedUnder: resolve(sourcesRoot) };
 }
 
 export function homeScope(home: string): WriteScope {
@@ -65,7 +76,12 @@ async function checkTarget(scope: WriteScope, target: string): Promise<string> {
     throw new WriteDeniedError(`Zapis poza katalogiem ${scope.root}: ${abs}`);
   }
   const segments = rel.split(sep);
-  for (const segment of segments) {
+  // Segmenty pod `unprotectedUnder` pomijaja kontrole nazw; sam katalog i jego rodzice sa sprawdzani.
+  const exempt =
+    scope.unprotectedUnder !== undefined && isPathInside(abs, scope.unprotectedUnder)
+      ? relative(scope.root, scope.unprotectedUnder).split(sep).length
+      : segments.length;
+  for (const segment of segments.slice(0, exempt)) {
     if (isProtectedName(segment)) {
       throw new WriteDeniedError(`CWM nie zapisuje natywnej konfiguracji narzedzi: ${abs}`);
     }

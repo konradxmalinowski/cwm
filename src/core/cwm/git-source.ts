@@ -194,7 +194,7 @@ function printable(text: string): string {
 }
 
 /**
- * Kontrola wyniku `git ls-tree -r -l -z <commit>` przed wypakowaniem: tylko zwykle pliki (dowiazanie
+ * Kontrola wyniku `git ls-tree -r -t -l -z <commit>` przed wypakowaniem: tylko zwykle pliki (dowiazanie
  * to blad), limity liczby i rozmiaru, brak skladnika `.git`. Submoduly sa zbierane, nie odrzucane.
  */
 export function checkGitTreeListing(raw: string, limits: GitTreeLimits): GitTreeCheck {
@@ -213,12 +213,14 @@ export function checkGitTreeListing(raw: string, limits: GitTreeLimits): GitTree
     if (path.split('/').some((part) => part.toLowerCase() === '.git')) {
       return fail(`sciezka ze skladnikiem .git: ${printable(path)}`);
     }
+    // `ls-tree -t` wypisuje tez katalogi; ich skroty zbiera `gitListedTreeIds`.
+    if (mode === '040000') continue;
     if (mode === '160000') {
       submodules.push(printable(path));
       continue;
     }
     if (mode === '120000') return fail(`dowiazanie symboliczne w repozytorium: ${printable(path)}`);
-    if (mode !== '100644' && mode !== '100755') {
+    if (mode !== '100644' && mode !== '100664' && mode !== '100755') {
       return fail(`nieobslugiwany tryb ${mode}: ${printable(path)}`);
     }
     const length = Number(size);
@@ -231,4 +233,30 @@ export function checkGitTreeListing(raw: string, limits: GitTreeLimits): GitTree
   }
   if (files === 0) return fail('commit nie zawiera zadnego pliku');
   return { ok: true, files, bytes, submodules };
+}
+
+/** Skroty obiektow drzew z wyniku `git ls-tree -r -t -l -z` (bez glownego: ten wynika z commita). Bez powtorzen. */
+export function gitListedTreeIds(raw: string): string[] {
+  const ids = new Set<string>();
+  for (const record of raw.split('\0')) {
+    const match = LISTING_ENTRY.exec(record);
+    if (match !== null && match[1] === '040000' && match[2] === 'tree') ids.add(match[3] ?? '');
+  }
+  return [...ids];
+}
+
+/** Skroty blobow (pliki 100644 i 100755) z tego samego wyniku, bez powtorzen. */
+export function gitListedBlobIds(raw: string): string[] {
+  const ids = new Set<string>();
+  for (const record of raw.split('\0')) {
+    const match = LISTING_ENTRY.exec(record);
+    if (
+      match !== null &&
+      (match[1] === '100644' || match[1] === '100664' || match[1] === '100755') &&
+      match[2] === 'blob'
+    ) {
+      ids.add(match[3] ?? '');
+    }
+  }
+  return [...ids];
 }

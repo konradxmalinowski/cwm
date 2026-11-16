@@ -37,7 +37,7 @@ import {
   withTaskPlaceholder,
   workflowCommandName,
 } from '../../core/cwm';
-import { lookupGitSource } from './git-source';
+import { lookupGitSource, verifyGitSourceCopy } from './git-source';
 import { pinHookCommands, pinInfos } from './hook-pins';
 import { parseContent, parseFilesMarkdown } from './import-source';
 import { companyDir, resourceFileName, type CwmLayout } from './layout';
@@ -717,6 +717,18 @@ export async function buildRuntimePlan(input: PlanInput): Promise<RuntimePlan> {
               : `${label}: kopia zrodla nie zgadza sie z zapisanym skrotem drzewa (zmieniona po pobraniu?). Pobierz ponownie: cwm plugin fetch ${resource.id}`,
           );
           break;
+        }
+        if (source.type === 'git' && source.commit !== undefined) {
+          // Wiazacy jest lancuch od przypietego commita (ADR 0048), liczony offline z zapisanych obiektow.
+          const verdict = await verifyGitSourceCopy(layout, source.url, source.commit, tree.files);
+          if (!verdict.ok) {
+            out.errors.push(
+              verdict.missing
+                ? `${label}: kopia nie ma zapisanych obiektow commita (pobrana przed weryfikacja commita). Pobierz ponownie: cwm plugin fetch ${resource.id}`
+                : `${label}: kopia nie zgadza sie z przypietym commitem (${verdict.message}). Pobierz ponownie: cwm plugin fetch ${resource.id}`,
+            );
+            break;
+          }
         }
         const slug = `${slugOf(resource.id)}@${treeHash.slice(0, 16)}`;
         for (const file of tree.files) {

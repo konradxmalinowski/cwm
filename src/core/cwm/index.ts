@@ -7,6 +7,7 @@ export * from './effective';
 export * from './engine-argv';
 export * from './env-policy';
 export * from './errors';
+export * from './git-objects';
 export * from './git-source';
 export * from './hook-paths';
 export * from './kinds';

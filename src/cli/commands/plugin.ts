@@ -18,6 +18,7 @@ import {
   loadGlobalConfig,
   loadWorkspace,
   lookupGitSource,
+  verifyGitSourceCopy,
   PLUGIN_NAMESPACE,
   PluginCommandError,
   pluginJsonVersion,
@@ -386,7 +387,13 @@ async function fetchPlugin(ctx: Context, id: string): Promise<void> {
   const present = await lookupGitSource(ctx.layout, source.url, source.commit);
   if (present.ok) {
     const tree = await readTree(present.dir, undefined, { rejectHardlinks: true });
-    if (tree.ok && source.tree !== undefined && treeSha256(tree.files) === source.tree) {
+    // Kopia jest "na miejscu" tylko wtedy, gdy zgadza sie tez z commitem (obiekty, lancuch skrotow).
+    if (
+      tree.ok &&
+      source.tree !== undefined &&
+      treeSha256(tree.files) === source.tree &&
+      (await verifyGitSourceCopy(ctx.layout, source.url, source.commit, tree.files)).ok
+    ) {
       if (ctx.json) return printJson({ ok: true, id, commit: source.commit, fetched: false });
       return print(
         `Kopia ${id} (commit ${source.commit}) jest na miejscu, nic nie pobrano. Nowszy commit: cwm plugin update ${id}.`,
