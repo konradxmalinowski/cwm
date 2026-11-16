@@ -227,7 +227,10 @@ const HOST_PORT_PATTERN = /(?<![\w.\\/@-])[A-Za-z][A-Za-z0-9-]{1,62}:\d{2,5}(?![
 // Sciezka z poczatkiem: segmenty moga miec spacje, ale tylko gdy po nich idzie separator, wiec
 // slowa po ostatnim segmencie zostaja poza sciezka.
 const WORD = String.raw`[^\s\\/"'` + '`' + String.raw`~]`;
-const SEGMENT = `${WORD}+(?: +${WORD}+)*`;
+// Slowa dolaczane po spacji nie moga miec `:`, `<` ani `>`: inaczej `/a/b oraz http://x` zjadloby
+// zdanie i poczatek kolejnego adresu.
+const SPACED_WORD = String.raw`[^\s\\/"'` + '`' + String.raw`~:<>]`;
+const SEGMENT = `${WORD}+(?: +${SPACED_WORD}+)*`;
 const ANCHORED_PATH = new RegExp(
   String.raw`(?<![\w.])(?:~|[A-Za-z]:)?[\\/](?:${SEGMENT}[\\/])*${WORD}*`,
   'g',
