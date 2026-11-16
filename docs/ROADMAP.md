@@ -164,7 +164,7 @@ z dwoma motywami i obsługą klawiatury.
 
 **Nie ma w MVP:** scalania treści linia po linii (użytkownik widzi konflikt i wybiera wersję,
 ale jej nie scala), profili, przywracania wersji elementu z interfejsu, dashboardu
-z agregatami, eksportu do ZIP i Git, autoaktualizacji, podpisanych wydań, synchronizacji MCP.
+z agregatami, eksportu do Git, autoaktualizacji, podpisanych wydań, synchronizacji MCP.
 
 **MVP nie jest wydaniem gotowym.** Etapy 8 do 10 są warunkiem wydania.
 
@@ -725,6 +725,7 @@ jeszcze kryteriów akceptacji w stylu Etapów 1 do 10; powstaną przy planowaniu
 | Etap L: lockfile projektu | `cwm lock [--check]`: `cwm.lock` obok manifestu projektu (zasoby z wersją, skrótem definicji i treści, commit i drzewo pluginu z git, wersja Claude Code), deterministyczny i bez czasu, hosta, ścieżek i sekretów; porównanie w `cwm start`/`cwm run` po rozwiązaniu i przed zatwierdzeniami (ostrzeżenie, a z `--frozen` albo `spec.lock: frozen` odmowa; wersja silnika tylko ostrzeżenie), sekcja w `cwm diff` (ADR 0051, `docs/CLI.md`) | Zrobione i scalone do `main`; bez nowych plików testów; ponowne sprawdzenia spike'a ADR 0036 przy innej wersji silnika poza zakresem |
 | Etap M: sprawdzenie wersji silnika | `cwm engine check\|status`: `--version`, `--help`, `plugin --help` i `mcp --help` w pustym katalogu tymczasowym, ocena flag zarządzanych (`REQUIRED_ENGINE_FLAGS`), nowych podpoleceń i podejrzanych nowych flag (`src/core/cwm/engine-check.ts`), wynik per wersja w `~/.cwm/runtime/engine-checks.json`; `cwm start`/`cwm run` sprawdzają nową wersję same i odmawiają przy brakującej fladze, `--dry-run`/`diff`/`lock` tylko ostrzegają (ADR 0052, `docs/CLI.md`) | Zrobione na gałęzi `feat/cwm-engine-check`; bez nowych plików testów; zachowanie sesji z modelem (V-01 do V-08) przy nowej wersji nadal tylko ręcznie |
 | Etap N: eksport raportu diagnostycznego | Przycisk i skrót `e` na ekranie Diagnostyka, podgląd całej treści, zapis systemowym oknem do `.md` lub `.txt`; redakcja w `core` (katalog domowy, konto, nazwy elementów, hosty w URL, e-mail, sekrety, nazwy w ścieżkach) i lista reguł na początku raportu; kanały `diagnostics:report-preview` i `diagnostics:report-save` bez ścieżek z renderera; pole w szablonie zgłoszenia (ADR 0053) | Zrobione na gałęzi `feat/diagnostic-report`; bez nowych plików testów, przypadki w `diagnostics.test.ts` i `security-redactor.test.ts`; adresy IP, hosty i ścieżki względne są redagowane regułami z ADR 0053 |
+| Etap O: eksport do archiwum ZIP | Cel "Archiwum ZIP" w kreatorze eksportu: ten sam eksporter na pustym celu, układ plików wybranego narzędzia, własny zapis ZIP z `zlib` bez nowej zależności, deterministyczne bajty, manifest `cwm-export.json` z SHA-256; elementy prywatne i z sekretem tylko za zgodą na element, projektowe nigdy; okno zapisu, chronione katalogi i zapis atomowy z ADR 0053; wpis `export-zip` w Historii; kanały `export:zip-plan` i `export:zip-save` bez ścieżek z renderera (ADR 0054) | Zrobione na gałęzi `feat/export-zip`; bez nowych plików testów, przypadki w `export-service.test.ts`, `export-ipc.test.ts`, `diagnostics.test.ts`, `sync-flow.test.ts` i scenach `scenes.ts`; poza zakresem: import z ZIP, eksport do repozytorium Git |
 | CLI `cwm`, dalsze polecenia | Polecenia, które zmieniają stan silnika | Planowane |
 | Adapter runtime | Profil Claude Code z `CLAUDE_CONFIG_DIR` na podstawie ADR 0036 | Zrobione w Etapie B (`cwm start`) |
 | Pluginy i MCP | Zatwierdzanie pól wykonawczych (`EXECUTION_RELEVANT_FIELDS`) działa w `cwm start` dla `local`, `marketplace` i `git`; zapis do natywnej konfiguracji silnika jest odrzucony z założenia: CWM pracuje na wyizolowanych profilach (`CLAUDE_CONFIG_DIR`) i nigdy nie zapisuje natywnej konfiguracji użytkownika, bo zmiana tam byłaby nieodwracalna dla narzędzi poza CWM (ADR 0036, ADR 0040) | Zrobione w Etapach B, D i I; zapis do natywnej konfiguracji odrzucony |
@@ -738,7 +739,6 @@ W kolejności według stosunku wartości do ryzyka, nie według atrakcyjności.
 
 | Pozycja | Powód |
 |---|---|
-| Eksport do ZIP | Wymagania wymieniają to jako funkcję kolejną. Tanie, bo plan eksportu już istnieje |
 | Integracja z Git jako warstwa opcjonalna | Wymagania wprost: warstwa dodatkowa, nigdy wymóg (ADR 0019) |
 | Podpisanie i notaryzacja wydań | Warunek autoaktualizacji i usunięcia ostrzeżeń systemowych (ADR 0003) |
 | Autoaktualizacja | Po podpisaniu. `latest.yml` jest generowany od MVP, więc to konfiguracja |

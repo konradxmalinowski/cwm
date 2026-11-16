@@ -1669,6 +1669,41 @@ export const MUTATING_SCENES: readonly Scene[] = [
     },
   },
   {
+    id: 'eksport/zip-zgoda',
+    view: 'Eksport',
+    state: 'ostrzezenie',
+    world: 'seeded',
+    reach: async (c) => {
+      await exportPlan(c, 'zip', ['acme-flat']);
+      await t(c.page, 'zip-held').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(heading(page)).toHaveText(
+        'Żaden element nie trafi do archiwum, dopóki nie wyrazisz zgody.',
+      );
+      await expect(t(page, 'zip-held-item')).toHaveCount(1);
+      await expect(t(page, 'export-zip-save')).toBeDisabled();
+    },
+  },
+  {
+    id: 'eksport/zip-plan',
+    view: 'Eksport',
+    world: 'seeded',
+    reach: async (c) => {
+      await exportPlan(c, 'zip', ['acme-flat']);
+      await t(c.page, 'zip-held').waitFor();
+      await c.page
+        .locator('[data-testid="zip-held-item"][data-slug="acme-flat"] input[type="checkbox"]')
+        .check();
+      await t(c.page, 'export-stats').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(heading(page)).toContainText('Archiwum będzie zawierać');
+      await expect(t(page, 'export-zip-save')).toBeEnabled();
+      await expect(t(page, 'export-entries')).toBeVisible();
+    },
+  },
+  {
     id: 'eksport/wynik',
     view: 'Eksport',
     world: 'seeded',

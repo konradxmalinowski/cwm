@@ -1,5 +1,10 @@
 import { TOOL_IDS } from '../../../core/model/item';
-import type { ExportApplyRequest, ExportPlanRequest } from '../../../shared/ipc/export-contract';
+import type {
+  ExportApplyRequest,
+  ExportPlanRequest,
+  ExportZipPlanRequest,
+  ExportZipSaveRequest,
+} from '../../../shared/ipc/export-contract';
 import type { ToolIdDto } from '../../../shared/ipc/import-contract';
 import type { Parsed } from './library-validation';
 
@@ -67,4 +72,34 @@ export function parseExportApplyRequest(payload: unknown): Parsed<ExportApplyReq
   }
   if (approved !== true) return fail('approved');
   return { ok: true, value: { planId, approved } };
+}
+
+/**
+ * Plan archiwum: narzedzie (uklad), elementy i zgody. Zadne pole nie niesie sciezki ani nazwy pliku;
+ * parser buduje wynik z trzech pol, wiec reszta ladunku przepada.
+ */
+export function parseZipPlanRequest(payload: unknown): Parsed<ExportZipPlanRequest> {
+  const base = parsePlanRequest(
+    isRecord(payload) ? { tool: payload['tool'], itemIds: payload['itemIds'] } : payload,
+  );
+  if (!base.ok) return base;
+  const request: ExportZipPlanRequest = { tool: base.value.tool, itemIds: base.value.itemIds };
+  const raw = isRecord(payload) ? payload['confirmedItemIds'] : undefined;
+  if (raw !== undefined) {
+    if (!Array.isArray(raw) || raw.length > MAX_ITEMS) return fail('confirmedItemIds');
+    const confirmed: string[] = [];
+    for (const entry of raw as unknown[]) {
+      if (typeof entry !== 'string' || entry.length === 0 || entry.length > MAX_ID) {
+        return fail('confirmedItemIds');
+      }
+      confirmed.push(entry);
+    }
+    if (confirmed.length > 0) request.confirmedItemIds = confirmed;
+  }
+  return { ok: true, value: request };
+}
+
+export function parseZipSaveRequest(payload: unknown): Parsed<ExportZipSaveRequest> {
+  const parsed = parseExportApplyRequest(payload);
+  return parsed.ok ? { ok: true, value: parsed.value } : parsed;
 }

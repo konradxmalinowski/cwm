@@ -96,3 +96,50 @@ export interface ExportApplyDto {
 
 export type ExportPlanResult = Result<ExportPlanDto>;
 export type ExportApplyResult = Result<ExportApplyDto>;
+
+/**
+ * Eksport do archiwum ZIP (ADR 0054). Plan ma ksztalt planu eksportu do narzedzia (`entries` to pliki
+ * archiwum w ukladzie wybranego narzedzia), a zapis przyjmuje wylacznie `planId`: sciezke pliku
+ * wybiera main systemowym oknem zapisu i nigdy jej nie zwraca.
+ */
+export type ZipHoldReasonDto = 'private' | 'secret' | 'project';
+
+export interface ExportZipPlanRequest {
+  /** Uklad plikow w archiwum: wedlug tego narzedzia. */
+  tool: ToolIdDto;
+  itemIds: string[];
+  /** Zgoda na elementy prywatne i z trafieniem klasyfikatora sekretow. Elementow `project` nie dotyczy. */
+  confirmedItemIds?: string[];
+}
+
+export interface ZipHeldItemDto {
+  itemId: string;
+  kind: ItemKindDto;
+  slug: string;
+  title: string;
+  reason: ZipHoldReasonDto;
+  confirmed: boolean;
+}
+
+export interface ExportZipPlanDto extends ExportPlanDto {
+  zip: {
+    /** Proponowana nazwa pliku, bez katalogu. */
+    fileName: string;
+    /** Pliki w archiwum razem z manifestem `cwm-export.json`. */
+    fileCount: number;
+    sizeBytes: number;
+    /** Elementy, ktore nie weszly do archiwum bez zgody albo wcale. */
+    held: ZipHeldItemDto[];
+  };
+}
+
+export interface ExportZipSaveRequest {
+  planId: string;
+  approved: true;
+}
+
+export type ExportZipSaveDto =
+  { status: 'saved'; fileName: string; fileCount: number } | { status: 'cancelled' };
+
+export type ExportZipPlanResult = Result<ExportZipPlanDto>;
+export type ExportZipSaveResult = Result<ExportZipSaveDto>;

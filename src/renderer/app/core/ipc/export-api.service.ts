@@ -5,6 +5,10 @@ import type {
   ExportApplyRequest,
   ExportPlanDto,
   ExportPlanRequest,
+  ExportZipPlanDto,
+  ExportZipPlanRequest,
+  ExportZipSaveDto,
+  ExportZipSaveRequest,
 } from '../../../../shared/ipc/export-contract';
 import type { Result } from '../../../../shared/ipc/library-contract';
 import { callBridge } from './ipc-call';
@@ -18,5 +22,15 @@ export class ExportApiService {
 
   apply(request: ExportApplyRequest): Promise<Result<ExportApplyDto>> {
     return callBridge((bridge) => bridge.export.apply(request));
+  }
+
+  /** Plan archiwum ZIP (ADR 0054): ten sam ksztalt co plan eksportu plus nazwa, liczby i elementy poza archiwum. */
+  zipPlan(request: ExportZipPlanRequest): Promise<Result<ExportZipPlanDto>> {
+    return callBridge((bridge) => bridge.export.zipPlan(request));
+  }
+
+  /** Zapis przyjmuje tylko `planId`: miejsce pliku wybiera main systemowym oknem. */
+  zipSave(request: ExportZipSaveRequest): Promise<Result<ExportZipSaveDto>> {
+    return callBridge((bridge) => bridge.export.zipSave(request));
   }
 }

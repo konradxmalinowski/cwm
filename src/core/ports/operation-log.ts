@@ -8,6 +8,11 @@ export type OperationType =
   | 'restore'
   /** Eksport do konfiguracji narzedzia przez WriteGate (ADR 0012). */
   | 'export'
+  /**
+   * Eksport do archiwum ZIP (ADR 0054). Nie dotyka konfiguracji narzedzia, wiec nie ma kopii i nie
+   * da sie go cofnac; `itemId` to stala `zip-export`, a `note` niesie liczby, nigdy sciezke.
+   */
+  | 'export-zip'
   /** Synchronizacja z narzedziem (eksport albo przyjecie zmian z narzedzia, Etap 5). */
   | 'sync'
   /** Cofniecie wczesniejszego zapisu do narzedzia z jego kopii (ADR 0019). */

@@ -9,14 +9,23 @@ import {
   type ExportService,
 } from '../../../core/services/export/export-service';
 import { redactSecrets } from '../../../core/services/security/secret-redactor';
+import type { ToolId } from '../../../core/model/item';
+import type { ZipPlanReport } from '../../../core/services/export/zip-export-service';
 import type {
   ExportApplyDto,
   ExportPlanDto,
+  ExportZipPlanDto,
+  ExportZipSaveDto,
   PlanEntryDto,
 } from '../../../shared/ipc/export-contract';
 import type { Result } from '../../../shared/ipc/library-contract';
 import type { IpcRegistry } from '../registry';
-import { parseExportApplyRequest, parsePlanRequest } from './export-validation';
+import {
+  parseExportApplyRequest,
+  parsePlanRequest,
+  parseZipPlanRequest,
+  parseZipSaveRequest,
+} from './export-validation';
 import type { Parsed } from './library-validation';
 
 const UNAVAILABLE_MESSAGE =
@@ -26,9 +35,21 @@ const INTERNAL_MESSAGE = 'Wystąpił nieoczekiwany błąd eksportu. Szczegóły 
 /** Podglad diffu tylko dla tekstu UTF-8 do tego rozmiaru; reszta idzie jako null. */
 export const MAX_PREVIEW_BYTES = 256 * 1024;
 
+/** Eksport do ZIP (ADR 0054): to, czego handler potrzebuje od main. Sciezke pliku zna tylko implementacja. */
+export interface ZipPort {
+  plan(
+    tool: ToolId,
+    itemIds: readonly string[],
+    confirmedItemIds: readonly string[],
+  ): Promise<ZipPlanReport>;
+  save(planId: string): Promise<Result<ExportZipSaveDto>>;
+}
+
 export interface ExportHandlerDeps {
   /** `null`, gdy biblioteka albo bramka zapisu jest niedostepna: kanaly odpowiadaja bledem. */
   readonly service: () => ExportService | null;
+  /** `null`, gdy eksport do ZIP nie jest przygotowany (biblioteka niedostepna): kanaly odpowiadaja bledem. */
+  readonly zip?: () => ZipPort | null;
   readonly logUnexpected?: (error: unknown) => void;
 }
 
@@ -142,6 +163,26 @@ export function toPlanDto(report: ExportPlanReport): ExportPlanDto {
   };
 }
 
+/** Plan archiwum to plan eksportu plus to, czego archiwum dotyczy: nazwa, liczby i elementy poza nim. */
+export function toZipPlanDto(plan: ZipPlanReport): ExportZipPlanDto {
+  return {
+    ...toPlanDto(plan.report),
+    zip: {
+      fileName: plan.archive.fileName,
+      fileCount: plan.archive.fileCount,
+      sizeBytes: plan.archive.sizeBytes,
+      held: plan.held.map((h) => ({
+        itemId: h.itemId,
+        kind: h.kind,
+        slug: h.slug,
+        title: h.title,
+        reason: h.reason,
+        confirmed: h.confirmed,
+      })),
+    },
+  };
+}
+
 function toApplyDto(report: ExportApplyReport): ExportApplyDto {
   return {
     planId: report.planId,
@@ -200,5 +241,37 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
     guarded(parseExportApplyRequest, async (service, request) =>
       ok(toApplyDto(await service.apply(request.planId, request.approved))),
     ),
+  );
+
+  function guardedZip<P, T>(
+    parse: (payload: unknown) => Parsed<P>,
+    run: (zip: ZipPort, request: P) => Promise<Result<T>>,
+  ): (payload: unknown) => Promise<Result<T>> {
+    return async (payload) => {
+      const parsed = parse(payload);
+      if (!parsed.ok) return err('invalid-request', parsed.message);
+      const zip = deps.zip?.() ?? null;
+      if (zip === null) return err('export-unavailable', UNAVAILABLE_MESSAGE);
+      try {
+        return await run(zip, parsed.value);
+      } catch (error: unknown) {
+        return mapError(error, logUnexpected);
+      }
+    };
+  }
+
+  registry.register(
+    'export:zip-plan',
+    guardedZip(parseZipPlanRequest, async (zip, request) =>
+      ok(
+        toZipPlanDto(await zip.plan(request.tool, request.itemIds, request.confirmedItemIds ?? [])),
+      ),
+    ),
+  );
+
+  // Zapis przyjmuje wylacznie `planId`: sciezke wybiera main oknem zapisu, tresc to archiwum z planu.
+  registry.register(
+    'export:zip-save',
+    guardedZip(parseZipSaveRequest, (zip, request) => zip.save(request.planId)),
   );
 }

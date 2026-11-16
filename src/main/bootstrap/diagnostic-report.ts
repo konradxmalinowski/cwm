@@ -59,7 +59,7 @@ async function pickReportPath(fileName: string): Promise<string | null> {
 }
 
 /** Katalogi konfiguracji narzedzi i danych aplikacji, takze z nadpisan zmiennymi srodowiska. */
-function protectedRoots(home: string, userData: string): string[] {
+export function protectedRoots(home: string, userData: string): string[] {
   const overrides = [process.env['CLAUDE_CONFIG_DIR'], process.env['CODEX_HOME']].filter(
     (value): value is string => value !== undefined && value.trim() !== '',
   );

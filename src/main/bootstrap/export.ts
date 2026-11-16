@@ -2,9 +2,11 @@ import { systemClock } from '../../core/ports/clock';
 import type { IndexStore } from '../../core/ports/index-store';
 import type { WriteGate, LinkCapability } from '../../core/ports/write-gate';
 import { join } from 'node:path';
+import { deflateRawSync } from 'node:zlib';
 
 import { ExportService } from '../../core/services/export/export-service';
 import { HistoryService } from '../../core/services/history/history-service';
+import { ZipExportService } from '../../core/services/export/zip-export-service';
 import { SyncRecorder } from '../../core/services/sync/sync-recorder';
 import { SyncService } from '../../core/services/sync/sync-service';
 import { FsBackupStore } from '../../infra/store/backup';
@@ -29,6 +31,8 @@ export interface ExportBootstrapDeps {
   readonly userDataDir: string;
   /** Log operacji zyje w indeksie, ktory moze byc odmowiony; dlatego dostep leniwy. */
   readonly indexStore: () => IndexStore | null;
+  /** Wersja aplikacji do manifestu archiwum ZIP. */
+  readonly appVersion: string;
 }
 
 /**
@@ -60,6 +64,7 @@ export interface ExportStartup {
   readonly exports: ExportService;
   readonly sync: SyncService;
   readonly history: HistoryService;
+  readonly zip: ZipExportService;
 }
 
 /**
@@ -112,5 +117,13 @@ export async function startExport(
     exports,
     clock: systemClock,
   });
-  return { exports, sync, history };
+  const zip = new ZipExportService({
+    catalog,
+    exporters,
+    library,
+    clock: systemClock,
+    appVersion: deps.appVersion,
+    deflate: (bytes) => deflateRawSync(bytes, { level: 9 }),
+  });
+  return { exports, sync, history, zip };
 }

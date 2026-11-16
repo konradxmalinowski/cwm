@@ -9,6 +9,7 @@ const KIND_LABEL: Readonly<Record<string, string>> = {
   restore: 'Przywrócenie wersji',
   import: 'Import',
   export: 'Eksport',
+  'export-zip': 'Eksport do ZIP',
   sync: 'Synchronizacja',
   rollback: 'Cofnięcie',
 };

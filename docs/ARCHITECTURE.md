@@ -740,6 +740,8 @@ Kanały z handlerem:
 | `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged? }` | zaimportowane, pominięte z powodem, błędy |
 | `export:plan` | `{ tool, itemIds }` | `planId`, `toolMissing`, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy, konflikty, sieroty, `applicable` |
 | `export:apply` | `{ planId, approved: true }` | raport per wpis, `backupId`, `verified`, `rolledBack` |
+| `export:zip-plan` | `{ tool, itemIds, confirmedItemIds? }` | jak `export:plan` (układ plików wybranego narzędzia, wpisy `create`) plus `zip`: `fileName`, `fileCount`, `sizeBytes` i `held` (elementy prywatne, z sekretem i projektowe z `confirmed`); archiwum jest budowane w main (ADR 0054) |
+| `export:zip-save` | `{ planId, approved: true }` | `{ status: 'saved', fileName, fileCount }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
 | `sync:status` | `{ tools? }` | `missingTools`, stan per element i narzędzie, sieroty |
 | `sync:plan` | `{ tools, itemIds, resolutions? }` | `syncId`, plany eksportu per narzędzie, adopcje (`tool-wins`), pominięte |
 | `sync:apply` | `{ syncId, approved: true }` | wyniki per plan i wyniki adopcji |
@@ -763,8 +765,15 @@ handlery. Żaden nie przyjmuje ścieżki: parser `apply` buduje wynik z dwóch p
 `confirmed`), a plan ignoruje ładunek. Plan żyje w main (10 minut, jednorazowy, odcisk stanu:
 liczba katalogów w `library/items`, wynik otwarcia indeksu, obecność pliku). Kanały zapisujące
 (`library:save`, `library:delete-apply`, `library:repair`, `import:apply`, `export:apply`,
-`sync:apply`, `history:rollback`) wchodzą pod wspólną blokadę `OperationLock`; w trakcie
+`export:zip-save`, `sync:apply`, `history:rollback`) wchodzą pod wspólną blokadę `OperationLock`; w trakcie
 odbudowy odpowiadają kodem `busy`, a odbudowa nie startuje, gdy któryś z nich trwa.
+
+`export:zip-plan` i `export:zip-save` (ADR 0054) eksportują wybrane elementy do archiwum ZIP. Plan używa eksportera
+narzędzia na pustym celu (nic nie jest czytane z konfiguracji użytkownika), a archiwum żyje w main pod `planId`. Zapis
+przyjmuje tylko `planId`: ścieżkę wybiera main oknem zapisu, odmawia katalogów konfiguracji narzędzi i danych aplikacji,
+zapisuje atomowo i dopisuje do Historii wiersz `export-zip` (liczby, bez ścieżki). `export:zip-save` wchodzi pod
+`OperationLock`, bo pisze do logu w indeksie. Elementy prywatne i z trafieniem klasyfikatora sekretów dołączają się
+wyłącznie przez `confirmedItemIds`, a elementy projektowe nigdy.
 
 `diagnostics:report-preview` i `diagnostics:report-save` (ADR 0053) składają raport do zgłoszenia błędu. Podgląd nie
 przyjmuje niczego; zapis przyjmuje tylko `previewId` (parser buduje wynik z jednego pola), a treść pochodzi z tego, co main

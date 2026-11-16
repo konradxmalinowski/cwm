@@ -2,6 +2,7 @@ import { app, ipcMain, BrowserWindow } from 'electron';
 
 import type { IndexStartupInfo } from '../core/model/index-health';
 import type { ExportService } from '../core/services/export/export-service';
+import type { ZipExportService } from '../core/services/export/zip-export-service';
 import type { ImportService } from '../core/services/import/import-service';
 import type { HistoryService } from '../core/services/history/history-service';
 import type { SyncService } from '../core/services/sync/sync-service';
@@ -18,7 +19,7 @@ import { configureUserData, resolveMigration } from './bootstrap/user-data';
 import { createMainWindow } from './bootstrap/window';
 import { startExport } from './bootstrap/export';
 import { startImport } from './bootstrap/import';
-import { startLibrary } from './bootstrap/library';
+import { indexBackedOperationLog, startLibrary } from './bootstrap/library';
 import { restoreLibraryIndex } from './bootstrap/library-index';
 import {
   diagnosticsSnapshot,
@@ -26,6 +27,7 @@ import {
   type IndexState,
 } from './ipc/handlers/diagnostics';
 import { createDiagnosticReportService } from './bootstrap/diagnostic-report';
+import { createZipSaveService } from './bootstrap/zip-export';
 import { registerExportHandlers } from './ipc/handlers/export';
 import { registerSyncHandlers } from './ipc/handlers/sync';
 import { registerImportHandlers } from './ipc/handlers/import';
@@ -45,6 +47,7 @@ let indexState: IndexState = { store: null, info: { outcome: 'refused' } };
 let libraryService: LibraryService | null = null;
 let importService: ImportService | null = null;
 let exportService: ExportService | null = null;
+let zipExportService: ZipExportService | null = null;
 let syncService: SyncService | null = null;
 let historyService: HistoryService | null = null;
 
@@ -250,8 +253,16 @@ function start(): void {
       service: () => importService,
       logUnexpected: logImportError,
     });
+    const zipSave = createZipSaveService({
+      userData,
+      home,
+      service: () => zipExportService,
+      log: indexBackedOperationLog(() => indexState.store),
+      logUnexpected: logExportError,
+    });
     registerExportHandlers(registry, {
       service: () => exportService,
+      zip: () => zipSave,
       logUnexpected: logExportError,
     });
     registerSyncHandlers(registry, {
@@ -277,11 +288,13 @@ function start(): void {
       void startExport(library.service, logExportError, {
         userDataDir: userData,
         indexStore: () => indexState.store,
+        appVersion: app.getVersion(),
       })
         .then((started) => {
           exportService = started.exports;
           syncService = started.sync;
           historyService = started.history;
+          zipExportService = started.zip;
         })
         .catch(logExportError);
     }

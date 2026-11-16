@@ -63,7 +63,7 @@ function err(code: string, message: string): Result<never> {
   return { ok: false, error: { code, message } };
 }
 
-const WRITE_FAILURE_TEXT: Readonly<Record<string, string>> = {
+export const WRITE_FAILURE_TEXT: Readonly<Record<string, string>> = {
   'permission-denied': 'Brak uprawnień do zapisu w wybranym miejscu.',
   'read-only': 'Wybrane miejsce jest tylko do odczytu.',
   'no-space': 'Na dysku brakuje miejsca.',
