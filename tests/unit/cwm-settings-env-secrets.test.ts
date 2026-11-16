@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   analyzeContent,
+  composeOrchestration,
+  orderSteps,
+  renderOrchestration,
   classifyEnvValue,
   convertNativeSettings,
   extractHookPathTokens,
@@ -14,6 +17,7 @@ import {
   mergeSettings,
   textHasSecret,
   type Settings,
+  type WorkflowStep,
   isSettingsEnvNameDenied,
   nameLooksSecret,
   validateResource,
@@ -685,5 +689,61 @@ describe('hooki w frontmatterze skilla (ADR 0042)', () => {
     expect(named.ok && named.name).toBe('acme-x');
     const own = parseContent('agent', enc('---\nname: acme-y\n---\nbody\n'), 'acme-x');
     expect(own.ok && own.name).toBe('acme-y');
+  });
+});
+
+describe('tresc komendy workflow orchestrated przez parseContent (ADR 0050)', () => {
+  const compile = (source: string, task?: string): ReturnType<typeof parseContent> => {
+    const steps: WorkflowStep[] = [
+      {
+        id: 'lint',
+        agent: 'acme-a/linter',
+        dependsOn: [],
+        ...(task === undefined ? {} : { task }),
+      },
+    ];
+    const ordered = orderSteps(steps);
+    if (!ordered.ok) throw new Error(ordered.reason);
+    const section = renderOrchestration(ordered.stages, new Map([['lint', 'cwm-acme-a:linter']]));
+    return parseContent(
+      'command',
+      new TextEncoder().encode(composeOrchestration(source, section).text),
+      'cwm-flow',
+    );
+  };
+
+  it('zwykle kroki nie dodaja flag wykonawczych, a frontmatter zrodla jest zachowany', () => {
+    const parsed = compile('---\ndescription: Flow\n---\nRun the flow.\n', 'Check style.');
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.flags).toEqual({ allowedTools: false, inlineCommands: false });
+      const text = new TextDecoder().decode(parsed.content);
+      expect(text.startsWith('---\ndescription: Flow\n---\nRun the flow.')).toBe(true);
+      expect(text).toContain('Agent: cwm-acme-a:linter');
+      expect(text.trimEnd().endsWith('Task: $ARGUMENTS')).toBe(true);
+    }
+  });
+
+  it('wstawka w task kroku wymusza zatwierdzenie z pelna trescia wstawki', () => {
+    const parsed = compile('Run the flow.\n', 'Run !`git diff --stat` first');
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.flags.inlineCommands).toBe(true);
+      expect(parsed.inlineSnippets).toEqual(['git diff --stat']);
+    }
+  });
+
+  it('allowed-tools w zrodle nadal jest flaga zatwierdzenia', () => {
+    const parsed = compile('---\nallowed-tools: Task\n---\nRun the flow.\n');
+    expect(parsed.ok && parsed.flags.allowedTools).toBe(true);
+  });
+
+  it('task kroku nie moze otworzyc frontmattera ani zmienic ramki tresci', () => {
+    const parsed = compile('', '--- hooks: x');
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok)
+      expect(new TextDecoder().decode(parsed.content).startsWith('## Orchestrated steps')).toBe(
+        true,
+      );
   });
 });

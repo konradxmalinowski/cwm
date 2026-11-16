@@ -21,6 +21,8 @@ describe('validateCleanupPath (PRF-02)', () => {
     [`sessions/${HASH}/mcp.json`, 'session'],
     [`sessions/${HASH}/plugin/.claude-plugin/plugin.json`, 'session'],
     [`sessions/${HASH}/plugin/skills/acme-core/SKILL.md`, 'session'],
+    [`sessions/${HASH}/plugin/commands/cwm-flow.md`, 'session'],
+    ['claude/commands/cwm-flow.md', 'profile'],
     [`plugins/acme-a-tools@${HASH}/.claude-plugin/plugin.json`, 'plugin'],
   ])('przyjmuje %s', (path, area) => {
     expect(validateCleanupPath(path)).toEqual({ ok: true, area });
