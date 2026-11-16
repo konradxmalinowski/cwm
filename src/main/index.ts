@@ -258,6 +258,14 @@ function start(): void {
       home,
       service: () => zipExportService,
       log: indexBackedOperationLog(() => indexState.store),
+      enterWrite: () => writeLock.tryEnterWrite(),
+      logLeftover: (name, cause) => {
+        log().error(
+          '[cwm] po nieudanym zapisie archiwum zostal plik tymczasowy:',
+          name,
+          cause instanceof Error ? cause.name : 'nieznany',
+        );
+      },
       logUnexpected: logExportError,
     });
     registerExportHandlers(registry, {

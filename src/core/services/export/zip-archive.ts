@@ -1,4 +1,5 @@
 import type { ToolId } from '../../model/item';
+import { checkAssetPath, collisionKey } from '../library/validate';
 import { sha256Bytes } from '../normalization/hash';
 
 /**
@@ -13,6 +14,8 @@ export const ZIP_FORMAT = 'cwm-export';
 export const ZIP_FORMAT_VERSION = 1;
 /** Limity chronia pamiec main: archiwum jest budowane w calosci, zanim uzytkownik wybierze plik. */
 export const ZIP_MAX_FILES = 5000;
+/** Katalog centralny liczy wpisy w 16 bitach: pliki, katalogi i manifest razem. */
+export const ZIP_MAX_ENTRIES = 65535;
 export const ZIP_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const MAX_PATH_BYTES = 240;
 const MAX_SEGMENT_BYTES = 255;
@@ -59,16 +62,35 @@ export interface BuiltZip {
 
 const encoder = new TextEncoder();
 
-/** Powod odrzucenia sciezki albo `null`, gdy jest bezpieczna do zapisania w archiwum. */
+/** Znaki niewidoczne i zmieniajace kierunek tekstu: nazwa pliku z nimi wyglada inaczej, niz brzmi. */
+function isInvisibleOrBidi(code: number): boolean {
+  return (
+    (code >= 0x200b && code <= 0x200f) ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2060 && code <= 0x2069) ||
+    code === 0xfeff ||
+    code === 0x00ad
+  );
+}
+
+/**
+ * Powod odrzucenia sciezki albo `null`, gdy jest bezpieczna do zapisania w archiwum. Segmenty
+ * przechodza te same reguly co sciezki plikow pomocniczych (znaki sterujace, takze C1, znaki zakazane
+ * w Windows, nazwy zarezerwowane, kropka albo spacja na koncu), plus NFC i brak znakow niewidocznych.
+ */
 export function checkArchivePath(path: string): string | null {
   if (path === '') return 'Ścieżka jest pusta.';
   if (path.startsWith('/') || path.endsWith('/'))
     return 'Ścieżka nie może zaczynać się ani kończyć ukośnikiem.';
   if (path.includes('\\')) return 'Ścieżka zawiera odwrócony ukośnik.';
   if (/^[A-Za-z]:/.test(path)) return 'Ścieżka wygląda na bezwzględną ścieżkę z literą dysku.';
+  if (path !== path.normalize('NFC')) return 'Ścieżka nie jest zapisana w NFC.';
   for (let i = 0; i < path.length; i++) {
     const code = path.charCodeAt(i);
-    if (code < 0x20 || code === 0x7f) return 'Ścieżka zawiera znak sterujący.';
+    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) return 'Ścieżka zawiera znak sterujący.';
+    if (isInvisibleOrBidi(code)) {
+      return 'Ścieżka zawiera znak niewidoczny albo zmieniający kierunek tekstu.';
+    }
   }
   if (encoder.encode(path).byteLength > MAX_PATH_BYTES) return 'Ścieżka jest za długa.';
   for (const segment of path.split('/')) {
@@ -77,6 +99,8 @@ export function checkArchivePath(path: string): string | null {
     }
     if (encoder.encode(segment).byteLength > MAX_SEGMENT_BYTES)
       return 'Nazwa w ścieżce jest za długa.';
+    const problem = checkAssetPath(segment);
+    if (problem !== null) return problem.message;
   }
   return null;
 }
@@ -128,7 +152,7 @@ function parentDirectories(path: string): string[] {
 
 /** Nazwy roznia sie tylko wielkoscia liter: po rozpakowaniu na macOS albo Windowsie jedna zjadlaby druga. */
 function foldKey(path: string): string {
-  return path.toLowerCase();
+  return collisionKey(path);
 }
 
 function manifestJson(files: readonly ZipManifestFile[], options: BuildZipOptions): Uint8Array {
@@ -187,8 +211,16 @@ export function buildZip(inputs: readonly ZipFileInput[], options: BuildZipOptio
   const manifest = manifestJson(files, options);
 
   const dirs = new Map<string, string>();
-  for (const input of inputs)
-    for (const dir of parentDirectories(input.path)) dirs.set(foldKey(dir), dir);
+  for (const input of inputs) {
+    for (const dir of parentDirectories(input.path)) {
+      const key = foldKey(dir);
+      const earlier = dirs.get(key);
+      if (earlier !== undefined && earlier !== dir) {
+        throw new ZipError('duplicate-path', 'Dwa katalogi miałyby w archiwum tę samą nazwę.');
+      }
+      dirs.set(key, dir);
+    }
+  }
 
   const entries: Entry[] = [
     ...[...dirs.values()].map((name) => ({
@@ -211,6 +243,10 @@ export function buildZip(inputs: readonly ZipFileInput[], options: BuildZipOptio
     },
   ].sort((a, b) => compareBytes(a.nameBytes, b.nameBytes));
 
+  if (entries.length > ZIP_MAX_ENTRIES) {
+    throw new ZipError('too-many-files', 'Archiwum ma za dużo wpisów.');
+  }
+
   const chunks: Uint8Array[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
@@ -224,7 +260,7 @@ export function buildZip(inputs: readonly ZipFileInput[], options: BuildZipOptio
     const local = new Uint8Array(30 + entry.nameBytes.byteLength);
     const lv = new DataView(local.buffer);
     lv.setUint32(0, 0x04034b50, true);
-    lv.setUint16(4, method === 8 ? 20 : 10, true);
+    lv.setUint16(4, method === 8 || entry.isDirectory ? 20 : 10, true);
     lv.setUint16(6, 0x0800, true); // bit 11: nazwy w UTF-8
     lv.setUint16(8, method, true);
     lv.setUint16(10, 0, true); // czas DOS 00:00:00
@@ -240,7 +276,7 @@ export function buildZip(inputs: readonly ZipFileInput[], options: BuildZipOptio
     const cv = new DataView(head.buffer);
     cv.setUint32(0, 0x02014b50, true);
     cv.setUint16(4, (3 << 8) | 20, true); // system: Unix
-    cv.setUint16(6, method === 8 ? 20 : 10, true);
+    cv.setUint16(6, method === 8 || entry.isDirectory ? 20 : 10, true);
     cv.setUint16(8, 0x0800, true);
     cv.setUint16(10, method, true);
     cv.setUint16(12, 0, true);

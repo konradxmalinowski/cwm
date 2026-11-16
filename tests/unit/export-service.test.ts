@@ -10,6 +10,7 @@ import {
 } from '../../src/core/services/export/export-service';
 import {
   ZIP_MANIFEST_NAME,
+  ZIP_MAX_ENTRIES,
   ZIP_MAX_FILES,
   ZipError,
   buildZip,
@@ -22,7 +23,7 @@ import {
 } from '../../src/core/services/export/zip-export-service';
 import { root } from './import-fakes';
 import { bytes, dec, draft } from './library-fakes';
-import { SECRETS } from './security-secrets';
+import { SECRETS, filler } from './security-secrets';
 import { emptyPlan, entry, exportHarness } from './export-fakes';
 
 async function code(promise: Promise<unknown>): Promise<string> {
@@ -239,6 +240,7 @@ interface ZipRow {
   readonly name: string;
   readonly method: number;
   readonly flags: number;
+  readonly versionNeeded: number;
   readonly time: number;
   readonly date: number;
   readonly crc: number;
@@ -268,6 +270,7 @@ function readZip(zip: Uint8Array): ZipRow[] {
       name,
       method,
       flags: view.getUint16(at + 8, true),
+      versionNeeded: view.getUint16(at + 6, true),
       time: view.getUint16(at + 12, true),
       date: view.getUint16(at + 14, true),
       crc: view.getUint32(at + 16, true),
@@ -312,8 +315,10 @@ describe('buildZip', () => {
       expect(row.time).toBe(0);
       expect(row.date).toBe(0x0021);
       const mode = row.attrs >>> 16;
-      if (row.name.endsWith('/')) expect(mode).toBe(0o040755);
-      else expect(mode).toBe(0o100644);
+      if (row.name.endsWith('/')) {
+        expect(mode).toBe(0o040755);
+        expect(row.versionNeeded).toBe(20);
+      } else expect(mode).toBe(0o100644);
       expect(mode & 0o170000).not.toBe(0o120000);
       expect(row.crc).toBe(crc32(row.data));
     }
@@ -385,6 +390,46 @@ describe('buildZip', () => {
     expect(dup('a', 'a/b.md')?.code).toBe('duplicate-path');
     expect(dup('ok.md', 'CWM-EXPORT.JSON')?.code).toBe('duplicate-path');
   });
+
+  it('odrzuca nazwy, ktore wygladaja inaczej, niz brzmia, albo nie przezyja Windowsa', () => {
+    for (const path of [
+      'a/\u0085x',
+      'a/CON/x.md',
+      'a/aux.txt',
+      'a/b./c.md',
+      'a/b /c.md',
+      'a/b:c.md',
+      'a/b*c.md',
+      'a/\u202eexe.md',
+      'a/\u200bx.md',
+      'a/\ufeffx.md',
+      'a/e\u0301.md',
+    ]) {
+      expect(checkArchivePath(path), JSON.stringify(path)).not.toBeNull();
+    }
+    expect(checkArchivePath('a/\u00e9.md')).toBeNull();
+  });
+
+  it('dwa katalogi roznice tylko wielkoscia liter sa duplikatem, takze bez zgodnych nazw plikow', () => {
+    expect(() =>
+      buildZip(
+        [
+          { path: 'A/x.md', bytes: bytes('1') },
+          { path: 'a/y.md', bytes: bytes('2') },
+        ],
+        ZIP_OPTIONS,
+      ),
+    ).toThrow(ZipError);
+  });
+
+  it('wpisy katalogow tez licza sie do limitu 65535', () => {
+    const deep = (i: number) =>
+      `${Array.from({ length: 15 }, (_, d) => `d${d}x${i}`).join('/')}/f.md`;
+    const raw = { ...ZIP_OPTIONS, deflate: (b: Uint8Array) => b };
+    const inputs = Array.from({ length: 4500 }, (_, i) => ({ path: deep(i), bytes: bytes('x') }));
+    expect(ZIP_MAX_ENTRIES).toBe(65535);
+    expect(() => buildZip(inputs, raw)).toThrow(/za dużo wpisów/);
+  }, 30_000);
 
   it('limit liczby plikow: manifest tez sie liczy', () => {
     const many = (n: number) =>
@@ -566,6 +611,195 @@ describe('ZipExportService', () => {
     expect(await h2.zip.plan('claude-code', [id2]).catch((e: unknown) => e)).toMatchObject({
       code: 'zip-invalid-path',
     });
+  });
+
+  function utf16(text: string): Uint8Array {
+    const out = new Uint8Array(2 + text.length * 2);
+    out[0] = 0xff;
+    out[1] = 0xfe;
+    for (let i = 0; i < text.length; i++) {
+      const unit = text.charCodeAt(i);
+      out[2 + i * 2] = unit & 0xff;
+      out[3 + i * 2] = unit >> 8;
+    }
+    return out;
+  }
+
+  it('SEC-001: asset publiczny zapisany jako UTF-16 z kluczem w tresci wymaga zgody', async () => {
+    const h = await zipHarness();
+    const created = await h.library.create(
+      draft({
+        slug: 'acme-wide',
+        classification: { scope: 'public', secretFindings: [] },
+        assets: [
+          {
+            relPath: 'config.txt',
+            bytes: utf16(`aws_secret_access_key = ${filler(40)}\r\n`),
+          },
+        ],
+      }),
+    );
+    const plan = await h.zip.plan('claude-code', [created.item.id]);
+    expect(plan.held).toMatchObject([{ slug: 'acme-wide', reason: 'secret', confirmed: false }]);
+    expect(plan.report.plan.applicable).toBe(false);
+  });
+
+  it('SEC-001: sekret w tytule, opisie i komendzie hooka tez wymaga zgody', async () => {
+    const h = await zipHarness();
+    const titled = await h.library.create(
+      draft({
+        slug: 'acme-titled',
+        content: {
+          title: 'password = hunter2abc',
+          description: 'Opis.',
+          descriptionOrigin: 'source',
+          body: '# x\n',
+        },
+        classification: { scope: 'public', secretFindings: [] },
+      }),
+    );
+    const hook = await h.library.create(
+      draft({
+        kind: 'hook',
+        slug: 'acme-hook',
+        attributes: {
+          hook: {
+            event: 'Stop',
+            matcher: null,
+            command: `API_TOKEN=${filler(30)} ./run.sh`,
+            pathStyle: 'home-relative',
+            timeoutSeconds: null,
+          },
+        },
+        classification: { scope: 'public', secretFindings: [] },
+      }),
+    );
+    const plan = await h.zip.plan('claude-code', [titled.item.id, hook.item.id]);
+    expect(plan.held.map((x) => [x.slug, x.reason])).toEqual([
+      ['acme-titled', 'secret'],
+      ['acme-hook', 'secret'],
+    ]);
+  });
+
+  it('SEC-007: hook z lokalna sciezka bezwzgledna jest na liscie zgod z powodem path', async () => {
+    const h = await zipHarness();
+    const hook = await h.library.create(
+      draft({
+        kind: 'hook',
+        slug: 'acme-local',
+        attributes: {
+          hook: {
+            event: 'Stop',
+            matcher: null,
+            command: '/Users/acme/bin/notify.sh',
+            pathStyle: 'absolute',
+            timeoutSeconds: null,
+          },
+        },
+        classification: { scope: 'public', secretFindings: [] },
+      }),
+    );
+    const plan = await h.zip.plan('claude-code', [hook.item.id]);
+    expect(plan.held).toMatchObject([{ slug: 'acme-local', reason: 'path', confirmed: false }]);
+    const ok = await h.zip.plan('claude-code', [hook.item.id], [hook.item.id]);
+    expect(ok.report.plan.applicable).toBe(true);
+  });
+
+  it('SEC-001: plik wygenerowany przez eksportera tez przechodzi klasyfikator', async () => {
+    const h = await zipHarness();
+    const id = await publicItem(h, 'acme-generated');
+    h.exporter.build = (items) =>
+      emptyPlan({
+        entries: [
+          entry({
+            content: bytes(`password = ${filler(20)}\n`),
+            itemIds: items.map((i) => i.item.id),
+          }),
+        ],
+      });
+    const plan = await h.zip.plan('claude-code', [id]);
+    expect(plan.held).toMatchObject([
+      { slug: 'acme-generated', reason: 'secret', confirmed: false },
+    ]);
+    expect(plan.report.plan.entries).toEqual([]);
+  });
+
+  it('SEC-002: za duzy wybor wg metadanych jest odrzucony, zanim cokolwiek wczytano', async () => {
+    const h = await zipHarness();
+    let loads = 0;
+    const zip = new ZipExportService({
+      catalog: h.catalog,
+      exporters: [h.exporter],
+      library: {
+        get: () => {
+          loads++;
+          return Promise.reject(new Error('nie powinno byc wczytane'));
+        },
+        list: () =>
+          Promise.resolve({
+            items: [
+              { id: h.itemId, content: { body: '' }, assets: [{ sizeBytes: 65 * 1024 * 1024 }] },
+            ],
+            inconsistent: [],
+            problems: [],
+          } as never),
+      },
+      clock: h.clock,
+      appVersion: '1.2.3',
+      deflate: ZIP_OPTIONS.deflate,
+    });
+    expect(await code(zip.plan('claude-code', [h.itemId]))).toBe('zip-too-large');
+    expect(loads).toBe(0);
+  });
+
+  it('SEC-002: rownolegle przygotowanie drugiego planu jest odrzucone, a po pierwszym znow mozliwe', async () => {
+    const h = await zipHarness();
+    const id = await publicItem(h, 'acme-busy');
+    const first = h.zip.plan('claude-code', [id]);
+    expect(await code(h.zip.plan('claude-code', [id]))).toBe('zip-busy');
+    await first;
+    expect(await code(h.zip.plan('claude-code', [id]))).toBe('brak-bledu');
+  });
+
+  it('SEC-003: nowy plan uniewaznia poprzedni, a sweep usuwa wygasle', async () => {
+    const h = await zipHarness();
+    const id = await publicItem(h, 'acme-single');
+    const a = await h.zip.plan('claude-code', [id]);
+    const b = await h.zip.plan('claude-code', [id]);
+    expect(() => h.zip.peek(a.report.planId)).toThrow(/Nieznany plan/);
+    expect(h.zip.peek(b.report.planId).planId).toBe(b.report.planId);
+    h.clock.advance(15 * 60 * 1000 + 1);
+    h.zip.sweep();
+    expect(() => h.zip.peek(b.report.planId)).toThrow(/Nieznany plan/);
+  });
+
+  it('SEC-003: verify przechodzi dla niezmienionego elementu i odmawia po zmianie', async () => {
+    const h = await zipHarness();
+    const id = await publicItem(h, 'acme-stale');
+    const { report } = await h.zip.plan('claude-code', [id]);
+    await expect(h.zip.verify(report.planId)).resolves.toBeUndefined();
+
+    await h.library.update(id, draft({ slug: 'acme-stale', body: '# Zmiana\n' }));
+    await expect(h.zip.verify(report.planId)).rejects.toMatchObject({ code: 'zip-stale' });
+
+    const again = await h.zip.plan('claude-code', [id]);
+    await h.library.update(
+      id,
+      draft({
+        slug: 'acme-stale',
+        body: '# Zmiana\n',
+        classification: { scope: 'private', secretFindings: [] },
+      }),
+    );
+    await expect(h.zip.verify(again.report.planId)).rejects.toMatchObject({ code: 'zip-stale' });
+  });
+
+  it('SEC-003: verify po wygasnieciu planu zglasza wygasniecie', async () => {
+    const h = await zipHarness();
+    const id = await publicItem(h, 'acme-expired');
+    const { report } = await h.zip.plan('claude-code', [id]);
+    h.clock.advance(15 * 60 * 1000 + 1);
+    await expect(h.zip.verify(report.planId)).rejects.toMatchObject({ code: 'plan-expired' });
   });
 
   it('nieobslugiwane narzedzie i pusty wybor to bledy eksportu', async () => {

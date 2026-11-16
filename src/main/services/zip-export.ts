@@ -30,6 +30,10 @@ export interface ZipSaveDeps {
   readonly realpath: (path: string) => string;
   /** Katalogi konfiguracji narzedzi i danych aplikacji: archiwum nie trafia do nich (ADR 0053). */
   readonly protectedRoots: readonly string[];
+  /** Wspolna blokada zapisow (ADR 0030). `null`, gdy trwa odbudowa indeksu. Brana tylko na czas zapisu pliku i wpisu. */
+  readonly enterWrite: () => (() => void) | null;
+  /** Plik tymczasowy zostal po nieudanym zapisie: nazwa bez katalogu i przyczyna sprzatania. */
+  readonly logLeftover: (name: string, cause: unknown) => void;
   readonly log: OperationLog;
   readonly clock: Clock;
   readonly logUnexpected: (error: unknown) => void;
@@ -78,6 +82,8 @@ export class ZipSaveService implements ZipPort {
     try {
       const chosen = await this.deps.pickPath(payload.fileName);
       if (chosen === null) return { ok: true, value: { status: 'cancelled' } };
+      // Okno zapisu moze byc otwarte dlugo: plan mogl wygasnac, a element sie zmienic.
+      await this.zip().verify(planId);
       const hasExtension = extname(chosen).toLowerCase() === ZIP_EXTENSION;
       const target = hasExtension ? chosen : `${chosen}${ZIP_EXTENSION}`;
       // Okno zapisu pytalo o nadpisanie nazwy bez rozszerzenia, a nie tej z `.zip`.
@@ -95,15 +101,27 @@ export class ZipSaveService implements ZipPort {
           'Archiwum nie zapisze się w katalogu konfiguracji narzędzia ani w katalogu danych aplikacji. Wybierz inne miejsce.',
         );
       }
-      await this.deps.writeFile(target, payload.bytes);
-      this.zip().consume(planId);
-      await this.record(payload);
+      const release = this.deps.enterWrite();
+      if (release === null) {
+        return err('busy', 'Trwa odbudowa indeksu. Spróbuj ponownie za chwilę.');
+      }
+      try {
+        await this.deps.writeFile(target, payload.bytes);
+        this.zip().consume(planId);
+        await this.record(payload);
+      } finally {
+        release();
+      }
       return {
         ok: true,
         value: { status: 'saved', fileName: basename(target), fileCount: payload.fileCount },
       };
     } catch (error: unknown) {
+      if (error instanceof ExportError) return err(error.code, error.message);
       if (error instanceof AtomicWriteError) {
+        if (error.leftover !== undefined) {
+          this.deps.logLeftover(error.leftover.name, error.leftover.cause);
+        }
         return err(
           error.reason,
           `Nie udało się zapisać pliku. ${WRITE_FAILURE_TEXT[error.reason] ?? 'Zapis nie powiódł się.'}`,

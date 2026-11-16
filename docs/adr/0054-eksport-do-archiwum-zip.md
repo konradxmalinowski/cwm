@@ -27,19 +27,24 @@ dalej, więc przestaje działać założenie, że dane zostają na jego komputer
    nie musi być zainstalowane (ADR 0033 dotyczy zapisu w jego katalogu). Wpisy dostają `recoverable`, bo nic nie jest
    nadpisywane, a `WriteGate` w ogóle nie bierze udziału.
 3. **Format.** Własny zapis struktury ZIP (`zip-archive.ts`), kompresja deflate z Node (`zlib.deflateRawSync`,
-   poziom 9) wstrzykiwana do `core` jako funkcja, bo `core` nie importuje `zlib` z infrastruktury. Brak nowej zależności,
+   poziom 6) wstrzykiwana do `core` jako funkcja, bo `core` nie importuje `zlib` z infrastruktury. Brak nowej zależności,
    więc `THIRD_PARTY_NOTICES.md` bez zmian. Pokrycie: nagłówki lokalne, katalog centralny, EOCD, CRC-32, bit UTF-8
    (nazwy), bez Zip64, bez szyfrowania, bez data descriptor. Plik mniejszy po deflate jest kompresowany, inaczej
-   przechowywany. Limity: 5000 plików i 64 MiB treści, powyżej odmowa (`zip-too-many-files`, `zip-too-large`), bo archiwum
-   jest budowane w pamięci main przed wyborem pliku.
+   przechowywany. Limity: 5000 plików, 65535 wpisów razem z katalogami i manifestem oraz 64 MiB treści, powyżej odmowa
+   (`zip-too-many-files`, `zip-too-large`), bo archiwum jest budowane w pamięci main przed wyborem pliku. Rozmiar jest
+   sprawdzany z metadanych (treść plus `sizeBytes` plików pomocniczych) przed wczytaniem i na bieżąco przy wczytywaniu.
+   Kompresja jest synchroniczna, więc naraz przygotowuje się jeden plan (drugi dostaje `zip-busy`).
 4. **Deterministyczność.** Wpisy w stałej kolejności (bajtowo po nazwie UTF-8), data i czas DOS stałe
    (1980-01-01 00:00:00), tryby 0644 dla plików i 0755 dla katalogów (wpisy katalogów są jawne), system `Unix`, brak
    pola dodatkowego. Te same pliki w innej kolejności dają te same bajty. Bajty strumienia deflate zależą od wersji
    zlib w Node, więc gwarancja dotyczy tej samej wersji aplikacji; manifest i skróty plików nie zależą od niczego.
 5. **Ścieżki w archiwum.** `checkArchivePath` odrzuca pustą, bezwzględną (`/x`, `C:x`), z odwróconym ukośnikiem,
-   z segmentem pustym, `.` albo `..`, ze znakiem sterującym, dłuższą niż 240 bajtów i z segmentem dłuższym niż 255 bajtów.
-   Duplikat jest odmową także wtedy, gdy nazwy różnią się tylko wielkością liter (po rozpakowaniu na macOS lub Windowsie
-   jedna zjadłaby drugą), a plik pod nazwą katalogu nadrzędnego innego pliku też. Archiwum nie ma dowiązań z konstrukcji:
+   z segmentem pustym, `.` albo `..`, dłuższą niż 240 bajtów i z segmentem dłuższym niż 255 bajtów. Każdy segment przechodzi
+   `checkAssetPath` (znaki sterujące łącznie z C1, znaki zakazane w Windows, nazwy zarezerwowane, kropka lub spacja na końcu),
+   a cała ścieżka musi być w NFC i bez znaków niewidocznych i zmieniających kierunek tekstu (zero-width, bidi, BOM).
+   Duplikat jest odmową także wtedy, gdy nazwy różnią się tylko wielkością liter albo zapisem NFC/NFD (`collisionKey`;
+   po rozpakowaniu na macOS lub Windowsie jedna zjadłaby drugą), dotyczy to też katalogów, a plik pod nazwą katalogu
+   nadrzędnego innego pliku też. Archiwum nie ma dowiązań z konstrukcji:
    wejściem są bajty, nie ścieżki dysku.
 6. **Manifest `cwm-export.json`** (w korzeniu, wersja formatu 1): `format`, `formatVersion`, `app.name`, `app.version`,
    `layout` i lista `files` z `path`, `size` i `sha256` (bez samego manifestu). Bez dat, bez nazw elementów, bez ścieżek
@@ -49,24 +54,35 @@ dalej, więc przestaje działać założenie, że dane zostają na jego komputer
    bramkę, spójną z importem (`confirmedSecrets`) i kryterium 4 etapu 7 (profil nie niesie elementów prywatnych, projektowych
    ani z sekretami):
    - `scope: project` nigdy nie trafia do archiwum, zgody nie ma;
-   - trafienie klasyfikatora sekretów, zapisane w elemencie (`secretFindings`) albo znalezione teraz w treści, plikach
-     pomocniczych i snapshocie narzędzia (`classifySecrets`), wymaga jawnej zgody na element;
+   - trafienie klasyfikatora sekretów, zapisane w elemencie (`secretFindings`) albo znalezione teraz, wymaga jawnej zgody
+     na element. Skan używa `classifyStrict` (także pliki UTF-16 i binarne) i obejmuje treść, pliki pomocnicze, snapshot
+     narzędzia oraz pola, które trafiają do plików narzędzia: tytuł, opis, nazwę zadeklarowaną, aliasy, komendę i matcher
+     hooka, wartość ustawienia narzędzia. Plik wygenerowany przez eksportera przechodzi ten sam skan jako siatka
+     bezpieczeństwa;
+   - element z lokalną ścieżką bezwzględną (komenda hooka z `pathStyle: absolute` albo `/Users/...`, `/home/...`,
+     `C:\...`) wymaga zgody z powodem `path`: ścieżka niesie katalog domowy autora;
    - `scope: private` wymaga jawnej zgody na element (to domyślny zakres, więc zgoda jest per element, a nie jedno pole na całość);
    - `public` bez trafień wchodzi bez pytania.
    Bez zgody element jest poza archiwum i widać go na liście "Elementy, które wymagają Twojej zgody"; plan z samymi takimi
    elementami nie jest do zapisu. Zgoda to `confirmedItemIds` w `export:zip-plan` i nowy plan (nowy `planId`, stare
-   archiwum przepada). Podgląd treści w planie przechodzi redakcję sekretów jak przy eksporcie do narzędzia, a samo
+   archiwum przepada). Zgoda przychodzi z renderera w tym samym żądaniu co plan: to deklaracja użytkownika w modelu zaufania
+   aplikacji (renderer jest niezaufany co do ścieżek i treści, nie co do decyzji, którą użytkownik ma prawo podjąć), a main
+   i tak nie dołącza elementów `project` i sam liczy powód wstrzymania. Podgląd treści w planie przechodzi redakcję sekretów jak przy eksporcie do narzędzia, a samo
    archiwum zawiera treść wiernie: redakcja zmieniłaby plik, który użytkownik świadomie dołączył.
 8. **Zapis.** Dwa nowe kanały: `export:zip-plan` (`{ tool, itemIds, confirmedItemIds? }`, odpowiedź w kształcie
    `ExportPlanDto` plus `zip`) i `export:zip-save` (`{ planId, approved: true }`). Archiwum jest budowane przy planie i
-   trzymane w main pod `planId` (do 3 planów, 15 minut), więc do pliku trafia dokładnie to, co użytkownik widział. Ścieżkę
+   trzymane w main pod `planId` (jedno naraz: nowy plan unieważnia każdy poprzedni, wygasa po 15 minutach, a nieużywany
+   plan sprząta cykliczny, niepodtrzymujący procesu timer), więc do pliku trafia dokładnie to, co użytkownik widział. Ścieżkę
    wybiera main systemowym oknem zapisu z filtrem `.zip` i nigdy jej nie zwraca (odpowiedź niesie nazwę pliku bez
    katalogu). Reguły z ADR 0053, bez zmian: zapis prymitywem atomowym (`writeFileAtomic`, plik tymczasowy obok i rename,
-   nowy plik 0600), odmowa w katalogach konfiguracji narzędzi, `~/.agents`, `~/.cwm`, danych aplikacji i
+   plik zawsze z trybem 0600, także gdy nadpisuje istniejący), odmowa w katalogach konfiguracji narzędzi, `~/.agents`, `~/.cwm`, danych aplikacji i
    `CLAUDE_CONFIG_DIR`/`CODEX_HOME` (`forbidden-location`, sprawdzane po `realpath`), nazwa bez `.zip` dostaje
    rozszerzenie, a gdy taki plik już istnieje, jest `target-exists` (system nie pytał o jego nadpisanie). Anulowanie okna
-   zwraca `cancelled` i zostawia plan; udany zapis go zużywa. `export:zip-save` wchodzi pod `OperationLock`, bo dopisuje do
-   logu w indeksie.
+   zwraca `cancelled` i zostawia plan; udany zapis go zużywa. Po zamknięciu okna zapisu main jeszcze raz sprawdza ważność
+   planu i ponownie wczytuje elementy: zmiana rewizji, zakresu albo liczby trafień sekretów to `zip-stale` bez zapisu.
+   Blokada `OperationLock` jest brana dopiero na czas zapisu pliku i wpisu w historii (nie na czas okna systemowego, które
+   mogłoby trzymać odbudowę indeksu bez końca), więc `export:zip-save` nie jest na liście `WRITE_CHANNELS`. Plik
+   tymczasowy pozostawiony po błędzie zapisu trafia do logu z nazwą, bez katalogu.
 9. **Historia.** Udany zapis dopisuje wiersz `export-zip` do logu operacji: `itemId` to stała `zip-export`, `note` to
    `cel=zip; uklad=<narzędzie>; pliki=<n>; elementy=<m>`, bez ścieżki, bez `backupId`, bez `tool` (to nie zapis w
    narzędziu). Wpis nie jest cofalny (nic w narzędziu nie powstało), a w Historii czyta się jako "Eksport do archiwum ZIP:

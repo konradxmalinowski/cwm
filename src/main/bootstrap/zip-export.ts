@@ -15,6 +15,8 @@ export interface ZipExportWiring {
   readonly home: string;
   readonly service: () => ZipExportService | null;
   readonly log: OperationLog;
+  readonly enterWrite: () => (() => void) | null;
+  readonly logLeftover: (name: string, cause: unknown) => void;
   readonly logUnexpected: (error: unknown) => void;
 }
 
@@ -49,7 +51,8 @@ export function createZipSaveService(wiring: ZipExportWiring): ZipSaveService {
   return new ZipSaveService({
     service: wiring.service,
     pickPath: pickArchivePath,
-    writeFile: (path, bytes) => writeFileAtomic(path, bytes),
+    // Archiwum jest do przekazania dalej, wiec ma 0600 takze wtedy, gdy nadpisuje plik o szerszych prawach.
+    writeFile: (path, bytes) => writeFileAtomic(path, bytes, { mode: 0o600 }),
     exists: existsSync,
     realpath: (path) => {
       try {
@@ -60,6 +63,8 @@ export function createZipSaveService(wiring: ZipExportWiring): ZipSaveService {
     },
     protectedRoots: protectedRoots(wiring.home, wiring.userData),
     log: wiring.log,
+    enterWrite: wiring.enterWrite,
+    logLeftover: wiring.logLeftover,
     clock: systemClock,
     logUnexpected: wiring.logUnexpected,
   });

@@ -102,7 +102,7 @@ export type ExportApplyResult = Result<ExportApplyDto>;
  * archiwum w ukladzie wybranego narzedzia), a zapis przyjmuje wylacznie `planId`: sciezke pliku
  * wybiera main systemowym oknem zapisu i nigdy jej nie zwraca.
  */
-export type ZipHoldReasonDto = 'private' | 'secret' | 'project';
+export type ZipHoldReasonDto = 'private' | 'secret' | 'path' | 'project';
 
 export interface ExportZipPlanRequest {
   /** Uklad plikow w archiwum: wedlug tego narzedzia. */

@@ -21,7 +21,6 @@ export const WRITE_CHANNELS: ReadonlySet<IpcChannel> = new Set<IpcChannel>([
   'library:repair',
   'import:apply',
   'export:apply',
-  'export:zip-save',
   'sync:apply',
   'history:rollback',
 ]);

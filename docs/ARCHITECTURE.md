@@ -765,14 +765,14 @@ handlery. Żaden nie przyjmuje ścieżki: parser `apply` buduje wynik z dwóch p
 `confirmed`), a plan ignoruje ładunek. Plan żyje w main (10 minut, jednorazowy, odcisk stanu:
 liczba katalogów w `library/items`, wynik otwarcia indeksu, obecność pliku). Kanały zapisujące
 (`library:save`, `library:delete-apply`, `library:repair`, `import:apply`, `export:apply`,
-`export:zip-save`, `sync:apply`, `history:rollback`) wchodzą pod wspólną blokadę `OperationLock`; w trakcie
+`sync:apply`, `history:rollback`) wchodzą pod wspólną blokadę `OperationLock`; w trakcie
 odbudowy odpowiadają kodem `busy`, a odbudowa nie startuje, gdy któryś z nich trwa.
 
 `export:zip-plan` i `export:zip-save` (ADR 0054) eksportują wybrane elementy do archiwum ZIP. Plan używa eksportera
 narzędzia na pustym celu (nic nie jest czytane z konfiguracji użytkownika), a archiwum żyje w main pod `planId`. Zapis
 przyjmuje tylko `planId`: ścieżkę wybiera main oknem zapisu, odmawia katalogów konfiguracji narzędzi i danych aplikacji,
-zapisuje atomowo i dopisuje do Historii wiersz `export-zip` (liczby, bez ścieżki). `export:zip-save` wchodzi pod
-`OperationLock`, bo pisze do logu w indeksie. Elementy prywatne i z trafieniem klasyfikatora sekretów dołączają się
+zapisuje atomowo i dopisuje do Historii wiersz `export-zip` (liczby, bez ścieżki). `export:zip-save` bierze
+`OperationLock` dopiero na czas zapisu pliku i wpisu w historii, nie na czas okna systemowego. Elementy prywatne i z trafieniem klasyfikatora sekretów dołączają się
 wyłącznie przez `confirmedItemIds`, a elementy projektowe nigdy.
 
 `diagnostics:report-preview` i `diagnostics:report-save` (ADR 0053) składają raport do zgłoszenia błędu. Podgląd nie

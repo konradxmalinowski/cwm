@@ -123,7 +123,7 @@ export async function startExport(
     library,
     clock: systemClock,
     appVersion: deps.appVersion,
-    deflate: (bytes) => deflateRawSync(bytes, { level: 9 }),
+    deflate: (bytes) => deflateRawSync(bytes, { level: 6 }),
   });
   return { exports, sync, history, zip };
 }
