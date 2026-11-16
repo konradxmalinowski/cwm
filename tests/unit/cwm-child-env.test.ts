@@ -1,7 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import {
+  chmodSync,
+  readFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterAll, describe, expect, it } from 'vitest';
 
 import {
   buildChildEnv,
+  buildEngineProbeEnv,
   buildGitEnv,
   checkGitTreeListing,
   foreignEnvRefs,
@@ -12,6 +28,15 @@ import {
   sanitizePath,
   type ChildEnvInput,
 } from '../../src/core/cwm';
+import {
+  createLayout,
+  engineChecksFile,
+  readEngineChecks,
+  collectEngineMetadata,
+  recordEngineCheck,
+  runEngineCheck,
+  runEngineMetadata,
+} from '../../src/infra/cwm';
 
 const input = (overrides: Partial<ChildEnvInput> = {}): ChildEnvInput => ({
   parent: {},
@@ -427,5 +452,255 @@ describe('srodowisko i opcje procesu git (ADR 0048)', () => {
       expect(bad('')).toBe(true);
       expect(bad('nonsense\0')).toBe(true);
     });
+  });
+});
+
+describe('srodowisko prob metadanych silnika (ADR 0052)', () => {
+  it('ma tylko PATH bez elementow wzglednych, HOME, CLAUDE_CONFIG_DIR z katalogu proby i wylaczone aktualizacje', () => {
+    const env = buildEngineProbeEnv(
+      {
+        PATH: '/usr/bin:.:bin:/evil/../bin:/usr/bin',
+        HOME: '/home/u',
+        ANTHROPIC_API_KEY: 'sk-ant-x',
+        GITHUB_TOKEN: 'ghp_x',
+        CLAUDE_CONFIG_DIR: '/home/u/.claude',
+        AWS_SECRET_ACCESS_KEY: 'x',
+      },
+      '/tmp/acme-probe',
+      null,
+    );
+    expect(env).toEqual({
+      PATH: '/usr/bin:/evil/../bin',
+      HOME: '/home/u',
+      CLAUDE_CONFIG_DIR: '/tmp/acme-probe',
+      DISABLE_AUTOUPDATER: '1',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    });
+    expect(buildEngineProbeEnv({}, '/tmp/p', null)).toEqual({
+      PATH: '/usr/bin:/bin',
+      HOME: '',
+      CLAUDE_CONFIG_DIR: '/tmp/p',
+      DISABLE_AUTOUPDATER: '1',
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+    });
+  });
+
+  it('wycina z PATH elementy w katalogu projektu: shim silnika nie dostanie interpretera z repozytorium (SEC-E1)', () => {
+    const env = buildEngineProbeEnv(
+      { PATH: '/work/acme/node_modules/.bin:/work/acme:/usr/local/bin:/usr/bin', HOME: '/h' },
+      '/tmp/p',
+      '/work/acme',
+    );
+    expect(env['PATH']).toBe('/usr/local/bin:/usr/bin');
+    // Projekt jedyny na PATH: wraca bezpieczna wartosc domyslna, nie katalog projektu.
+    expect(buildEngineProbeEnv({ PATH: '/work/acme/bin' }, '/tmp/p', '/work/acme')['PATH']).toBe(
+      '/usr/bin:/bin',
+    );
+    expect(
+      buildEngineProbeEnv({ PATH: '/work/acme-other/bin' }, '/tmp/p', '/work/acme')['PATH'],
+    ).toBe('/work/acme-other/bin');
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('sprawdzenie silnika na atrapie (ADR 0052)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'acme-engine-check-'));
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+
+  const HELP = [
+    'Usage: stub [options] [command]',
+    '',
+    'Options:',
+    '  --settings <file>        Settings',
+    '  --mcp-config <configs>   MCP config',
+    '  --strict-mcp-config      Strict',
+    '  --plugin-dir <path>      Plugin dir',
+    '',
+    'Commands:',
+    '  mcp                      MCP',
+    '  newcmd [x]               Nowe',
+    '',
+  ].join('\n');
+  const stub = join(root, 'stub-claude');
+  writeFileSync(
+    stub,
+    [
+      '#!/bin/sh',
+      'D=$(dirname "$0")',
+      'echo "$*" >> "$D/calls.log"',
+      'case "$1" in',
+      '  --version) echo "9.9.9 (Claude Code)" ;;',
+      `  --help) cat <<'EOF'`,
+      HELP,
+      'EOF',
+      '  ;;',
+      '  plugin) echo "Not logged in" ; exit 1 ;;',
+      '  mcp) echo "Usage: stub mcp" ;;',
+      '  --dump) /usr/bin/env ; pwd ;;',
+      '  --flood) i=0; while [ $i -lt 2000 ]; do echo "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; i=$((i+1)); done ;;',
+      '  --hang) exec sleep 5 ;;',
+      '  --gc-exit) sleep 20 & echo $! > "$D/gc-exit.pid"; echo done ;;',
+      '  --gc-hang) sleep 20 & echo $! > "$D/gc-hang.pid"; wait ;;',
+      '  --gc-flood) sleep 20 & echo $! > "$D/gc-flood.pid"; i=0; while [ $i -lt 5000 ]; do echo "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"; i=$((i+1)); done; wait ;;',
+      '  *) exit 3 ;;',
+      'esac',
+      '',
+    ].join('\n'),
+  );
+  chmodSync(stub, 0o755);
+  const scratch = (): string => {
+    const dir = mkdtempSync(join(root, 'cwm-probe-'));
+    chmodSync(dir, 0o700);
+    return dir;
+  };
+  const limits = { timeoutMs: 3000, maxBytes: 4096 };
+  const hangStub = join(root, 'hang-claude');
+  writeFileSync(
+    hangStub,
+    '#!/bin/sh\necho "$*" >> "$(dirname "$0")/hang-calls.log"\nexec sleep 8\n',
+  );
+  chmodSync(hangStub, 0o755);
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const pidOf = (name: string): number => Number(readFileSync(join(root, name), 'utf8').trim());
+  const gone = async (pid: number): Promise<boolean> => {
+    for (let i = 0; i < 40; i += 1) {
+      if (!alive(pid)) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return false;
+  };
+
+  it('proces dostaje minimalne srodowisko i pusty katalog proby jako katalog roboczy', async () => {
+    const dir = scratch();
+    const previous = process.env['ACME_SECRET_TOKEN'];
+    process.env['ACME_SECRET_TOKEN'] = 'sekret-nie-dla-silnika';
+    try {
+      const out = await runEngineMetadata(stub, ['--dump'], dir, limits, null);
+      expect(out).not.toBeNull();
+      expect(out).not.toMatch(/ACME_SECRET_TOKEN|sekret-nie-dla-silnika/);
+      expect(out).toMatch(new RegExp(`CLAUDE_CONFIG_DIR=${dir}\\n`));
+      expect(out?.trimEnd().split('\n').pop()).toMatch(/acme-engine-check-.*cwm-probe-/);
+    } finally {
+      if (previous === undefined) delete process.env['ACME_SECRET_TOKEN'];
+      else process.env['ACME_SECRET_TOKEN'] = previous;
+    }
+  });
+
+  it('kod wyjscia, przekroczenie rozmiaru i czasu to null', async () => {
+    const dir = scratch();
+    expect(await runEngineMetadata(stub, ['--version'], dir, limits, null)).toMatch(/^9\.9\.9/);
+    expect(await runEngineMetadata(stub, ['plugin', '--help'], dir, limits, null)).toBeNull();
+    expect(await runEngineMetadata(stub, ['--flood'], dir, limits, null)).toBeNull();
+    expect(
+      await runEngineMetadata(stub, ['--hang'], dir, { timeoutMs: 300, maxBytes: 4096 }, null),
+    ).toBeNull();
+  });
+
+  it('proba dostaje wylaczone aktualizacje i ruch nieistotny', async () => {
+    const out = await runEngineMetadata(stub, ['--dump'], scratch(), limits, null);
+    expect(out).toMatch(/DISABLE_AUTOUPDATER=1\n/);
+    expect(out).toMatch(/CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1\n/);
+  });
+
+  it.each([
+    ['gc-exit', '--gc-exit', limits],
+    ['gc-hang', '--gc-hang', { timeoutMs: 400, maxBytes: 4096 }],
+    ['gc-flood', '--gc-flood', { timeoutMs: 3000, maxBytes: 2048 }],
+  ])('zadne dziecko proby nie przezywa: %s (SEC-E5)', async (name, arg, probeLimits) => {
+    const out = await runEngineMetadata(stub, [arg], scratch(), probeLimits, null);
+    expect(arg === '--gc-exit' ? out : null).toBe(arg === '--gc-exit' ? 'done\n' : null);
+    const pid = pidOf(`${name}.pid`);
+    expect(await gone(pid)).toBe(true);
+  });
+
+  it('dwa przekroczenia czasu w jednym sprawdzeniu zatrzymuja reszte polecen (SEC-E4)', async () => {
+    rmSync(join(root, 'hang-calls.log'), { force: true });
+    const started = Date.now();
+    const meta = await collectEngineMetadata(hangStub, scratch(), null, 250);
+    expect(meta).toEqual({ version: null, help: null, pluginHelp: null, mcpHelp: null });
+    expect(readFileSync(join(root, 'hang-calls.log'), 'utf8').trim().split('\n')).toEqual([
+      '--version',
+      '--help',
+    ]);
+    expect(Date.now() - started).toBeLessThan(4000);
+  });
+
+  it('runEngineCheck: wersja z --version inna niz wykryta wczesniej to unverified bez wpisu (SEC-E7)', async () => {
+    const parent = mkdtempSync(join(root, 'parent-'));
+    const same = await runEngineCheck(stub, parent, { projectDir: null, expectedVersion: '9.9.9' });
+    expect(same.report.verdict).toBe('ok');
+    const other = await runEngineCheck(stub, parent, {
+      projectDir: null,
+      expectedVersion: '9.9.8',
+    });
+    expect(other.report.verdict).toBe('unverified');
+    expect(other.entry).toBeNull();
+  });
+
+  it('wpis wiaze wynik z plikiem: sciezka, rozmiar i mtime (SEC-E2)', async () => {
+    const parent = mkdtempSync(join(root, 'parent-'));
+    const run = await runEngineCheck(stub, parent, { projectDir: null });
+    const info = statSync(stub);
+    expect(run.entry?.binary).toEqual({ path: stub, size: info.size, mtimeMs: info.mtimeMs });
+  });
+
+  it('runEngineCheck: ocena z czterech polecen, wpis ze skrotami i sprzatanie katalogu proby', async () => {
+    const parent = mkdtempSync(join(root, 'parent-'));
+    const run = await runEngineCheck(stub, parent, { projectDir: null });
+    expect(run.report.verdict).toBe('ok');
+    expect(run.report.version).toBe('9.9.9');
+    expect(run.report.newSubcommands).toEqual(['newcmd']);
+    expect(run.report.unavailable).toEqual(['plugin --help']);
+    expect(run.entry?.helpSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(run.entry?.pluginHelpSha256).toBeNull();
+    expect(run.entry?.mcpHelpSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(readdirSync(parent)).toEqual([]);
+  });
+
+  it('zapis wyniku w ~/.cwm/runtime: 0600, odczyt zwraca wpis, uszkodzony plik to pusty zbior', async () => {
+    const home = mkdtempSync(join(root, 'home-'));
+    const layout = createLayout(home);
+    expect((await readEngineChecks(layout)).state).toBe('missing');
+    const run = await runEngineCheck(stub, mkdtempSync(join(root, 'parent-')), {
+      projectDir: null,
+    });
+    if (run.entry === null) throw new Error('brak wpisu');
+    const before = await readEngineChecks(layout);
+    await recordEngineCheck(layout, before.file, '9.9.9', run.entry);
+    const file = engineChecksFile(layout);
+    expect(file).toBe(join(home, 'runtime', 'engine-checks.json'));
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(statSync(join(home, 'runtime')).mode & 0o777).toBe(0o700);
+    const after = await readEngineChecks(layout);
+    expect(after.state).toBe('ok');
+    expect(after.file.checks['9.9.9']?.helpSha256).toBe(run.entry.helpSha256);
+
+    writeFileSync(file, '{"apiVersion":"cwm.dev/v1"}');
+    const broken = await readEngineChecks(layout);
+    expect(broken.state).toBe('invalid');
+    expect(Object.keys(broken.file.checks)).toEqual([]);
+  });
+
+  it('dowiazanie w miejscu pliku wynikow: odczyt to invalid, zapis odmowa i nic nie powstaje poza ~/.cwm', async () => {
+    const home = mkdtempSync(join(root, 'home-'));
+    const layout = createLayout(home);
+    mkdirSync(join(home, 'runtime'), { mode: 0o700 });
+    const outside = join(root, 'outside.json');
+    symlinkSync(outside, engineChecksFile(layout));
+    expect((await readEngineChecks(layout)).state).toBe('invalid');
+    const run = await runEngineCheck(stub, mkdtempSync(join(root, 'parent-')), {
+      projectDir: null,
+    });
+    if (run.entry === null) throw new Error('brak wpisu');
+    await expect(
+      recordEngineCheck(layout, (await readEngineChecks(layout)).file, '9.9.9', run.entry),
+    ).rejects.toThrow();
+    expect(existsSync(outside)).toBe(false);
   });
 });

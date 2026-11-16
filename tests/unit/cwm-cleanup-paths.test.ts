@@ -56,6 +56,9 @@ describe('validateCleanupPath (PRF-02)', () => {
     [`sessions/${HASH}/other.json`, 'poza lista w sesji'],
     ['sessions/xyz/settings.json', 'zly skrot projektu'],
     [`plugins/no-hash/file`, 'migawka bez skrotu'],
+    ['engine-checks.json', 'wynik sprawdzenia silnika (ADR 0052) nie jest plikiem profilu'],
+    ['../engine-checks.json', 'wynik sprawdzenia silnika spoza katalogu firmy'],
+    ['runtime/engine-checks.json', 'wynik sprawdzenia silnika pod obca nazwa korzenia'],
     [`plugins/acme@${HASH}`, 'migawka bez pliku'],
   ])('odrzuca %j (%s)', (path) => {
     expect(validateCleanupPath(path).ok).toBe(false);
