@@ -107,7 +107,7 @@ export interface LocationOptions {
   readonly salt?: Uint8Array;
 }
 
-function pathApiFor(platform: NodeJS.Platform): path.PlatformPath {
+function pathApiFor(platform: NodeJS.Platform): typeof path.posix {
   return platform === 'win32' ? path.win32 : path.posix;
 }
 
