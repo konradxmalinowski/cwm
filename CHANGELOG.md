@@ -12,6 +12,20 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Security
 
+- Kopia pluginu z git jest wiązana z przypiętym commitem, nie tylko ze skrótem drzewa (ADR 0048, `docs/CLI.md`).
+  `cwm plugin add git|fetch|update` zapisuje bloby bez zmian (`git cat-file --batch` zamiast `checkout`, więc
+  `.gitattributes` z `working-tree-encoding`, `ident` i `eol` nie zmienia bajtów) oraz surowe obiekty commita i
+  drzew w `~/.cwm/sources/git/<skrót adresu>/<commit>.objects/`. `cwm start` i `cwm diff` sprawdzają offline, w
+  czystym JS i bez `git`, łańcuch skrótów od commita (SHA-1 albo SHA-256) przez drzewa do każdego pliku, tryby
+  i zbiór ścieżek; podmiana pliku, obiektu drzewa albo commita, brakujący lub dodatkowy plik i obiekt to odmowa z
+  poleceniem `cwm plugin fetch <id>`. **Migracja:** kopie pobrane wcześniej nie mają obiektów, więc start
+  odmawia, dopóki nie wykonasz `cwm plugin fetch <id>` (jawnie, start nie łączy się z siecią); dla repozytoriów
+  z `.gitattributes` zmieniających bajty `fetch` zgłosi nowy skrót drzewa i odeśle do `cwm plugin update <id>`.
+  Repozytoria SHA-256 (`--object-format=sha256`) są obsługiwane.
+  Dawny tryb pliku 100664 jest przyjmowany jako zwykły plik; nazwy różniące się tylko wielkością liter albo
+  normalizacją Unicode, nazwy powyżej 200 bajtów i obiekty drzew ponad limity (1000 plików, 1 MiB, 16 MiB razem)
+  to czytelna odmowa przy `fetch`, a nie błąd systemowy. Plugin może zawierać `.mcp.json`, `CLAUDE.md` i `.claude/`
+  (zapis kopii w `sources/git` pomija ochronę nazw natywnej konfiguracji, reszta `~/.cwm` jest chroniona jak dotąd).
 - Wstawki `!` w skillach, agentach, komendach i workflow są rozpoznawane wzorcami silnika (wstawka wielowierszowa,
   blok ` ```! ` jednowierszowy i w środku wiersza), więc każda wstawka, którą silnik wykona, jest pokazana i
   zatwierdzana. Zasoby, które miały takie niewidoczne wstawki, dostaną nowe pole `inlineSnippets` i **nowy skrót

@@ -1,9 +1,9 @@
 # ADR 0048: Pluginy z repozytorium git
 
-Status: zaakceptowane w zakresie planu (2026-11-15)
+Status: zaakceptowane w zakresie planu (2026-11-15); punkty 5, 6 i 7a zmienione i punkt 12 dodany decyzją z 2026-11-16 (weryfikacja commita)
 Data: 2026-11-15
 Dotyczy: ADR 0037 (model zasobów, `source.type: git`), ADR 0040 (zatwierdzanie, `cwm start`), ADR 0043 (pluginy z marketplace'u), ADR 0046 (`cwm plugin`)
-Źródło: plan `plans/2026-11-15-cwm-git-plugins.md` (lokalny, poza repozytorium); kod w `src/core/cwm/git-source.ts`, `src/infra/cwm/{git-fetch,git-source,plugin-registry,runtime-plan,writer}.ts`, `src/cli/commands/plugin.ts`, `eslint.config.mjs`, `scripts/verify-boundaries.mjs`; opis użytkowy w `docs/CLI.md`
+Źródło: plany `plans/2026-11-15-cwm-git-plugins.md` i `plans/2026-11-16-cwm-git-verify.md` (lokalne, poza repozytorium); kod w `src/core/cwm/{git-source,git-objects}.ts`, `src/infra/cwm/{git-fetch,git-source,plugin-registry,runtime-plan,writer}.ts`, `src/cli/commands/plugin.ts`, `eslint.config.mjs`, `scripts/verify-boundaries.mjs`; opis użytkowy w `docs/CLI.md`
 
 ## Kontekst
 
@@ -51,13 +51,12 @@ jawnym, osobnym krokiem, a to, co zatwierdzono, jest dokładnie tym, co zostanie
    (które `git` czyta jak scp-ssh) i jawny domyślny port są odrzucane z podpowiedzią formy kanonicznej. Tę samą kontrolę (`gitUrlProblem`) robi CLI, walidator manifestu i `git-fetch.ts`
    (obrona w głąb). Ref: nazwa gałęzi, tagu albo pełny SHA; skrócony SHA, `..`, `//`, `.lock` i początkowy `-`
    są odrzucane. SSH nie jest obsługiwany w tym etapie (zob. „Poza zakresem”).
-5. **Kontrola przed wypakowaniem.** `git ls-tree -r -l -z <commit>` jest sprawdzane przez czystą funkcję
-   `checkGitTreeListing`: tylko tryby 100644 i 100755 (dowiązanie symboliczne to błąd, składnik `.git` to
+5. **Kontrola przed wypakowaniem.** `git ls-tree -r -t -l -z <commit>` jest sprawdzane przez czystą funkcję
+   `checkGitTreeListing`: tylko tryby 100644, 100755 i dawny 100664 (zwykły plik bez bitu wykonywania; dowiązanie symboliczne to błąd, składnik `.git` to
    błąd), limity jak `readTree` (500 plików, 1 MiB na plik, 10 MiB razem). Submoduły (160000) nie są
-   pobierane; to ostrzeżenie, w kopii zostaje pusty katalog, którego `readTree` nie widzi. `git read-tree` i
-   `git checkout-index -a -f` wypakowują do katalogu roboczego poza repozytorium (`GIT_DIR` i `GIT_WORK_TREE`),
-   więc w kopii nie ma `.git`. Atrybuty (`.gitattributes`) nie uruchamiają niczego, bo filtry wymagają
-   konfiguracji, której nie ma. Limity procesu: 120 s na polecenie, 300 s łącznie, 64 MiB w katalogu
+   pobierane; to ostrzeżenie, w kopii zostaje pusty katalog, którego `readTree` nie widzi. Pliki nie
+   powstają przez `git read-tree` i `git checkout-index` (patrz punkt 12): bloby są zapisywane bajt w bajt, więc
+   w kopii nie ma `.git`, a `.gitattributes` nie ma na nic wpływu. Limity procesu: 120 s na polecenie, 300 s łącznie, 64 MiB w katalogu
    roboczym podczas pobierania (kontrola co 200 ms, przed pobraniem sprawdzane jest wolne miejsce: co najmniej
    128 MiB), 4 MiB wyjścia; limit czasu i rozmiaru zabija całą grupę
    procesów (pomocnik `git-remote-https` też), a SIGINT, SIGTERM i SIGHUP robią to samo (komunikat
@@ -73,7 +72,9 @@ jawnym, osobnym krokiem, a to, co zatwierdzono, jest dokładnie tym, co zostanie
    (0600 albo 0700 z bitem wykonywania) i katalogów (0700) są ustawiane jawnie, niezależnie od `umask`, a
    zamiana katalogów zostawia poprzednią wersję jako `.nazwa.old-*`, usuwaną na końcu. Nazwy plików w środku
    nie są sprawdzane pod kątem chronionych nazw (plugin może mieć `.mcp.json` albo `CLAUDE.md`; kopia leży w
-   `sources/` i jest tylko czytana, nic z niej nie trafia do natywnej konfiguracji). Ten sam commit z tym samym
+   `sources/` i jest tylko czytana, nic z niej nie trafia do natywnej konfiguracji). Wyjątek dla chronionych nazw jest
+   jawny i wąski: `sourcesScope` (writer) pomija kontrolę nazw `.claude`, `CLAUDE.md` i `.mcp.json` tylko pod
+   `sources/git`; dowiązania, wyjście poza korzeń i ochrona reszty `~/.cwm` działają jak dotąd. Ten sam commit z tym samym
    skrótem drzewa nie jest zapisywany ponownie.
 7a. **Skrót drzewa w manifeście.** `fetch` i `update` zapisują `source.tree` (skrót drzewa zainstalowanej
    kopii). `cwm start` odmawia, gdy skrót drzewa kopii jest inny albo go brak, z podpowiedzią
@@ -102,6 +103,42 @@ jawnym, osobnym krokiem, a to, co zatwierdzono, jest dokładnie tym, co zostanie
 11. **`remove`.** Usuwa też kopię `sources/git/<skrót adresu>/<commit>/` (i pusty katalog repozytorium), jeśli
     żaden inny zasób nie wskazuje tego samego adresu i commita.
 
+12. **Weryfikacja kopii względem commita (2026-11-16).** Zamyka dwa ryzyka szczątkowe z pierwszej wersji
+    (bajty z atrybutów i brak związania kopii z obiektem commita).
+    - *Zapis surowy.* Po `fetch` i `ls-tree -r -t -l -z` jeden proces `git cat-file --batch` zwraca commit, wszystkie
+      drzewa i bloby (limit wyjścia: limit drzewa plus 4 MiB). Pliki zapisuje CWM z bajtów bloba, tryb z wpisu
+      drzewa (100755 daje 0700, inaczej 0600); nie ma `checkout`, `read-tree` ani katalogu roboczego z filtrami.
+      Lista z `ls-tree` tylko wskazuje, co pobrać; o tym, co trafi na dysk, decyduje łańcuch skrótów liczony w
+      core.
+    - *Obiekty obok kopii.* Katalog `<commit>.objects/` (obok `<commit>/`, żeby nie wpadł do migawki pluginu ani do
+      profilu) ma plik na obiekt commita i każdego drzewa: nazwa to skrót, treść to surowy obiekt z nagłówkiem
+      `<typ> <długość>\0`, bez kompresji. Ta sama kontrola zaufania co kopia (zwykły katalog użytkownika bez zapisu
+      dla grupy i innych), tylko zwykłe pliki o nazwie równej skrótowi. `plugin remove` i `update` usuwają go razem
+      z kopią.
+    - *Czysta weryfikacja w core* (`src/core/cwm/git-objects.ts`, `node:crypto` jest dozwolone w core; bez
+      procesów i dysku): skrót obiektu commita równy przypiętemu `source.commit` (algorytm z długości SHA: 40 to
+      SHA-1, 64 to SHA-256), linia `tree` wskazuje drzewo główne, każde drzewo przeliczone z zapisanych bajtów i
+      sparsowane (nazwy: poprawny UTF-8, bez `/`, `\`, znaków sterujących, `.git`; bez powtórzeń; tryby 100644,
+      100755, 40000 i 160000; dowiązanie 120000 to odmowa), każdy plik kopii przeliczony jako `blob <len>\0<bajty>` i
+      porównany ze skrótem w drzewie, zgodność bitu wykonywania i dokładnie ten sam zbiór ścieżek, brak
+      nadmiarowych obiektów. Limity: głębokość 16, do 20000 odwiedzonych wpisów (drzewa mogą wskazywać to samo
+      poddrzewo wiele razy), 500 plików, 1 MiB na plik, 10 MiB razem z obiektami drzew i commita.
+    - *Gdzie.* `cwm start` i `cwm diff` wołają ją przez plan (`runtime-plan.ts`, `verifyGitSourceCopy` w
+      `git-source.ts`), po szybkiej kontroli `source.tree`; nie importują `git-fetch.ts` i nie uruchamiają
+      `git` (sonda `test:boundaries` bez zmian). `fetch` uznaje kopię za „na miejscu” tylko po pełnej weryfikacji,
+      a po pobraniu sprawdza tym samym kodem to, co zapisał.
+    - *Odmowa i migracja.* Niezgodność to błąd planu z poleceniem `cwm plugin fetch <id>`. Kopia bez
+      `<commit>.objects/` (sprzed tej zmiany) odmawia tak samo, z osobnym komunikatem; `fetch` jest jedynym
+      sposobem migracji i działa tylko jawnie. Gdy surowe bajty dają inny skrót drzewa niż dawny `checkout`
+      (repozytorium z `.gitattributes`), `fetch` odsyła do `update`.
+    - *Dodatkowe kontrole planu.* Nazwa wpisu do 200 bajtów UTF-8 i ścieżka do 512 bajtów (zapas na nazwy
+      tymczasowe zapisu i katalog roboczy); kolizje nazw po `foldName` (wielkość liter, normalizacja Unicode) z tym
+      samym komunikatem co `readTree`; tryb 100664 jako zwykły plik. Zapisane obiekty mają te same limity przy
+      zapisie i odczycie (do 1000 plików, 1 MiB na obiekt, 16 MiB razem), więc `fetch` nie przyjmie kopii, którą
+      start odrzuci. Kopia jest instalowana przed obiektami, a gdy obiekty się nie zapiszą, kopia jest wycofywana.
+    - *Format skrótów.* Repozytorium robocze powstaje w formacie przypiętego SHA; bez przypiętego commita (`add`,
+      `update`) próba SHA-1, a po komunikacie `mismatched algorithms` powtórzenie jako SHA-256.
+
 ## Konsekwencje
 
 - Plugin z git zatwierdzony na jednej maszynie wymaga `cwm plugin fetch` na drugiej (kopia nie jest w
@@ -116,11 +153,8 @@ jawnym, osobnym krokiem, a to, co zatwierdzono, jest dokładnie tym, co zostanie
 
 ## Ryzyko szczątkowe
 
-- **Bajty z atrybutów.** `.gitattributes` (`working-tree-encoding`, `ident`, `text eol=`) może zmienić bajty
-  wypakowane przez `checkout-index` względem blobów w commicie. `source.tree` wiąże zatwierdzenie z tym, co
-  faktycznie wypakowano, ale nie z blobami. Lepsza opcja (kolejny krok): wypakowanie surowych blobów przez
-  `git cat-file --batch` z pominięciem filtrów i atrybutów oraz offline weryfikacja obiektu commita (skrót
-  SHA obiektu równy przypiętemu), tak by drzewo wynikało wyłącznie z commita.
+- ~~**Bajty z atrybutów.**~~ Zamknięte w punkcie 12: bloby są zapisywane surowo, a kopia jest sprawdzana względem
+  commita przy każdym starcie i diffie.
 - **Obiekt ze wspólnego magazynu forka.** Serwer z wspólnym magazynem obiektów (forki) może wydać commit,
   który nie jest osiągalny z podanego refu (commit „podszywacz” z innego forka). Przypięcie po SHA i
   zatwierdzenie pokazują, co zostanie uruchomione, ale CWM nie sprawdza, że commit leży na gałęzi z `ref`.
@@ -128,10 +162,19 @@ jawnym, osobnym krokiem, a to, co zatwierdzono, jest dokładnie tym, co zostanie
 - **SIGKILL na CWM.** Proces `git` jest we własnej grupie procesów, więc po `kill -9` na samym CWM przeżywa
   do zerwania połączenia albo własnego limitu; katalog `.tmp-*` usuwa następne pobieranie (po godzinie).
 
-- Kopia w `sources/` nie jest ponownie porównywana z commitem (to wymagałoby `git` przy starcie). Wiąże ją z
-  zatwierdzeniem skrót drzewa i lista plików, ale ktoś z prawem zapisu w `~/.cwm` (ten sam użytkownik, root)
-  może ją podmienić między zatwierdzeniem a startem; podmiana pliku zmienia skrót i pyta ponownie przy
-  następnym starcie, nie w trakcie sesji (jak w ADR 0043).
+- Kopia w `sources/` jest porównywana z przypiętym commitem przy każdym `cwm start` i `cwm diff` (punkt 12), ale
+  nadal nie w trakcie sesji: ktoś z prawem zapisu w `~/.cwm` (ten sam użytkownik, root) może podmienić plik
+  między startem a użyciem go przez silnik (migawka pluginu w `runtime/` jest osobną kopią; jak w ADR 0043).
+  Podmiana kopii i obiektów naraz nie przechodzi: skrót commita jest przypięty w manifeście, a obiekty muszą go
+  odtworzyć. Atakujący z zapisem w `registry/` może zmienić sam `source.commit`, ale to zmienia też skrót
+  zatwierdzenia (blok `git`), więc `cwm start` zapyta ponownie.
+- Przypięcie SHA-1 liczy zwykły SHA-1, a git używa SHA-1DC (wariant wykrywający i odrzucający wzorce znanych
+  ataków kolizyjnych). CWM nie ma więc tej ochrony: realny atak wymagałby kolizji z commitem przygotowanym
+  przez atakującego przed przypięciem. `source.tree` (SHA-256 treści plików) w zatwierdzeniu ogranicza skutki:
+  późniejsza podmiana bajtów zmienia skrót zatwierdzenia. Zalecenie: tam, gdzie serwer to obsługuje
+  (`git init --object-format=sha256`), przypinać commity SHA-256; takie repozytoria tego ograniczenia nie mają.
+- Obiekty `tag` i podpisy commitów nie są sprawdzane (poza zakresem, jak dotąd). Opcjonalne nagłówki commita
+  (`gpgsig`, `encoding`) są objęte skrótem, ale nie są interpretowane.
 - Zawartość pluginu jest nadal kodem z sieci: zatwierdzenie pokazuje hooki, serwery MCP i LSP oraz piny, ale
   zawartość katalogów `commands`, `agents`, `skills`, `outputStyles` nie jest analizowana (ADR 0040).
 - `http.followRedirects=false`: adres, który przekierowuje (np. po zmianie nazwy repozytorium), kończy się
