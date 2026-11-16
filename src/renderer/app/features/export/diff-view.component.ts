@@ -16,8 +16,7 @@ import { diffLines } from './export-model';
     <div class="diff" data-testid="diff">
       <p class="diff__head">
         <span
-          >Dodano <strong>{{ d.added }}</strong
-          >, usunięto <strong>{{ d.removed }}</strong>
+          >Dodano <strong>{{ d.added }}</strong>, usunięto <strong>{{ d.removed }}</strong>
           {{ plural(d.removed, 'wiersz', 'wiersze', 'wierszy') }} w pliku.</span
         >
         <span class="diff__legend" aria-hidden="true">

@@ -227,8 +227,7 @@
               </p>
               <p class="notice__text">
                 Poprzedni indeks leży w kwarantannie jako
-                <span class="mono">{{ o.quarantineName }}</span
-                >.
+                <span class="mono">{{ o.quarantineName }}</span>.
               </p>
               @if (o.failed.length > 0) {
                 <p class="notice__text">
@@ -237,8 +236,7 @@
                 <ul class="notice__list" data-testid="rebuild-failed">
                   @for (f of o.failed; track f.id) {
                     <li>
-                      <span class="mono">{{ f.id }}</span
-                      >: {{ f.reason }}
+                      <span class="mono">{{ f.id }}</span>: {{ f.reason }}
                     </li>
                   }
                 </ul>

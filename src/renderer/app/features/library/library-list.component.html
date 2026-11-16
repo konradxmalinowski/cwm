@@ -155,8 +155,7 @@
                     <ul class="repair__files">
                       @for (file of entry.files; track file.path) {
                         <li>
-                          <span class="mono">{{ file.path }}</span
-                          >:
+                          <span class="mono">{{ file.path }}</span>:
                           {{ fileProblemLabel(file.problem) }}
                         </li>
                       }
