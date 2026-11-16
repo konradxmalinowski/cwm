@@ -43,7 +43,7 @@
     "@angular/compiler": "20.3.34",
     "@angular/compiler-cli": "20.3.34",
     "@angular/core": "20.3.34",
-    "@angular/platform-browser": "20.3.34",
+    "@angular/platform-browser": "22.2.6",
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.65.0",
     "@types/better-sqlite3": "9.6.0",
