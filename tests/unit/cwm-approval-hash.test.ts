@@ -20,11 +20,22 @@ import {
   mcpCommandIsPath,
   needsApproval,
   approvalWarnings,
+  buildLock,
+  compareLocks,
+  formatLock,
+  hasAnyDrift,
+  hasResourceDrift,
+  lockDefinition,
+  lockPinsHash,
+  parseLock,
   packMemberHash,
   projectApprovalKey,
   validateApprovalsFile,
   validateResource,
   validatePackTrustFile,
+  type EffectiveConfiguration,
+  type EffectiveResource,
+  type LockFact,
   type MemberFields,
   type McpServer,
   type PackMemberFacts,
@@ -1260,5 +1271,213 @@ describe('workflow orchestrated: kroki w manifescie i zatwierdzenie (ADR 0050)',
       });
     expect(needsApproval(workflow, { content, sourceSha256: 'a'.repeat(64) })).toBe(true);
     expect(hashOf('a'.repeat(64))).not.toBe(hashOf('b'.repeat(64)));
+  });
+});
+
+describe('lockfile projektu (ADR 0051)', () => {
+  const lockSkill: Skill & { nativeDir?: string } = {
+    kind: 'skill',
+    id: 'acme-a/lint',
+    version: '1.0.0',
+    source: 'SKILL.md',
+    visibility: 'shared',
+    engines: [],
+    dependencies: {
+      skills: [],
+      agents: [],
+      workflows: [],
+      plugins: [],
+      mcp: [],
+      settings: [],
+      commands: [],
+      files: [],
+    },
+  };
+  const lockGit: Plugin = {
+    kind: 'plugin',
+    id: 'git/acme-lint',
+    version: '1.0.0',
+    source: { type: 'git', url: 'https://example.com/acme/lint.git', ref: 'main' },
+    activationDefault: 'enabled',
+  };
+  const entry = (resource: EffectiveResource['resource']): EffectiveResource => ({
+    origin: 'optional',
+    layer: 'company',
+    resource,
+  });
+  const effectiveOf = (resources: readonly EffectiveResource[]): EffectiveConfiguration =>
+    ({
+      apiVersion: 'cwm.dev/v1',
+      kind: 'EffectiveConfiguration',
+      profile: { company: 'acme-a', project: 'demo', engine: 'claude' },
+      resources,
+    }) as unknown as EffectiveConfiguration;
+  const sha = (char: string): string => char.repeat(64);
+  const facts: LockFact[] = [
+    { key: 'skill:acme-a/lint', content: sha('a') },
+    {
+      key: 'plugin:git/acme-lint',
+      content: sha('b'),
+      git: { commit: 'c'.repeat(40), tree: sha('b') },
+    },
+  ];
+  const build = (
+    resources: readonly EffectiveResource[] = [entry(lockSkill), entry(lockGit)],
+    over: { facts?: readonly LockFact[]; engineVersion?: string | null } = {},
+  ) =>
+    buildLock({
+      effective: effectiveOf(resources),
+      facts: over.facts ?? facts,
+      engineVersion: over.engineVersion === undefined ? '2.1.322' : over.engineVersion,
+    });
+
+  it('dwa zapisy daja identyczne bajty, niezaleznie od kolejnosci zasobow', () => {
+    const one = formatLock(build());
+    const two = formatLock(build([entry(lockGit), entry(lockSkill)]));
+    expect(two).toBe(one);
+    expect(one.endsWith('\n')).toBe(true);
+    const keys = parseLock(one);
+    expect(keys.ok && keys.value.resources.map((r) => r.id)).toEqual([
+      'git/acme-lint',
+      'acme-a/lint',
+    ]);
+  });
+
+  it('nie zawiera czasu, hosta ani sciezek: nativeDir nie wchodzi do skrotu definicji', () => {
+    const withNative = { ...lockSkill, nativeDir: '/home/someone/.claude' };
+    expect(lockDefinition(withNative)).toBe(lockDefinition(lockSkill));
+    const text = formatLock(build([entry(withNative)]));
+    expect(text).not.toContain('/home/');
+    expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(text).not.toContain('nativeDir');
+  });
+
+  it('wartosc env wpisana wprost zmienia skrot (dryf), tak samo nazwa envRef', () => {
+    const settings = (env: Record<string, { value: string } | { envRef: string }>) => ({
+      kind: 'settings' as const,
+      id: 'acme-a/env',
+      version: '1.0.0',
+      hooks: {},
+      permissions: { allow: [], deny: [], ask: [], additionalDirectories: [] },
+      env,
+      enforce: false,
+    });
+    expect(lockDefinition(settings({ MODE: { value: 'one' } }))).not.toBe(
+      lockDefinition(settings({ MODE: { value: 'two' } })),
+    );
+    expect(lockDefinition(settings({ MODE: { value: 'one' } }))).toBe(
+      lockDefinition(settings({ MODE: { value: 'one' } })),
+    );
+    expect(lockDefinition(settings({ TOKEN: { envRef: 'ACME_TOKEN' } }))).not.toBe(
+      lockDefinition(settings({ TOKEN: { envRef: 'OTHER_TOKEN' } })),
+    );
+    expect(lockDefinition(settings({ MODE: { value: 'x' } }))).not.toBe(
+      lockDefinition(settings({ MODE: { envRef: 'MODE' } })),
+    );
+    const server: McpServer = { ...mcp, env: { KEY: { literal: true } } };
+    expect(lockDefinition(server)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('zapis i odczyt daja ten sam dokument; wersja silnika moze byc null', () => {
+    const doc = build(undefined, { engineVersion: null });
+    const parsed = parseLock(formatLock(doc));
+    expect(parsed.ok && parsed.value).toEqual(
+      expect.objectContaining({ engine: { name: 'claude-code', version: null } }),
+    );
+    expect(parsed.ok && formatLock(parsed.value)).toBe(formatLock(doc));
+  });
+
+  it('odrzuca uszkodzony, obcy i nadmiarowy lockfile', () => {
+    const good = JSON.parse(formatLock(build())) as Record<string, unknown>;
+    const reject = (doc: unknown) => parseLock(typeof doc === 'string' ? doc : JSON.stringify(doc));
+    expect(reject('{ nie json').ok).toBe(false);
+    expect(reject({ ...good, apiVersion: 'cwm.dev/v9' }).ok).toBe(false);
+    expect(reject({ ...good, kind: 'Other' }).ok).toBe(false);
+    expect(reject({ ...good, extra: 1 }).ok).toBe(false);
+    expect(reject({ ...good, engine: { name: 'claude-code', version: 'abc' } }).ok).toBe(false);
+    const resources = good['resources'] as Record<string, unknown>[];
+    expect(reject({ ...good, resources: [{ ...resources[0], definition: 'zly' }] }).ok).toBe(false);
+    expect(reject({ ...good, resources: [resources[0], resources[0]] }).ok).toBe(false);
+    expect(reject({ ...good, resources: [{ ...resources[0], hostname: 'x' }] }).ok).toBe(false);
+    expect(reject({ ...good, resources: 'x' }).ok).toBe(false);
+    expect(
+      reject({ ...good, resources: [{ ...resources[0], version: '1.0.0\u001b[2J' }] }).ok,
+    ).toBe(false);
+    expect(
+      reject({
+        ...good,
+        resources: [{ ...resources[0], marketplace: { name: 'A B', version: null } }],
+      }).ok,
+    ).toBe(false);
+    expect(
+      reject({
+        ...good,
+        resources: [{ ...resources[0], marketplace: { name: 'acme-mp', version: 'x y' } }],
+      }).ok,
+    ).toBe(false);
+  });
+
+  it('zgodny lockfile nie ma dryfu', () => {
+    const drift = compareLocks(build(), build());
+    expect(hasAnyDrift(drift)).toBe(false);
+    expect(drift.resources).toEqual([]);
+  });
+
+  it('wykrywa dodany, usuniety i zmieniony zasob oraz zmieniony skrot tresci', () => {
+    const locked = build();
+    const added = compareLocks(locked, build([entry(lockSkill), entry(lockGit), entry(mcp)]));
+    expect(added.resources.map((c) => [c.key, c.change])).toEqual([['mcp:acme-a/docs', 'added']]);
+    const removed = compareLocks(locked, build([entry(lockSkill)]));
+    expect(removed.resources.map((c) => [c.key, c.change])).toEqual([
+      ['plugin:git/acme-lint', 'removed'],
+    ]);
+    const edited = compareLocks(
+      locked,
+      build(undefined, {
+        facts: [{ key: 'skill:acme-a/lint', content: sha('d') }, facts[1] as LockFact],
+      }),
+    );
+    expect(edited.resources).toHaveLength(1);
+    expect(edited.resources[0]).toMatchObject({ key: 'skill:acme-a/lint', fields: ['content'] });
+    const bumped = compareLocks(
+      locked,
+      build([entry({ ...lockSkill, version: '1.1.0' }), entry(lockGit)]),
+    );
+    expect(bumped.resources[0]?.fields).toEqual(['version', 'definition']);
+  });
+
+  it('zmiana commitu pluginu z git jest dryfem z opisem commitu', () => {
+    const next: LockFact[] = [
+      facts[0] as LockFact,
+      {
+        key: 'plugin:git/acme-lint',
+        content: sha('b'),
+        git: { commit: 'e'.repeat(40), tree: sha('b') },
+      },
+    ];
+    const drift = compareLocks(build(), build(undefined, { facts: next }));
+    expect(hasResourceDrift(drift)).toBe(true);
+    expect(drift.resources[0]?.fields).toEqual(['git']);
+    expect(drift.resources[0]?.details[0]).toContain('commit cccccccccccc -> eeeeeeeeeeee');
+  });
+
+  it('wersja silnika: dryf tylko gdy obie znane i rozne, i nie jest dryfem zasobow', () => {
+    const changed = compareLocks(build(), build(undefined, { engineVersion: '2.1.400' }));
+    expect(changed.engine).toEqual({ locked: '2.1.322', current: '2.1.400' });
+    expect(hasResourceDrift(changed)).toBe(false);
+    expect(hasAnyDrift(changed)).toBe(true);
+    expect(compareLocks(build(), build(undefined, { engineVersion: null })).engine).toBeNull();
+    expect(compareLocks(build(undefined, { engineVersion: null }), build()).engine).toBeNull();
+  });
+
+  it('zmiana firmy albo projektu to dryf tozsamosci', () => {
+    const other = { ...build(), company: 'acme-b' };
+    expect(compareLocks(build(), other).identity).toEqual(['firma acme-a -> acme-b']);
+  });
+
+  it('skrot pinow nie zalezy od kolejnosci i pomija brakujace', () => {
+    expect(lockPinsHash([sha('a'), sha('b')])).toBe(lockPinsHash([sha('b'), null, sha('a')]));
+    expect(lockPinsHash([null])).toBeNull();
+    expect(lockPinsHash([sha('a')])).not.toBe(lockPinsHash([sha('b')]));
   });
 });
