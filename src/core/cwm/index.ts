@@ -16,6 +16,7 @@ export * from './manifest';
 export * from './marketplace';
 export * from './merge-settings';
 export * from './names';
+export * from './orchestration';
 export * from './pack';
 export * from './patterns';
 export * from './path-rewrite';

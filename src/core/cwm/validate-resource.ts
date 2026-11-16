@@ -10,6 +10,7 @@ import {
   RESOURCE_ID_PATTERN,
 } from './kinds';
 import { foldName } from './names';
+import { cycleMessage, findCycle, validateStepTask } from './orchestration';
 import { readFields, readIdList } from './read-set';
 import { FORBIDDEN_KEYS } from './safe-keys';
 import { readSettings, rejectSettingsKeys, SETTINGS_SPEC_FIELDS } from './settings-spec';
@@ -284,7 +285,7 @@ function readRouting(c: Checker, value: unknown): WorkflowRouting | null {
 }
 
 /**
- * Kroki: `{ id, agent, dependsOn }`. Zaleznosci musza wskazywac istniejace kroki i nie tworzyc
+ * Kroki: `{ id, agent, dependsOn, task? }`. Zaleznosci musza wskazywac istniejace kroki i nie tworzyc
  * cyklu. Sciezki bledow wskazuja indeks z oryginalnego dokumentu, nie z przefiltrowanej listy.
  */
 function readSteps(c: Checker, value: unknown): WorkflowStep[] {
@@ -294,19 +295,27 @@ function readSteps(c: Checker, value: unknown): WorkflowStep[] {
     value,
     'spec.steps',
     (element, path): WorkflowStep | null => {
-      const obj = c.object(element, path, ['id', 'agent', 'dependsOn'], ['id', 'agent']);
+      const obj = c.object(element, path, ['id', 'agent', 'dependsOn', 'task'], ['id', 'agent']);
       if (!obj) return null;
       const stepId = c.string(field(obj, 'id'), childPath(path, 'id'), STEP_ID_PATTERN);
       const agent = c.string(field(obj, 'agent'), childPath(path, 'agent'), RESOURCE_ID_PATTERN);
       const dependsOn = c.list(field(obj, 'dependsOn'), childPath(path, 'dependsOn'), (el, p) =>
         c.string(el, p, STEP_ID_PATTERN),
       );
+      const rawTask = field(obj, 'task');
+      let task: string | undefined;
+      if (rawTask !== undefined) {
+        const checked = typeof rawTask === 'string' ? validateStepTask(rawTask) : null;
+        if (checked === null) c.add(childPath(path, 'task'), 'Oczekiwano tekstu.');
+        else if (!checked.ok) c.add(childPath(path, 'task'), checked.reason);
+        else task = checked.task;
+      }
       if (!stepId || !agent) return null;
       if (!stepPath.has(stepId)) {
         stepPath.set(stepId, path);
         rawDependsOn.set(stepId, field(obj, 'dependsOn'));
       }
-      return { id: stepId, agent, dependsOn };
+      return { id: stepId, agent, dependsOn, ...(task === undefined ? {} : { task }) };
     },
     (step) => step.id,
   );
@@ -320,21 +329,8 @@ function readSteps(c: Checker, value: unknown): WorkflowStep[] {
       c.add(index >= 0 ? `${base}[${index}]` : base, `Nieznany krok "${dep}".`);
     }
   }
-  const visiting = new Set<string>();
-  const done = new Set<string>();
-  const hasCycle = (step: WorkflowStep): boolean => {
-    if (done.has(step.id)) return false;
-    if (visiting.has(step.id)) return true;
-    visiting.add(step.id);
-    const cyclic = step.dependsOn.some((dep) => {
-      const next = byId.get(dep);
-      return next !== undefined && hasCycle(next);
-    });
-    visiting.delete(step.id);
-    done.add(step.id);
-    return cyclic;
-  };
-  if (steps.some(hasCycle)) c.add('spec.steps', 'Kroki tworza cykl zaleznosci.');
+  const cycle = findCycle(steps);
+  if (cycle.length > 0) c.add('spec.steps', cycleMessage(cycle));
   return steps;
 }
 

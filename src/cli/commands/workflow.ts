@@ -1,6 +1,6 @@
 import { Option, type Command } from 'commander';
 
-import { workflowCommandName, type Workflow } from '../../core/cwm';
+import { orderSteps, workflowCommandName, type Workflow, type WorkflowStep } from '../../core/cwm';
 import {
   addWorkflowToRegistry,
   checkWorkflowSource,
@@ -37,6 +37,10 @@ interface AddOptions {
   readonly manual?: boolean;
   readonly enable?: readonly string[];
   readonly global?: GlobalList;
+  readonly type?: 'instructional' | 'orchestrated';
+  readonly step?: readonly string[];
+  readonly after?: readonly string[];
+  readonly stepTask?: readonly string[];
 }
 
 /** Bledy domenowe i zapisu jako komunikat z kodem 1; reszta (bledy programu) leci dalej. */
@@ -60,6 +64,54 @@ function parseKeywords(raw: string | undefined): string[] {
     .filter((word) => word !== '');
 }
 
+/** `<id>=<wartosc>`: dzieli po pierwszym `=`, wartosc moze zawierac kolejne. */
+function splitPair(raw: string, option: string): [string, string] {
+  const at = raw.indexOf('=');
+  if (at <= 0) throw usageError(`${option}: oczekiwano <id-kroku>=<wartosc>, dostano "${raw}".`);
+  return [raw.slice(0, at).trim(), raw.slice(at + 1)];
+}
+
+/** Kroki z `--step`, `--after` i `--step-task`; walidacja ksztaltu (id, agent, task) zostaje po stronie walidatora zasobu. */
+function parseSteps(options: AddOptions): WorkflowStep[] {
+  const order: string[] = [];
+  const agents = new Map<string, string>();
+  for (const raw of options.step ?? []) {
+    const [id, agent] = splitPair(raw, '--step');
+    if (agents.has(id)) throw usageError(`--step: krok "${id}" podany dwa razy.`);
+    agents.set(id, agent.trim());
+    order.push(id);
+  }
+  const deps = new Map<string, string[]>();
+  for (const raw of options.after ?? []) {
+    const [id, list] = splitPair(raw, '--after');
+    if (!agents.has(id)) throw usageError(`--after: nieznany krok "${id}" (najpierw --step).`);
+    if (deps.has(id)) throw usageError(`--after: krok "${id}" podany dwa razy.`);
+    deps.set(
+      id,
+      list
+        .split(',')
+        .map((dep) => dep.trim())
+        .filter((dep) => dep !== ''),
+    );
+  }
+  const tasks = new Map<string, string>();
+  for (const raw of options.stepTask ?? []) {
+    const [id, task] = splitPair(raw, '--step-task');
+    if (!agents.has(id)) throw usageError(`--step-task: nieznany krok "${id}" (najpierw --step).`);
+    if (tasks.has(id)) throw usageError(`--step-task: krok "${id}" podany dwa razy.`);
+    tasks.set(id, task);
+  }
+  return order.map((id) => {
+    const task = tasks.get(id);
+    return {
+      id,
+      agent: agents.get(id) ?? '',
+      dependsOn: deps.get(id) ?? [],
+      ...(task === undefined ? {} : { task }),
+    };
+  });
+}
+
 async function addWorkflow(ctx: Context, id: string, options: AddOptions): Promise<void> {
   await requireInitialized(ctx.layout);
   if ((options.from === undefined) === (options.fromCommand === undefined)) {
@@ -71,6 +123,17 @@ async function addWorkflow(ctx: Context, id: string, options: AddOptions): Promi
   }
   const keywords = parseKeywords(options.keywords);
   const examples = options.example ?? [];
+  const type = options.type ?? 'instructional';
+  const steps = parseSteps(options);
+  if (type === 'orchestrated' && steps.length === 0) {
+    throw usageError('--type orchestrated wymaga co najmniej jednego --step <id>=<agent>.');
+  }
+  if (
+    type === 'instructional' &&
+    (steps.length > 0 || (options.after?.length ?? 0) > 0 || (options.stepTask?.length ?? 0) > 0)
+  ) {
+    throw usageError('--step, --after i --step-task dzialaja tylko z --type orchestrated.');
+  }
 
   const result = await guarded(async () => {
     const source =
@@ -84,6 +147,7 @@ async function addWorkflow(ctx: Context, id: string, options: AddOptions): Promi
       examples,
       priority,
       manual: options.manual === true,
+      steps,
       companies: options.enable ?? [],
       global: options.global ?? null,
     });
@@ -96,7 +160,7 @@ async function addWorkflow(ctx: Context, id: string, options: AddOptions): Promi
   if (ctx.json) return printJson({ ok: true, ...result, hint });
   print(
     result.status === 'created'
-      ? `Dodano workflow ${result.id} (polecenie /${workflowCommandName(result.id)}).`
+      ? `Dodano workflow ${result.id}${type === 'orchestrated' ? ` (${steps.length} krokow)` : ''} (polecenie /${workflowCommandName(result.id)}).`
       : `Workflow ${result.id} jest juz w rejestrze, bez zmian.`,
   );
   for (const company of result.enabled) {
@@ -179,25 +243,36 @@ async function showWorkflow(ctx: Context, id: string): Promise<void> {
   );
   let approval: string[] | null = null;
   let problem: string | null = null;
-  if (workflow.type === 'orchestrated')
-    problem = 'typ orchestrated nie jest obslugiwany przez cwm run';
-  else if (source === null)
+  const ordered = workflow.type === 'orchestrated' ? orderSteps(workflow.steps) : null;
+  if (source === null)
     problem = `brak pliku zrodlowego ${WORKFLOW_SOURCE_FILE} albo jest niebezpieczny`;
   else {
     try {
-      approval = [...checkWorkflowSource(source, workflow.id).needsApproval];
+      approval = [...checkWorkflowSource(source, workflow.id, workflow.steps).needsApproval];
     } catch (error: unknown) {
       problem = error instanceof WorkflowCommandError ? error.message : 'nieczytelne zrodlo';
     }
   }
+  if (ordered !== null && !ordered.ok) problem = ordered.reason;
   const where = enabledIn(workspace, workflow.id);
+  const stages = ordered !== null && ordered.ok ? ordered.stages : null;
   if (ctx.json) {
     return printJson({
       ok: true,
       id: workflow.id,
       type: workflow.type,
       file: entry.file,
-      command: workflow.type === 'instructional' ? command : null,
+      command,
+      stages:
+        stages?.map((stage) => ({
+          index: stage.index,
+          steps: stage.steps.map((step) => ({
+            id: step.id,
+            agent: step.agent,
+            dependsOn: step.dependsOn,
+            task: step.task ?? null,
+          })),
+        })) ?? null,
       routing: workflow.routing ?? null,
       needsApproval: approval,
       problem,
@@ -207,11 +282,17 @@ async function showWorkflow(ctx: Context, id: string): Promise<void> {
   print(`Workflow: ${workflow.id}`);
   print(`Typ: ${workflow.type}`);
   print(`Plik: ${entry.file}`);
-  print(
-    workflow.type === 'instructional'
-      ? `Zamienia sie w polecenie: /${command} (zasob obowiazkowy: /cwm-<firma>:${command})`
-      : 'Zamienia sie w: nic (typ orchestrated, cwm run odmawia)',
-  );
+  print(`Zamienia sie w polecenie: /${command} (zasob obowiazkowy: /cwm-<firma>:${command})`);
+  for (const stage of stages ?? []) {
+    print(`Etap ${stage.index}${stage.steps.length > 1 ? ' (kroki moga isc rownolegle)' : ''}:`);
+    for (const step of stage.steps) {
+      print(
+        `  ${step.id}: agent ${step.agent}, zalezy od: [${step.dependsOn.join(', ')}]${
+          step.task === undefined ? '' : `, polecenie: ${step.task}`
+        }`,
+      );
+    }
+  }
   const routing = workflow.routing;
   if (routing === undefined) print('Routing: brak (tylko --workflow albo domyslny)');
   else {
@@ -233,7 +314,7 @@ async function showWorkflow(ctx: Context, id: string): Promise<void> {
 export function registerWorkflow(program: Command): void {
   const workflow = program
     .command('workflow')
-    .description('Workflow instructional: dodawanie, lista i podglad regul routingu (cwm run)');
+    .description('Workflow instructional i orchestrated: dodawanie, lista i podglad (cwm run)');
 
   workflow
     .command('add <id>')
@@ -250,6 +331,20 @@ export function registerWorkflow(program: Command): void {
     .option('--priority <n>', 'priorytet 0-1000 (rozstrzyga bliskie wyniki)')
     .option('--manual', 'routing.mode manual: tylko cwm run --workflow albo domyslny')
     .option('--enable <firma...>', 'dopisuje id do resources.enable.workflows wskazanych firm')
+    .addOption(
+      new Option('--type <typ>', 'typ workflow (domyslnie instructional)').choices([
+        'instructional',
+        'orchestrated',
+      ]),
+    )
+    .option(
+      '--step <id=agent>',
+      'krok orchestrated: id kroku i id agenta (mozna powtarzac)',
+      collect,
+      [],
+    )
+    .option('--after <id=a,b>', 'zaleznosci kroku: krok i id krokow, po ktorych idzie', collect, [])
+    .option('--step-task <id=tekst>', 'polecenie kroku (jedna linia, do 1000 znakow)', collect, [])
     .addOption(
       new Option('--global <lista>', 'dopisuje id do listy w config.yaml').choices([
         'optional',

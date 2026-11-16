@@ -9,7 +9,7 @@ import {
   type RoutingCandidate,
   type WorkflowScore,
 } from '../../core/cwm';
-import { denyNetwork } from '../../infra/cwm';
+import { denyNetwork, type PlannedStage } from '../../infra/cwm';
 import { contextOf, failure, print, safeText, table, usageError, type Context } from '../context';
 import { promptSelect } from '../prompts';
 import { launchPrepared, prepareRun, refuse, type PreparedRun } from './start';
@@ -178,10 +178,23 @@ async function choose(
   return { id: picked.id, basis: 'chosen', defaultFrom: null };
 }
 
+/** Etapy workflow orchestrated: numer, kroki, agenci i zaleznosci (te same nazwy, ktore widzi silnik). */
+function stageLines(stages: readonly PlannedStage[] | undefined): string[] {
+  if (stages === undefined) return [];
+  return stages.flatMap((stage) => [
+    `Etap ${stage.index}${stage.steps.length > 1 ? ' (kroki moga isc rownolegle)' : ''}:`,
+    ...stage.steps.map(
+      (step) =>
+        `  ${step.id}: agent ${safeText(step.agent)}, zalezy od: [${step.dependsOn.join(', ')}]`,
+    ),
+  ]);
+}
+
 function summary(
   scores: readonly WorkflowScore[],
   choice: Choice,
   slash: string,
+  stages: readonly PlannedStage[] | undefined,
   options: RunOptions,
 ): string[] {
   const picked = scores.find((s) => s.id === choice.id);
@@ -194,7 +207,7 @@ function summary(
     }`,
   ];
   if (picked !== undefined) lines.push(`Powod: ${reasonOf(picked)}`);
-  lines.push(`Polecenie: /${slash}`);
+  lines.push(`Polecenie: /${slash}`, ...stageLines(stages));
   const others = scores.filter((s) => s.id !== choice.id);
   if (options.explain !== true && others.length > 0) {
     lines.push('Kolejni kandydaci:', ...listing(others, 2));
@@ -244,13 +257,9 @@ async function runCommand(
   const choice = await choose(ctx, options, scores, active, def, warnings);
 
   const planned = prepared.plan.workflows.find((w) => w.id === choice.id);
-  if (planned === undefined || planned.type === 'orchestrated') {
-    refuse(
-      ctx,
-      `Workflow ${choice.id} jest typu orchestrated: cwm run obsluguje tylko instructional (ADR 0049).`,
-    );
+  if (planned === undefined || planned.slash === null) {
+    refuse(ctx, `Workflow ${choice.id} nie ma polecenia w profilu.`);
   }
-  if (planned.slash === null) refuse(ctx, `Workflow ${choice.id} nie ma polecenia w profilu.`);
   const command = planned.slash.slice(planned.slash.indexOf(':') + 1);
   if (prepared.plan.shadowedWorkflowCommands.includes(command)) {
     refuse(
@@ -267,13 +276,15 @@ async function runCommand(
       basis: choice.basis,
       default: def === null ? null : { id: def.id, from: def.from },
       command: `/${planned.slash}`,
+      type: planned.type,
+      stages: planned.stages ?? null,
       minScore: MIN_ROUTING_SCORE,
       scores,
       warnings,
     },
   };
   if (!ctx.json) {
-    for (const line of summary(scores, choice, planned.slash, options)) print(line);
+    for (const line of summary(scores, choice, planned.slash, planned.stages, options)) print(line);
     if (options.explain === true) {
       print('');
       print(explainTable(scores, choice.id));
