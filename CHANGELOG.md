@@ -33,6 +33,17 @@ Zmiany scalone do `main` (PR #1), przygotowane na v0.2.0 (ADR 0035). Numer wersj
 
 ### Added
 
+- `cwm lock [--check] [--json]` i lockfile projektu `cwm.lock` (ADR 0051, `docs/CLI.md`): powtarzalny obraz zasobów
+  efektywnych projektu (id, rodzaj, pochodzenie, warstwa, wersja, skrót definicji i treści, `commit` i `tree` pluginu
+  z git, wersja i skrót z marketplace'u, skrót wygenerowanej komendy workflow) oraz wersji Claude Code z
+  `claude --version` (brak silnika to `null`). JSON z posortowanymi kluczami, bez czasu, nazwy hosta, ścieżek
+  bezwzględnych i wartości sekretów; dwa zapisy dają te same bajty. Leży obok manifestu projektu
+  (`<projekt>/.cwm/cwm.lock` albo `~/.cwm/companies/<firma>/projects/<id>.lock`), zapis atomowy tym samym
+  zakresem co manifest. `--check` kończy się kodem `1` przy dryfie z listą różnic, `2` przy braku albo
+  uszkodzeniu lockfile. `cwm start` i `cwm run` porównują go po rozwiązaniu, przed zatwierdzeniami: dryf to
+  ostrzeżenie, a z `--frozen` albo `spec.lock: frozen` odmowa startu; inna wersja silnika to tylko ostrzeżenie.
+  `cwm diff` i `--dry-run` pokazują stan lockfile. Uszkodzony lockfile ostrzega (we frozen odmawia), `cwm lock --check` daje kod `2`; wartości `env` wpisane wprost wchodzą do skrótu definicji, a skróty nie są tajne (bez HMAC). Lockfile nie
+  jest zatwierdzeniem i niczego nie zastępuje.
 - Workflow `orchestrated` jest kompilowany do komendy `cwm-<nazwa>` i uruchamiany przez `cwm run` (ADR 0050,
   `docs/CLI.md`). Krok ma opcjonalne `task` (jedna linia do 1000 znaków). Kroki są układane w etapy (porządek
   topologiczny, przy remisie kolejność deklaracji; kroki bez wzajemnej zależności w jednym etapie jako możliwe
