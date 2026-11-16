@@ -7,6 +7,7 @@ import { registerApprovals } from './commands/approvals';
 import { registerCompany } from './commands/company';
 import { registerDiff } from './commands/diff';
 import { registerDoctor } from './commands/doctor';
+import { registerEngine } from './commands/engine';
 import { registerImport } from './commands/import';
 import { registerInit } from './commands/init';
 import { registerLock } from './commands/lock';
@@ -57,6 +58,7 @@ export function buildProgram(): Command {
   registerPack(program);
   registerApprovals(program);
   registerLock(program);
+  registerEngine(program);
   registerStart(program);
   registerRun(program);
   registerDiff(program);

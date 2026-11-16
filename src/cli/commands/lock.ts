@@ -2,9 +2,10 @@ import type { Command } from 'commander';
 
 import { compareLocks, formatLock, hasAnyDrift, type LockDocument } from '../../core/cwm';
 import { denyNetwork, lockFileFor, readLock, writeLock } from '../../infra/cwm';
-import { CliError, contextOf, failure, print, printJson, type Context } from '../context';
+import { CliError, contextOf, failure, print, printJson, warn, type Context } from '../context';
+import { engineGateReadOnly } from '../engine-flow';
 import { currentLock, driftLines } from '../lock-flow';
-import { detectEngineVersion, prepareRun } from './start';
+import { detectEngine, prepareRun } from './start';
 
 interface LockOptions {
   readonly project?: string;
@@ -18,10 +19,13 @@ interface LockOptions {
 async function lockCommand(ctx: Context, options: LockOptions): Promise<void> {
   const check = options.check === true;
   let doc: LockDocument;
+  let engineWarnings: readonly string[];
   let prepared: Awaited<ReturnType<typeof prepareRun>>;
   try {
     prepared = await prepareRun(ctx, options.project, []);
-    const engineVersion = await detectEngineVersion(prepared.company, prepared.projectDir);
+    const engine = await detectEngine(prepared.company, prepared.projectDir);
+    const engineVersion = engine.version;
+    engineWarnings = (await engineGateReadOnly(ctx.layout, engineVersion, engine.path)).warnings;
     doc = currentLock({
       layout: ctx.layout,
       record: prepared.record,
@@ -53,7 +57,12 @@ async function lockCommand(ctx: Context, options: LockOptions): Promise<void> {
     const drift = compareLocks(read.doc, doc);
     const differs = hasAnyDrift(drift);
     if (ctx.json) {
-      printJson({ ok: !differs, state: differs ? 'drift' : 'match', drift });
+      printJson({
+        ok: !differs,
+        state: differs ? 'drift' : 'match',
+        drift,
+        warnings: engineWarnings,
+      });
     } else if (differs) {
       print('Lockfile rozni sie od aktualnego stanu:');
       for (const line of driftLines(drift)) print(line);
@@ -61,6 +70,7 @@ async function lockCommand(ctx: Context, options: LockOptions): Promise<void> {
     } else {
       print('Lockfile zgodny z aktualnym stanem.');
     }
+    if (!ctx.json) for (const text of engineWarnings) warn(`Ostrzezenie: ${text}`);
     if (differs) throw new CliError('', 1);
     return;
   }
@@ -82,9 +92,11 @@ async function lockCommand(ctx: Context, options: LockOptions): Promise<void> {
       resources: doc.resources.length,
       engine: doc.engine,
       drift: previous,
+      warnings: engineWarnings,
     });
     return;
   }
+  if (!ctx.json) for (const text of engineWarnings) warn(`Ostrzezenie: ${text}`);
   if (!changed) {
     print(`Lockfile bez zmian (${doc.resources.length} zasobow).`);
     return;

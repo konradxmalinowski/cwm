@@ -18,6 +18,7 @@ import {
   type EffectiveConfiguration,
   type ApprovalSubject,
   type ChildEnv,
+  type EngineVersionState,
   type FieldChange,
   type MemberFields,
   type PackMemberFacts,
@@ -66,6 +67,7 @@ import {
   warn,
   type Context,
 } from '../context';
+import { engineGateReadOnly, engineGateWithCheck } from '../engine-flow';
 import { evaluateLock, lockJson, lockSummaryLines, type LockReport } from '../lock-flow';
 import { promptConfirm, promptSelect } from '../prompts';
 import { renderChanges, renderExec } from '../pack-render';
@@ -123,11 +125,15 @@ export async function locateProject(
   return lookup.record;
 }
 
-async function probeVersion(path: string, root: RuntimeRoot | null): Promise<string | null> {
+async function probeVersion(
+  path: string,
+  root: RuntimeRoot | null,
+  projectDir: string,
+): Promise<string | null> {
   const parent = root === null ? tmpdir() : await tmpDirFor(root);
   const scratch = await makeScratchDir(parent);
   try {
-    return await queryEngineVersion(path, scratch);
+    return await queryEngineVersion(path, scratch, projectDir);
   } finally {
     await removeScratchDir(scratch);
   }
@@ -139,19 +145,20 @@ async function probeVersion(path: string, root: RuntimeRoot | null): Promise<str
  * systemu, jak w `--dry-run`, bo te polecenia nie tworza katalogu firmy. Brak bezpiecznego pliku silnika,
  * nieudana proba i kazdy blad to null, nie wyjatek.
  */
-export async function detectEngineVersion(
+export async function detectEngine(
   company: CompanyManifest,
   projectDir: string,
-): Promise<string | null> {
+): Promise<{ path: string | null; version: string | null }> {
   try {
     const lookup = await resolveEngineBinary({
       configuredPath: company.runtime.claudePath,
       pathEnv: process.env['PATH'],
       projectDir,
     });
-    return lookup.ok ? await probeVersion(lookup.path, null) : null;
+    if (!lookup.ok) return { path: null, version: null };
+    return { path: lookup.path, version: await probeVersion(lookup.path, null, projectDir) };
   } catch {
-    return null;
+    return { path: null, version: null };
   }
 }
 
@@ -443,7 +450,7 @@ interface Report {
 function renderDryRun(
   ctx: Context,
   plan: RuntimePlan,
-  engine: { path: string; version: string | null },
+  engine: { path: string; version: string | null; check: EngineVersionState | null },
   items: readonly PendingItem[],
   argv: readonly string[],
   env: ChildEnv,
@@ -502,7 +509,7 @@ function renderDryRun(
   print(`Firma: ${plan.company}`);
   print(`Projekt: ${plan.projectDir} (manifest: ${store})`);
   print(
-    `Silnik: ${engine.path} (wersja ${engine.version ?? 'nieustalona'}, oczekiwana ${EXPECTED_ENGINE_VERSION})`,
+    `Silnik: ${engine.path} (wersja ${engine.version ?? 'nieustalona'}, oczekiwana ${EXPECTED_ENGINE_VERSION}${engine.check === 'checked' ? ', flagi sprawdzone' : ''})`,
   );
   print(`Profil (CLAUDE_CONFIG_DIR): ${plan.configDir}`);
   print('');
@@ -697,7 +704,7 @@ export async function launchPrepared(
   // Katalog firmy (0700, wlasciciel) powstaje przed probą wersji; sama proba dziala w pustym katalogu tymczasowym (SEC-14).
   const root: RuntimeRoot | null =
     options.dryRun === true ? null : await openRuntimeRoot(ctx.layout, plan.company);
-  const version = await probeVersion(lookup.path, root);
+  const version = await probeVersion(lookup.path, root, projectDir);
   const engine = { path: lookup.path, version };
 
   const childEnv = buildChildEnv({
@@ -730,6 +737,12 @@ export async function launchPrepared(
     frozenFlag: options.frozen === true,
   });
 
+  // Wersja inna niz przetestowana: sprawdzenie flag silnika (ADR 0052). Dry-run tylko czyta zapisany wynik.
+  const gate =
+    options.dryRun === true
+      ? await engineGateReadOnly(ctx.layout, version, lookup.path)
+      : await engineGateWithCheck(ctx.layout, lookup.path, version, root, projectDir);
+
   const { items, pending, packs } = await loadApprovalState(ctx, plan);
 
   const peek = await peekRuntimeRoot(ctx.layout, plan.company);
@@ -740,13 +753,9 @@ export async function launchPrepared(
     ...plan.warnings,
     ...packDefs.problems.map((text) => `Pakiety: ${text}`),
     ...lock.warnings,
+    ...gate.warnings,
   ];
   if (version === null) warnings.push('Nie udalo sie ustalic wersji silnika (claude --version).');
-  else if (version !== EXPECTED_ENGINE_VERSION) {
-    warnings.push(
-      `Wersja silnika ${version} rozni sie od przetestowanej ${EXPECTED_ENGINE_VERSION}; flagi i zachowanie moga sie roznic.`,
-    );
-  }
   if (process.env['CLAUDECODE'] !== undefined) {
     warnings.push(
       'cwm start wywolano z wnetrza sesji silnika; zmienne CLAUDE* nie sa dziedziczone.',
@@ -767,13 +776,13 @@ export async function launchPrepared(
   if (pending.length > 0) {
     blockers.push(`niezatwierdzone zasoby: ${pending.map((p) => labelOf(p.subject)).join(', ')}`);
   }
-  blockers.push(...conflicts, ...lock.blockers);
+  blockers.push(...conflicts, ...lock.blockers, ...gate.blockers);
 
   if (options.dryRun === true) {
     renderDryRun(
       ctx,
       plan,
-      engine,
+      { ...engine, check: gate.state },
       items,
       argvResult.argv,
       childEnv,
@@ -791,6 +800,8 @@ export async function launchPrepared(
   if (childEnv.reserved.length > 0 || childEnv.missing.length > 0 || conflicts.length > 0) {
     refuse(ctx, blockers.filter((b) => !b.startsWith('niezatwierdzone')).join('\n'));
   }
+  if (gate.blockers.length > 0)
+    refuse(ctx, gate.blockers.join('\n'), { engine: { ...engine, check: gate.state } });
   if (lock.blockers.length > 0) refuse(ctx, lock.blockers.join('\n'), { lock: lockJson(lock) });
   if (pending.length > 0) {
     if (!ctx.interactive) {

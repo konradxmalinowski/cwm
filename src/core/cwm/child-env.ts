@@ -57,6 +57,27 @@ export function sanitizePath(path: string | undefined, projectDir?: string): str
 }
 
 /**
+ * Srodowisko prob metadanych silnika (`--version`, `--help`; SEC-14, ADR 0052): tylko `PATH` bez
+ * elementow wzglednych i bez elementow w katalogu projektu (shim `#!/usr/bin/env node` nie dostanie interpretera
+ * z repozytorium), `HOME` i `CLAUDE_CONFIG_DIR` wskazujacy pusty katalog tymczasowy, plus wylaczone
+ * samoaktualizowanie i ruch nieistotny. Zadnych zmiennych firmy, sekretow ani `ANTHROPIC_*`.
+ * `projectDir` to null tylko wtedy, gdy projektu nie ma (`cwm engine` poza projektem).
+ */
+export function buildEngineProbeEnv(
+  parent: Readonly<Record<string, string | undefined>>,
+  scratchDir: string,
+  projectDir: string | null,
+): Record<string, string> {
+  return {
+    PATH: sanitizePath(parent['PATH'], projectDir ?? undefined),
+    HOME: parent['HOME'] ?? '',
+    CLAUDE_CONFIG_DIR: scratchDir,
+    DISABLE_AUTOUPDATER: '1',
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  };
+}
+
+/**
  * `envRef` innych firm (SPN-02 pkt 1, SEC-03): wszystkie `envRef` z rejestru, ktore nie naleza do
  * zasobow tej firmy w tym uruchomieniu. Obejmuje zasoby wlaczone przez manifesty innych firm i te,
  * ktore nie sa wlaczone nigdzie: zmienna przeznaczona dla zasobu spoza tego uruchomienia nie
