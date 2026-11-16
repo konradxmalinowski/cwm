@@ -11,6 +11,10 @@ import {
   extractInlineCommands,
   evaluatePackMembers,
   extractPluginExecutables,
+  gitObjectId,
+  gitRawObject,
+  parseGitCatFileBatch,
+  verifyGitCopy,
   groupForPacks,
   mapStrings,
   mcpCommandIsPath,
@@ -955,5 +959,216 @@ describe('pakiety zasobow: zaufane skroty czlonkow (ADR 0044)', () => {
       existing: new Map(),
     });
     expect([...company.keys()]).toEqual(['acme/acme']);
+  });
+});
+
+describe('weryfikacja kopii pluginu z git wzgledem commita (ADR 0048)', () => {
+  const enc = new TextEncoder();
+  const limits = { files: 500, fileBytes: 1024 * 1024, bytes: 10 * 1024 * 1024 };
+
+  /** Repozytorium z jednym plikiem w korzeniu, jednym w podkatalogu (wykonywalnym) i obiektami w danym formacie. */
+  function build(algorithm: 'sha1' | 'sha256') {
+    const rawLength = algorithm === 'sha1' ? 20 : 32;
+    const readme = enc.encode('# acme\r\n');
+    const script = enc.encode('#!/bin/sh\necho acme\n');
+    const readmeId = gitObjectId(algorithm, 'blob', readme);
+    const scriptId = gitObjectId(algorithm, 'blob', script);
+    const entry = (mode: string, name: string, id: string): Uint8Array => {
+      const head = enc.encode(`${mode} ${name}\0`);
+      const out = new Uint8Array(head.length + rawLength);
+      out.set(head, 0);
+      for (let i = 0; i < rawLength; i += 1)
+        out[head.length + i] = parseInt(id.slice(i * 2, i * 2 + 2), 16);
+      return out;
+    };
+    const join = (parts: Uint8Array[]): Uint8Array => {
+      const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+      let at = 0;
+      for (const part of parts) {
+        out.set(part, at);
+        at += part.length;
+      }
+      return out;
+    };
+    const subBody = entry('100755', 'run.sh', scriptId);
+    const subId = gitObjectId(algorithm, 'tree', subBody);
+    const rootBody = join([entry('100644', 'README.md', readmeId), entry('40000', 'bin', subId)]);
+    const rootId = gitObjectId(algorithm, 'tree', rootBody);
+    const commitBody = enc.encode(`tree ${rootId}\nauthor A <a@example.com> 1 +0000\n\ninit\n`);
+    const commit = gitObjectId(algorithm, 'commit', commitBody);
+    const objects = new Map<string, Uint8Array>([
+      [commit, gitRawObject('commit', commitBody)],
+      [rootId, gitRawObject('tree', rootBody)],
+      [subId, gitRawObject('tree', subBody)],
+    ]);
+    const files = [
+      { rel: 'README.md', bytes: readme, executable: false },
+      { rel: 'bin/run.sh', bytes: script, executable: true },
+    ];
+    return { commit, objects, files, rootId, subId };
+  }
+
+  it('liczy skrot obiektu jak git (wektory znane z git)', () => {
+    expect(gitObjectId('sha1', 'blob', enc.encode('hello\n'))).toBe(
+      'ce013625030ba8dba906f756967f9e9ca394464a',
+    );
+    expect(gitObjectId('sha1', 'tree', new Uint8Array(0))).toBe(
+      '4b825dc642cb6eb9a060e54bf8d69288fbee4904',
+    );
+  });
+
+  for (const algorithm of ['sha1', 'sha256'] as const) {
+    describe(algorithm, () => {
+      it('przepuszcza kopie zgodna z commitem (bajty z CRLF bez zmian)', () => {
+        const repo = build(algorithm);
+        expect(verifyGitCopy(repo.commit, repo.objects, repo.files, limits)).toMatchObject({
+          ok: true,
+          files: 2,
+        });
+      });
+
+      it('odmawia po zmianie bajtu pliku, bitu wykonywania, sciezki, dodatkowym i brakujacym pliku', () => {
+        const repo = build(algorithm);
+        const [readme, script] = repo.files;
+        const flipped = new Uint8Array(readme?.bytes ?? []);
+        flipped[0] = (flipped[0] ?? 0) ^ 1;
+        const bad = (files: typeof repo.files): boolean =>
+          verifyGitCopy(repo.commit, repo.objects, files, limits).ok;
+        expect(bad([{ ...(readme as object), bytes: flipped } as never, script as never])).toBe(
+          false,
+        );
+        expect(bad([readme as never, { ...(script as object), executable: false } as never])).toBe(
+          false,
+        );
+        expect(
+          bad([readme as never, { ...(script as object), rel: 'bin/other.sh' } as never]),
+        ).toBe(false);
+        expect(
+          bad([...repo.files, { rel: 'extra.txt', bytes: new Uint8Array(1), executable: false }]),
+        ).toBe(false);
+        expect(bad([readme as never])).toBe(false);
+      });
+
+      it('odmawia po podmianie obiektu drzewa, commita, braku obiektu i nadmiarowym obiekcie', () => {
+        const repo = build(algorithm);
+        const swapped = new Map(repo.objects);
+        swapped.set(repo.subId, gitRawObject('tree', new Uint8Array(0)));
+        expect(verifyGitCopy(repo.commit, swapped, repo.files, limits).ok).toBe(false);
+
+        const forged = new Map(repo.objects);
+        forged.set(
+          repo.commit,
+          gitRawObject('commit', enc.encode(`tree ${repo.rootId}\n\nother\n`)),
+        );
+        expect(verifyGitCopy(repo.commit, forged, repo.files, limits).ok).toBe(false);
+
+        const missing = new Map(repo.objects);
+        missing.delete(repo.subId);
+        expect(verifyGitCopy(repo.commit, missing, repo.files, limits).ok).toBe(false);
+
+        const extra = new Map(repo.objects);
+        const stray = gitRawObject('blob', enc.encode('x'));
+        extra.set(gitObjectId(algorithm, 'blob', enc.encode('x')), stray);
+        expect(verifyGitCopy(repo.commit, extra, repo.files, limits).ok).toBe(false);
+      });
+
+      it('odmawia, gdy przypiety commit jest inny niz skrot obiektu', () => {
+        const repo = build(algorithm);
+        const other = repo.commit.replace(/.$/, repo.commit.endsWith('0') ? '1' : '0');
+        const renamed = new Map([
+          [other, repo.objects.get(repo.commit) as Uint8Array],
+          ...repo.objects,
+        ]);
+        renamed.delete(repo.commit);
+        expect(verifyGitCopy(other, renamed, repo.files, limits).ok).toBe(false);
+      });
+    });
+  }
+
+  it('odrzuca dowiazanie symboliczne w drzewie commita', () => {
+    const symlinkRepo = build('sha1');
+    const link = enc.encode('120000 link\0');
+    const body = new Uint8Array(link.length + 20);
+    body.set(link, 0);
+    const treeId = gitObjectId('sha1', 'tree', body);
+    const commitBody = enc.encode(`tree ${treeId}\n\nx\n`);
+    const commit = gitObjectId('sha1', 'commit', commitBody);
+    const objects = new Map([
+      [commit, gitRawObject('commit', commitBody)],
+      [treeId, gitRawObject('tree', body)],
+    ]);
+    expect(verifyGitCopy(commit, objects, symlinkRepo.files, limits).ok).toBe(false);
+  });
+
+  it('parsuje wyjscie cat-file --batch i odrzuca uszkodzone', () => {
+    const id = 'a'.repeat(40);
+    const good = enc.encode(`${id} blob 3\nabc\n`);
+    const parsed = parseGitCatFileBatch(good, 40);
+    expect(parsed.ok && parsed.objects[0]?.type).toBe('blob');
+    expect(parseGitCatFileBatch(enc.encode(`${id} blob 9\nabc\n`), 40).ok).toBe(false);
+    expect(parseGitCatFileBatch(enc.encode(`${id} missing\n`), 40).ok).toBe(false);
+  });
+});
+
+describe('plan drzewa git: tryb 100664, kolizje nazw i dlugie nazwy (ADR 0048)', () => {
+  const enc = new TextEncoder();
+  const limits = { files: 500, fileBytes: 1024 * 1024, bytes: 10 * 1024 * 1024 };
+
+  /** Repozytorium SHA-1 z plikami o podanych trybach i nazwach w korzeniu (tresc pliku to jego nazwa). */
+  function flat(entries: readonly { mode: string; name: string }[]) {
+    const parts = entries.map(({ mode, name }) => {
+      const id = gitObjectId('sha1', 'blob', enc.encode(name));
+      const head = enc.encode(`${mode} ${name}\0`);
+      const out = new Uint8Array(head.length + 20);
+      out.set(head, 0);
+      for (let i = 0; i < 20; i += 1)
+        out[head.length + i] = parseInt(id.slice(i * 2, i * 2 + 2), 16);
+      return out;
+    });
+    const body = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const part of parts) {
+      body.set(part, at);
+      at += part.length;
+    }
+    const treeId = gitObjectId('sha1', 'tree', body);
+    const commitBody = enc.encode(`tree ${treeId}\n\nx\n`);
+    const commit = gitObjectId('sha1', 'commit', commitBody);
+    const objects = new Map([
+      [commit, gitRawObject('commit', commitBody)],
+      [treeId, gitRawObject('tree', body)],
+    ]);
+    const files = entries.map(({ mode, name }) => ({
+      rel: name,
+      bytes: enc.encode(name),
+      executable: mode === '100755',
+    }));
+    return { commit, objects, files };
+  }
+
+  it('przyjmuje dawny tryb 100664 jako zwykly plik bez bitu wykonywania', () => {
+    const repo = flat([{ mode: '100664', name: 'a.txt' }]);
+    expect(verifyGitCopy(repo.commit, repo.objects, repo.files, limits).ok).toBe(true);
+    const flagged = repo.files.map((file) => ({ ...file, executable: true }));
+    expect(verifyGitCopy(repo.commit, repo.objects, flagged, limits).ok).toBe(false);
+  });
+
+  it('odrzuca nazwy rozniace sie tylko wielkoscia liter albo normalizacja Unicode', () => {
+    for (const names of [
+      ['README', 'readme'],
+      ['café.md', 'café.md'],
+    ]) {
+      const repo = flat(names.map((name) => ({ mode: '100644', name })));
+      const verdict = verifyGitCopy(repo.commit, repo.objects, repo.files, limits);
+      expect(verdict.ok).toBe(false);
+      expect(!verdict.ok && verdict.message).toContain('kolizja wielkosci liter');
+    }
+  });
+
+  it('odrzuca zbyt dluga nazwe wpisu drzewa', () => {
+    const repo = flat([{ mode: '100644', name: `${'a'.repeat(201)}.md` }]);
+    const verdict = verifyGitCopy(repo.commit, repo.objects, repo.files, limits);
+    expect(verdict.ok).toBe(false);
+    expect(!verdict.ok && verdict.message).toContain('zbyt dluga');
   });
 });
