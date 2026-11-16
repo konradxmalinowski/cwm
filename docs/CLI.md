@@ -722,7 +722,7 @@ pokazuje plugin jako `NOWE`.
 `cwm start`, `cwm diff` i `cwm sync` nigdy nie uruchamiają `git` ani nie łączą się z siecią (pilnuje tego
 lint i `npm run test:boundaries`). Start używa wyłącznie commita przypiętego w manifeście, z kopii
 `~/.cwm/sources/git/<skrót adresu>/<commit>/`; bez kopii kończy się błędem z poleceniem `cwm plugin fetch <id>`,
-a manifest bez `source.commit` albo z kopią, której skrót drzewa różni się od `source.tree`, błędem z tym samym poleceniem (`fetch` pobiera wtedy ponownie).
+a manifest bez `source.commit`, z kopią, której skrót drzewa różni się od `source.tree`, albo z kopią, która nie zgadza się z commitem (niżej), błędem z tym samym poleceniem (`fetch` pobiera wtedy ponownie).
 
 ```yaml
 apiVersion: cwm.dev/v1
@@ -757,11 +757,25 @@ spec:
 - Pobranie to `git fetch --depth=1 --no-tags --no-recurse-submodules` po SHA (przy `fetch`) albo po refie
   (przy `add` i `update`). Limity: 120 s na polecenie, 300 s łącznie, 64 MiB w katalogu roboczym (kontrola co 200 ms, przed pobraniem wymagane 128 MiB wolnego miejsca), 4 MiB
   wyjścia; przerwanie (Ctrl-C, SIGTERM) zabija proces `git` z jego pomocnikami i usuwa katalog roboczy.
-- Przed wypakowaniem lista plików commita (`git ls-tree -r -l -z`) musi mieć tylko zwykłe pliki (dowiązanie
-  symboliczne, składnik `.git` i tryb inny niż 100644 i 100755 to błąd), do 500 plików, 1 MiB na plik i 10 MiB
-  razem; submoduły nie są pobierane (ostrzeżenie, w kopii ich nie ma). Wypakowane drzewo czyta ten sam `readTree`
-  co plugin `local` (bez dowiązań, bez twardych dowiązań, bez kolizji wielkości liter). Hooki, filtry i
-  atrybuty z repozytorium nie są wykonywane; kopia nie ma katalogu `.git`.
+- Przed zapisem lista plików commita (`git ls-tree -r -t -l -z`) musi mieć tylko zwykłe pliki (dowiązanie
+  symboliczne, składnik `.git` i tryb inny niż 100644, 100755 i dawny 100664 to błąd; nazwa powyżej 200 bajtów i kolizja nazw po `foldName` też), do 500 plików, 1 MiB na plik i 10 MiB
+  razem (obiekty commita i drzew liczą się do 10 MiB); submoduły nie są pobierane (ostrzeżenie, w kopii ich nie ma).
+  Zapisane drzewo czyta ten sam `readTree` co plugin `local` (bez dowiązań, bez twardych dowiązań, bez kolizji
+  wielkości liter). Hooki, filtry i atrybuty z repozytorium nie są wykonywane; kopia nie ma katalogu `.git`.
+- **Surowe bajty.** Pliki nie powstają przez `checkout`, tylko z blobów odczytanych przez `git cat-file --batch`
+  i zapisanych bez zmian: `.gitattributes` (`working-tree-encoding`, `ident`, `eol`, `text`) nie zmienia
+  bajtów. Tryb wykonywalny wynika z trybu wpisu drzewa (100755).
+- **Weryfikacja commita offline.** Obok kopii leży katalog `<commit>.objects/` z surowymi obiektami commita i
+  wszystkich drzew (plik na obiekt, nazwa to skrót, treść z nagłówkiem `<typ> <długość>\0`); nie trafia do
+  migawki pluginu ani do profilu. `cwm start` i `cwm diff` sprawdzają w czystym JS, bez `git`: skrót obiektu
+  commita (SHA-1 albo SHA-256 zależnie od długości przypiętego SHA) równy `source.commit`, linia `tree` commita
+  wskazuje drzewo główne, każde drzewo przeliczone z zapisanych bajtów, każdy plik kopii przeliczony na skrót
+  bloba, zgodność trybów i zbioru ścieżek (brakujący, dodatkowy albo zmieniony plik, nadmiarowy obiekt to
+  odmowa). `source.tree` zostaje szybką kontrolą; wiążący jest łańcuch od commita.
+- **Migracja.** Kopia pobrana przed tą kontrolą (bez `<commit>.objects/`) jest odrzucana przy starcie z
+  poleceniem `cwm plugin fetch <id>`; `fetch` pobiera ją ponownie i zapisuje obiekty (tylko jawnie, start nie
+  łączy się z siecią). Gdy surowe bajty różnią się od dawnych (repozytorium z `.gitattributes`), `fetch`
+  odmawia zgodnie z `source.tree`: zaakceptuj nową treść przez `cwm plugin update <id>`.
 - Pola zatwierdzenia: jak dla pluginu `local` (skrót drzewa, lista plików, hooki, serwery MCP i LSP, piny)
   plus blok `git` z adresem bez danych logowania, refem i commitem. Zmiana adresu, refu albo commita pyta
   ponownie. Skróty pluginów `local` i `marketplace` się nie zmieniają.

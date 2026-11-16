@@ -7,19 +7,44 @@ import {
   buildGitEnv,
   checkGitTreeListing,
   GIT_COMMIT_PATTERN,
+  gitAlgorithmOf,
   gitHardeningArgs,
+  gitListedBlobIds,
+  gitListedTreeIds,
+  gitObjectId,
+  gitRawObject,
   gitRefProblem,
   gitUrlProblem,
+  parseGitCatFileBatch,
+  planGitTree,
   sanitizePath,
+  verifyGitCopy,
 } from '../../core/cwm';
 import { executableRejection } from './engine-process';
-import { gitSourceDir, gitSourcesRoot, lookupGitSource } from './git-source';
+import {
+  gitObjectsDir,
+  gitSourceDir,
+  gitSourcesRoot,
+  lookupGitSource,
+  OBJECT_BYTES_LIMIT,
+  OBJECTS_LIMIT,
+  OBJECTS_TOTAL_LIMIT,
+  verifyGitSourceCopy,
+} from './git-source';
 import type { CwmLayout } from './layout';
 import { networkDenied } from './network-guard';
 import { lstatLoose } from './paths';
 import { readDirLimited } from './read';
 import { readTree, TREE_LIMITS, treeSha256 } from './runtime-sources';
-import { ensureScopedDirectory, homeScope, installScopedTree, removeScopedTree } from './writer';
+import {
+  ensureScopedDirectory,
+  sourcesScope,
+  installScopedTree,
+  removeScopedTree,
+  replaceScopedTree,
+  type ScopedTreeFile,
+  WriteDeniedError,
+} from './writer';
 
 /**
  * Jedyne miejsce w CWM, ktore siega do sieci i uruchamia `git` (ADR 0048). Wolane tylko z
@@ -28,8 +53,10 @@ import { ensureScopedDirectory, homeScope, installScopedTree, removeScopedTree }
  *
  * `git` idzie po sciezce bezwzglednej (po `realpath`, z kontrola wlasciciela i uprawnien jak plik
  * silnika), ze srodowiskiem od zera i opcjami `-c` z `core/cwm/git-source.ts`. Pobranie to `fetch
- * --depth=1` do pustego repozytorium w katalogu roboczym 0700; drzewo jest czytane tym samym
- * `readTree` co plugin `local`, a na miejsce trafia katalog `<skrot adresu>/<commit>/` bez `.git`.
+ * --depth=1` do pustego repozytorium w katalogu roboczym 0700; pliki powstaja z blobow odczytanych
+ * przez `cat-file --batch` (bajty bez zmian, bez `checkout`), a o ich zgodnosci z commitem decyduje lancuch
+ * skrotow z `core/cwm/git-objects.ts`. Na miejsce trafia katalog `<skrot adresu>/<commit>/` bez `.git` oraz
+ * obok niego `<commit>.objects/` z surowymi obiektami commita i drzew (weryfikacja offline przy starcie).
  */
 
 const COMMAND_MS = 120_000;
@@ -37,6 +64,8 @@ const TOTAL_MS = 300_000;
 const DISK_LIMIT = 64 * 1024 * 1024;
 const DISK_POLL_MS = 200;
 const STDOUT_LIMIT = 4 * 1024 * 1024;
+/** Obiekty z `cat-file --batch`: bloby do limitu drzewa plus drzewa i naglowki. */
+const OBJECTS_STDOUT_LIMIT = TREE_LIMITS.bytes + 4 * 1024 * 1024;
 const STDERR_LIMIT = 64 * 1024;
 const STALE_MS = 60 * 60 * 1000;
 
@@ -106,11 +135,17 @@ interface RunOptions {
   readonly repository?: { readonly gitDir: string; readonly workTree: string };
   /** Pilnuje rozmiaru katalogu roboczego (pobieranie nie moze zapchac dysku). */
   readonly watchDisk?: boolean;
+  /** Tekst na standardowe wejscie procesu (np. lista obiektow dla `cat-file --batch`). */
+  readonly input?: string;
+  /** Limit bajtow standardowego wyjscia (domyslnie 4 MiB). */
+  readonly stdoutLimit?: number;
 }
 
 interface RunResult {
   readonly code: number | null;
   readonly stdout: string;
+  /** Surowe wyjscie (obiekty binarne), bez dekodowania. */
+  readonly stdoutBytes: Buffer;
   readonly stderr: string;
   /** Powod przerwania przez CWM (limit czasu, rozmiaru, sygnal) albo null. */
   readonly aborted: string | null;
@@ -138,7 +173,13 @@ function runGit(
   return new Promise((done) => {
     const remaining = context.deadline - Date.now();
     if (remaining <= 0) {
-      done({ code: null, stdout: '', stderr: '', aborted: 'przekroczono laczny limit czasu' });
+      done({
+        code: null,
+        stdout: '',
+        stdoutBytes: Buffer.alloc(0),
+        stderr: '',
+        aborted: 'przekroczono laczny limit czasu',
+      });
       return;
     }
     const env = buildGitEnv({
@@ -151,7 +192,7 @@ function runGit(
     const child = spawn(context.git, [...gitHardeningArgs(context.allowHttp), ...args], {
       cwd: options.cwd,
       env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       shell: false,
       windowsHide: true,
       // Wlasna grupa procesow: limit czasu zabija tez pomocnika git-remote-https. Przy SIGKILL na samym
@@ -196,24 +237,31 @@ function runGit(
     process.on('SIGINT', onSignal);
     process.on('SIGTERM', onSignal);
     process.on('SIGHUP', onSignal);
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout?.on('data', (chunk: Buffer) => {
       outBytes += chunk.length;
-      if (outBytes > STDOUT_LIMIT) abort('za duze wyjscie polecenia git');
+      if (outBytes > (options.stdoutLimit ?? STDOUT_LIMIT)) abort('za duze wyjscie polecenia git');
       else out.push(chunk);
     });
-    child.stderr.on('data', (chunk: Buffer) => {
+    child.stderr?.on('data', (chunk: Buffer) => {
       errBytes += chunk.length;
       if (errBytes <= STDERR_LIMIT) err.push(chunk);
     });
+    if (options.input !== undefined && child.stdin !== null) {
+      // Przedwczesne zamkniecie wejscia przez `git` konczy sie kodem procesu, nie wyjatkiem.
+      child.stdin.on('error', () => undefined);
+      child.stdin.end(options.input);
+    }
     const finish = (code: number | null, error: string | null): void => {
       clearTimeout(timer);
       if (meter !== null) clearInterval(meter);
       process.off('SIGINT', onSignal);
       process.off('SIGTERM', onSignal);
       process.off('SIGHUP', onSignal);
+      const stdoutBytes = Buffer.concat(out);
       done({
         code,
-        stdout: Buffer.concat(out).toString('utf8'),
+        stdout: stdoutBytes.toString('utf8'),
+        stdoutBytes,
         stderr: error ?? Buffer.concat(err).toString('utf8'),
         aborted,
       });
@@ -228,7 +276,7 @@ function runGit(
 /** Katalogi `.tmp-*` po przerwanym pobieraniu starsze niz godzina. */
 async function sweepStale(layout: CwmLayout): Promise<void> {
   const root = gitSourcesRoot(layout);
-  const scope = homeScope(layout.home);
+  const scope = sourcesScope(layout.home, gitSourcesRoot(layout));
   const listing = await readDirLimited(root, 1000).catch(() => null);
   for (const entry of listing?.entries ?? []) {
     if (!entry.name.startsWith('.tmp-') || !entry.isDirectory()) continue;
@@ -261,7 +309,7 @@ export async function fetchGitSource(input: GitFetchInput): Promise<GitFetchResu
   const git = await resolveGit();
   if (!git.ok) return fail(git.reason);
 
-  const scope = homeScope(input.layout.home);
+  const scope = sourcesScope(input.layout.home, gitSourcesRoot(input.layout));
   await ensureScopedDirectory(scope, gitSourcesRoot(input.layout));
   // Wolne miejsce przed pobraniem: dwukrotnosc limitu katalogu roboczego (pobranie plus wypakowanie).
   const space = await statfs(gitSourcesRoot(input.layout)).catch(() => null);
@@ -284,43 +332,59 @@ async function fetchInto(
   scratch: string,
 ): Promise<GitFetchResult> {
   const fail = (message: string): GitFetchResult => ({ ok: false, message });
-  const scope = homeScope(input.layout.home);
+  const scope = sourcesScope(input.layout.home, gitSourcesRoot(input.layout));
   const context: RunContext = {
     git,
     scratch,
     allowHttp: new URL(input.url).protocol === 'http:',
     deadline: Date.now() + TOTAL_MS,
   };
-  const repo = join(scratch, 'repo');
   const work = join(scratch, 'work');
-  const repository = { gitDir: join(repo, '.git'), workTree: work };
-  await ensureScopedDirectory(scope, work);
 
   const describe = (what: string, run: RunResult): GitFetchResult =>
     fail(
       `${what}: ${run.aborted ?? (tidy(run.stderr) || `git zakonczyl sie kodem ${run.code ?? '?'}`)}`,
     );
 
-  const init = await runGit(context, ['init', '--quiet', '--template=', repo], { cwd: scratch });
-  if (init.code !== 0) return describe('nie udalo sie przygotowac katalogu roboczego', init);
-
+  // Format skrotow repozytorium roboczego musi byc taki jak na serwerze. Przypiety commit go wskazuje
+  // (40 albo 64 znaki); bez niego proba SHA-1, a SHA-256 po komunikacie o niezgodnych algorytmach.
+  const pinned = input.commit === null ? null : gitAlgorithmOf(input.commit);
+  const formats: readonly ('sha1' | 'sha256')[] = pinned === null ? ['sha1', 'sha256'] : [pinned];
   const refspec = input.commit ?? input.ref ?? 'HEAD';
-  const fetched = await runGit(
-    context,
-    [
-      'fetch',
-      '--quiet',
-      '--depth=1',
-      '--no-tags',
-      '--no-recurse-submodules',
-      '--no-auto-gc',
-      '--',
-      input.url,
-      refspec,
-    ],
-    { cwd: repo, watchDisk: true },
-  );
-  if (fetched.code !== 0) return describe('pobieranie nie powiodlo sie', fetched);
+  let repo = '';
+  for (const [index, format] of formats.entries()) {
+    repo = join(scratch, `repo-${format}`);
+    const init = await runGit(
+      context,
+      [
+        'init',
+        '--quiet',
+        '--template=',
+        ...(format === 'sha256' ? ['--object-format=sha256'] : []),
+        repo,
+      ],
+      { cwd: scratch },
+    );
+    if (init.code !== 0) return describe('nie udalo sie przygotowac katalogu roboczego', init);
+    const fetched = await runGit(
+      context,
+      [
+        'fetch',
+        '--quiet',
+        '--depth=1',
+        '--no-tags',
+        '--no-recurse-submodules',
+        '--no-auto-gc',
+        '--',
+        input.url,
+        refspec,
+      ],
+      { cwd: repo, watchDisk: true },
+    );
+    if (fetched.code === 0) break;
+    const retry = index < formats.length - 1 && /mismatched algorithms/i.test(fetched.stderr);
+    if (!retry) return describe('pobieranie nie powiodlo sie', fetched);
+  }
 
   const parsed = await runGit(
     context,
@@ -337,35 +401,97 @@ async function fetchInto(
     return fail('serwer zwrocil inny commit niz przypiety');
   }
 
-  const listing = await runGit(context, ['ls-tree', '-r', '-l', '-z', commit], { cwd: repo });
-  if (listing.code !== 0) return describe('nie udalo sie odczytac listy plikow', listing);
-  const checked = checkGitTreeListing(listing.stdout, {
+  const limits = {
     files: TREE_LIMITS.files,
     fileBytes: TREE_LIMITS.fileBytes,
     bytes: TREE_LIMITS.bytes,
+  };
+  const listing = await runGit(context, ['ls-tree', '-r', '-t', '-l', '-z', commit], {
+    cwd: repo,
   });
+  if (listing.code !== 0) return describe('nie udalo sie odczytac listy plikow', listing);
+  const checked = checkGitTreeListing(listing.stdout, limits);
   if (!checked.ok) return fail(`repozytorium nie nadaje sie na plugin: ${checked.message}`);
 
-  const indexed = await runGit(context, ['read-tree', commit], { cwd: repo, repository });
-  if (indexed.code !== 0) return describe('nie udalo sie wczytac drzewa', indexed);
-  const extracted = await runGit(context, ['checkout-index', '-a', '-f', '-q'], {
-    cwd: work,
-    repository,
+  // Surowe obiekty: commit, drzewa i bloby. Lista z `ls-tree` tylko wskazuje, co pobrac; o tym, co trafi
+  // na dysk, decyduje lancuch skrotow od commita sprawdzony w core (planGitTree, verifyGitCopy).
+  const treeIds = gitListedTreeIds(listing.stdout);
+  const blobIds = gitListedBlobIds(listing.stdout);
+  if ([...treeIds, ...blobIds].some((id) => id.length !== commit.length)) {
+    return fail('repozytorium nie nadaje sie na plugin: niezgodny format skrotow obiektow');
+  }
+  const batch = await runGit(context, ['cat-file', '--batch'], {
+    cwd: repo,
+    input: `${[commit, `${commit}^{tree}`, ...treeIds, ...blobIds].join('\n')}\n`,
+    stdoutLimit: OBJECTS_STDOUT_LIMIT,
   });
-  if (extracted.code !== 0) return describe('nie udalo sie wypakowac plikow', extracted);
+  if (batch.code !== 0) return describe('nie udalo sie odczytac obiektow', batch);
+  const objects = parseGitCatFileBatch(batch.stdoutBytes, commit.length);
+  if (!objects.ok) return fail(`repozytorium nie nadaje sie na plugin: ${objects.message}`);
+  const chain = new Map<string, Uint8Array>();
+  const blobs = new Map<string, Uint8Array>();
+  for (const object of objects.objects) {
+    if (object.type === 'blob') blobs.set(object.id, object.body);
+    else if (object.type === 'commit' || object.type === 'tree') {
+      chain.set(object.id, gitRawObject(object.type, object.body));
+    } else return fail('repozytorium nie nadaje sie na plugin: nieoczekiwany typ obiektu');
+  }
+  const plan = planGitTree(commit, chain, limits);
+  if (!plan.ok) return fail(`repozytorium nie nadaje sie na plugin: ${plan.message}`);
+  const stored = new Map([...chain].filter(([id]) => plan.objectIds.has(id)));
+
+  // Zapis dokladnych bajtow bloba: bez atrybutow, filtrow i konwersji konca linii (nie ma tu `checkout`).
+  const algorithm = gitAlgorithmOf(commit) ?? 'sha1';
+  const staged: ScopedTreeFile[] = [];
+  for (const entry of plan.entries) {
+    const blob = blobs.get(entry.id);
+    if (blob === undefined || gitObjectId(algorithm, 'blob', blob) !== entry.id) {
+      return fail('repozytorium nie nadaje sie na plugin: brak albo uszkodzony blob');
+    }
+    staged.push({ rel: entry.rel, bytes: blob, executable: entry.executable });
+  }
+  // Te same limity obiektow co przy odczycie (`readGitObjects`): inaczej fetch przyjalby kopie, ktora start odrzuci.
+  let storedBytes = 0;
+  for (const raw of stored.values()) {
+    storedBytes += raw.length;
+    if (raw.length > OBJECT_BYTES_LIMIT) {
+      return fail('repozytorium nie nadaje sie na plugin: obiekt drzewa wiekszy niz 1 MiB');
+    }
+  }
+  if (stored.size > OBJECTS_LIMIT || storedBytes > OBJECTS_TOTAL_LIMIT) {
+    return fail(
+      'repozytorium nie nadaje sie na plugin: za duzo obiektow drzew (limit 1000 i 16 MiB)',
+    );
+  }
+  const objectsStage = join(scratch, 'objects');
+  try {
+    await replaceScopedTree(scope, work, staged);
+    await replaceScopedTree(
+      scope,
+      objectsStage,
+      [...stored].map(([id, raw]) => ({ rel: id, bytes: raw, executable: false })),
+    );
+  } catch (error: unknown) {
+    // Odmowa writera (WriteDeniedError) idzie do wolajacego; reszta (np. zbyt dluga nazwa) to blad repozytorium.
+    if (error instanceof WriteDeniedError) throw error;
+    return fail('nie udalo sie zapisac plikow kopii (zbyt dluga nazwa albo blad zapisu)');
+  }
 
   const tree = await readTree(work, undefined, { rejectHardlinks: true });
   if (!tree.ok) return fail(`repozytorium nie nadaje sie na plugin: ${tree.message}`);
-  if (tree.files.length !== checked.files) {
-    return fail('wypakowane pliki nie zgadzaja sie z lista commita');
-  }
+  const verdict = verifyGitCopy(commit, stored, tree.files, limits);
+  if (!verdict.ok) return fail(`kopia nie zgadza sie z commitem: ${verdict.message}`);
   const hash = treeSha256(tree.files);
 
   const dir = gitSourceDir(input.layout, input.url, commit);
   const existing = await lookupGitSource(input.layout, input.url, commit);
   if (existing.ok) {
     const current = await readTree(existing.dir, undefined, { rejectHardlinks: true });
-    if (current.ok && treeSha256(current.files) === hash) {
+    if (
+      current.ok &&
+      treeSha256(current.files) === hash &&
+      (await verifyGitSourceCopy(input.layout, input.url, commit, current.files)).ok
+    ) {
       return {
         ok: true,
         commit,
@@ -377,7 +503,14 @@ async function fetchInto(
       };
     }
   }
+  // Najpierw kopia, potem obiekty; gdy obiekty sie nie zapisza, kopia jest wycofywana (nie zostaje bez obiektow).
   await installScopedTree(scope, work, dir);
+  try {
+    await installScopedTree(scope, objectsStage, gitObjectsDir(input.layout, input.url, commit));
+  } catch (error: unknown) {
+    await removeScopedTree(scope, dir).catch(() => false);
+    throw error;
+  }
   return {
     ok: true,
     commit,
