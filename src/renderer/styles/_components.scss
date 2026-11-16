@@ -285,6 +285,18 @@ kbd {
   border-left-color: var(--destructive);
 }
 
+.dialog--wide {
+  width: min(760px, calc(100vw - 2 * var(--s4)));
+}
+
+.dialog .body-text--dialog {
+  max-width: none;
+  max-height: min(32vh, 20rem);
+  padding: var(--s3);
+  font-size: 12px;
+  line-height: 16px;
+}
+
 .dialog::backdrop {
   background: var(--scrim);
 }

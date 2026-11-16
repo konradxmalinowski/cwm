@@ -1134,6 +1134,22 @@ export const SCENES: readonly Scene[] = [
     },
   },
   {
+    id: 'diagnostyka/raport-podglad',
+    view: 'Diagnostyka',
+    world: 'seeded',
+    reach: async (c) => {
+      await c.go('#/diagnostyka');
+      await t(c.page, 'report-open').click();
+      await t(c.page, 'report-save').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(t(page, 'report-dialog')).toHaveAttribute('open', '');
+      await expect(t(page, 'report-text')).toContainText('# Raport diagnostyczny CWM');
+      await expect(t(page, 'report-text')).toContainText('Co zostało zredagowane');
+      await expect(t(page, 'report-save')).toBeEnabled();
+    },
+  },
+  {
     id: 'diagnostyka/odbudowa-plan',
     view: 'Diagnostyka',
     world: 'seeded',

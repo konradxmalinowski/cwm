@@ -746,6 +746,8 @@ Kanały z handlerem:
 | `history:list` | `{ limit?, before? }` | wpisy historii z `revertible` i `revertedBy` |
 | `history:rollback` | `{ operationId }` | plan cofnięcia w postaci `ExportPlanDto`; zastosowanie przez `export:apply` |
 | `diagnostics:report` | brak | raport środowiska, nieznanych konstrukcji i stanu otwarcia indeksu |
+| `diagnostics:report-preview` | brak | `{ previewId, text, fileName, lineCount, logLineCount }`: pełna treść raportu po redakcji (ADR 0053) |
+| `diagnostics:report-save` | `{ previewId }` | `{ status: 'saved', fileName }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
 
 Każdy kanał z `IPC_CHANNELS` ma handler; rejestr przy starcie odmawia startu, gdy któregoś brakuje
 (`IMPLEMENTED_CHANNELS` to ta sama lista). Kanały `diff:compute`, `profiles:list`, `profiles:save`,
@@ -763,6 +765,13 @@ liczba katalogów w `library/items`, wynik otwarcia indeksu, obecność pliku). 
 (`library:save`, `library:delete-apply`, `library:repair`, `import:apply`, `export:apply`,
 `sync:apply`, `history:rollback`) wchodzą pod wspólną blokadę `OperationLock`; w trakcie
 odbudowy odpowiadają kodem `busy`, a odbudowa nie startuje, gdy któryś z nich trwa.
+
+`diagnostics:report-preview` i `diagnostics:report-save` (ADR 0053) składają raport do zgłoszenia błędu. Podgląd nie
+przyjmuje niczego; zapis przyjmuje tylko `previewId` (parser buduje wynik z jednego pola), a treść pochodzi z tego, co main
+zapamiętał przy podglądzie. Ścieżkę wybiera main oknem zapisu i odmawia zapisu w katalogach konfiguracji narzędzi i danych
+aplikacji. Redakcja (`createReportRedactor`, `core`) obejmuje katalog domowy, nazwę konta, nazwy elementów biblioteki,
+hosty w URL, adresy e-mail, sekrety i nazwy w ścieżkach; kategorie są wypisane na początku raportu. Żaden z dwóch kanałów
+nie wchodzi pod `OperationLock`: nie zapisują biblioteki ani indeksu.
 
 Zdarzeń main do renderera nie ma: `progress` i `operation-log` były zadeklarowane, ale nic ich nie
 nadawało i nic ich nie słuchało, więc zostały usunięte razem z gałęzią `events` mostu. Gdyby wróciły,

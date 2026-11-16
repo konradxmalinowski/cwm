@@ -3,7 +3,20 @@ import { describe, expect, it } from 'vitest';
 import type { DatabaseProbe, RuntimeInfo } from '../../src/core/model/diagnostics';
 import type { IndexStore } from '../../src/core/ports/index-store';
 import { buildDiagnosticsReport } from '../../src/main/services/diagnostics';
-import { redactHomePath } from '../../src/infra/logging/redact';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { readLogTail } from '../../src/infra/logging/read-tail';
+import { AtomicWriteError } from '../../src/infra/fs/atomic';
+import { redactHomeInText, redactHomePath } from '../../src/infra/logging/redact';
+import type { ListResult } from '../../src/core/services/library/library-service';
+import {
+  DiagnosticReportService,
+  PREVIEW_TTL_MS,
+  type DiagnosticReportDeps,
+} from '../../src/main/services/diagnostic-report';
+import { parseReportSaveRequest } from '../../src/main/ipc/handlers/diagnostics-validation';
 
 const runtime: RuntimeInfo = {
   platform: 'darwin',
@@ -123,5 +136,251 @@ describe('redakcja sciezek', () => {
 
   it('nie wycina nazwy konta z podobnego prefiksu', () => {
     expect(redactHomePath('/home/acme', '/home/acme')).toBe('~');
+  });
+});
+
+describe('eksport raportu do zgloszenia (ADR 0053)', () => {
+  const diagnostics = buildDiagnosticsReport({
+    runtime,
+    indexStore: null,
+    index: { outcome: 'refused', message: 'brak zapisu w /home/acme/.config/CWM' },
+    clock: { now: () => new Date('2026-01-02T03:04:05.000Z') },
+    appIcon: 'provided',
+    stage: 'etap-test',
+  });
+  const listing = {
+    items: [
+      {
+        kind: 'skill',
+        identity: { slug: 'acme-deploy', declaredName: null, aliases: [] },
+        content: { title: 'Deploy Helper' },
+      },
+    ],
+    problems: [],
+    inconsistent: [],
+  } as unknown as ListResult;
+
+  function setup(over: Partial<DiagnosticReportDeps> = {}) {
+    const writes: { path: string; text: string }[] = [];
+    let now = new Date('2026-01-02T03:04:05.000Z').getTime();
+    let nextId = 0;
+    const deps: DiagnosticReportDeps = {
+      diagnostics: () => Promise.resolve(diagnostics),
+      list: () => Promise.resolve(listing),
+      detect: () => Promise.resolve([]),
+      readLog: () => [
+        '2026-01-02T00:00:00Z ERROR import acme-deploy z /home/acme/.codex/config.toml',
+      ],
+      redactHome: (text) => redactHomeInText(text, '/home/acme'),
+      userName: 'acme',
+      clock: { now: () => new Date(now) },
+      newId: () => `id-${++nextId}`,
+      pickPath: () => Promise.resolve('/tmp/acme-out/raport'),
+      writeFile: (path, text) => {
+        writes.push({ path, text });
+        return Promise.resolve();
+      },
+      protectedRoots: ['/home/acme/.claude', '/home/acme/.codex'],
+      exists: () => false,
+      realpath: (path) => path,
+      logUnexpected: () => undefined,
+      ...over,
+    };
+    return {
+      service: new DiagnosticReportService(deps),
+      writes,
+      advance: (ms: number) => {
+        now += ms;
+      },
+    };
+  }
+
+  it('podglad jest zredagowany i niesie identyfikator oraz nazwe pliku', async () => {
+    const { service } = setup();
+    const result = await service.preview();
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.previewId).toBe('id-1');
+    expect(result.value.fileName).toBe('cwm-raport-2026-01-02.md');
+    expect(result.value.logLineCount).toBe(1);
+    expect(result.value.text).not.toContain('/home/acme');
+    expect(result.value.text).not.toContain('acme-deploy');
+    expect(result.value.text).toContain('ERROR import <skill-1> z ~/.codex/config.toml');
+  });
+
+  it('zapis daje dokladnie te tresc, ktora pokazal podglad, i dopisuje .md', async () => {
+    const { service, writes } = setup();
+    const preview = await service.preview();
+    if (!preview.ok) throw new Error('brak podgladu');
+    const saved = await service.save(preview.value.previewId);
+    expect(saved).toEqual({ ok: true, value: { status: 'saved', fileName: 'raport.md' } });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.text).toBe(preview.value.text);
+    expect(writes[0]?.path).toMatch(/raport\.md$/);
+    const again = await service.save(preview.value.previewId);
+    expect(again).toMatchObject({ ok: false, error: { code: 'preview-expired' } });
+  });
+
+  it('zamkniecie okna zapisu niczego nie zapisuje i zostawia podglad do ponowienia', async () => {
+    let answer: string | null = null;
+    const { service, writes } = setup({ pickPath: () => Promise.resolve(answer) });
+    const preview = await service.preview();
+    if (!preview.ok) throw new Error('brak podgladu');
+    expect(await service.save(preview.value.previewId)).toEqual({
+      ok: true,
+      value: { status: 'cancelled' },
+    });
+    expect(writes).toEqual([]);
+    answer = '/tmp/acme-out/raport.txt';
+    const saved = await service.save(preview.value.previewId);
+    expect(saved).toEqual({ ok: true, value: { status: 'saved', fileName: 'raport.txt' } });
+  });
+
+  it('odmawia zapisu w katalogu konfiguracji narzedzia', async () => {
+    const { service, writes } = setup({
+      pickPath: () => Promise.resolve('/home/acme/.claude/skills/raport.md'),
+    });
+    const preview = await service.preview();
+    if (!preview.ok) throw new Error('brak podgladu');
+    const saved = await service.save(preview.value.previewId);
+    expect(saved).toMatchObject({ ok: false, error: { code: 'forbidden-location' } });
+    expect(writes).toEqual([]);
+  });
+
+  it('nieznany i wygasly podglad daja preview-expired', async () => {
+    const { service, advance } = setup();
+    expect(await service.save('nie-ma')).toMatchObject({
+      ok: false,
+      error: { code: 'preview-expired' },
+    });
+    const preview = await service.preview();
+    if (!preview.ok) throw new Error('brak podgladu');
+    advance(PREVIEW_TTL_MS + 1);
+    expect(await service.save(preview.value.previewId)).toMatchObject({
+      ok: false,
+      error: { code: 'preview-expired' },
+    });
+  });
+
+  it('blad zapisu nie wypuszcza sciezki do renderera', async () => {
+    const { service } = setup({
+      writeFile: () =>
+        Promise.reject(
+          new AtomicWriteError(
+            'permission-denied',
+            'unknown',
+            'brak uprawnien do zapisu: /home/acme/Documents/raport.md',
+          ),
+        ),
+    });
+    const preview = await service.preview();
+    if (!preview.ok) throw new Error('brak podgladu');
+    const saved = await service.save(preview.value.previewId);
+    expect(saved).toMatchObject({ ok: false, error: { code: 'permission-denied' } });
+    expect(JSON.stringify(saved)).not.toContain('/home/acme');
+  });
+
+  it('raport powstaje takze bez biblioteki i bez wykrywania narzedzi', async () => {
+    const { service } = setup({ list: () => null, detect: () => Promise.reject(new Error('x')) });
+    const result = await service.preview();
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.text).toContain('biblioteka była niedostępna');
+      expect(result.value.text).toContain('wykrywanie lokalizacji nie powiodło się');
+    }
+  });
+
+  it('parser zapisu przyjmuje tylko previewId i odrzuca sciezki oraz nadmiar', () => {
+    expect(
+      parseReportSaveRequest({ previewId: 'a1b2-c3', path: '/etc/passwd', text: 'x' }),
+    ).toEqual({ ok: true, value: { previewId: 'a1b2-c3' } });
+    expect(parseReportSaveRequest({ previewId: 'a'.repeat(64) }).ok).toBe(true);
+    expect(parseReportSaveRequest({ previewId: 'a'.repeat(65) }).ok).toBe(false);
+    expect(parseReportSaveRequest({ previewId: '../../etc/passwd' }).ok).toBe(false);
+    expect(parseReportSaveRequest({ previewId: '' }).ok).toBe(false);
+    expect(parseReportSaveRequest({}).ok).toBe(false);
+    expect(parseReportSaveRequest(null).ok).toBe(false);
+    expect(parseReportSaveRequest('id').ok).toBe(false);
+  });
+
+  it('SEC-012: rozszerzenie dopisane po oknie zapisu nie nadpisuje istniejacego pliku', async () => {
+    const { service, writes } = setup({ exists: (path) => path.endsWith('raport.md') });
+    const preview = await service.preview();
+    if (!preview.ok) throw new Error('brak podgladu');
+    const saved = await service.save(preview.value.previewId);
+    expect(saved).toMatchObject({ ok: false, error: { code: 'target-exists' } });
+    expect(writes).toEqual([]);
+  });
+
+  it('SEC-012: dowiazanie do katalogu konfiguracji jest rozwijane przed sprawdzeniem', async () => {
+    const { service, writes } = setup({
+      pickPath: () => Promise.resolve('/tmp/acme-out/link/raport.md'),
+      realpath: (path) => (path === '/tmp/acme-out/link' ? '/home/acme/.codex/skills' : path),
+    });
+    const preview = await service.preview();
+    if (!preview.ok) throw new Error('brak podgladu');
+    const saved = await service.save(preview.value.previewId);
+    expect(saved).toMatchObject({ ok: false, error: { code: 'forbidden-location' } });
+    expect(writes).toEqual([]);
+  });
+
+  it('SEC-013: rownolegle i szybko powtorzone podglady dziela jeden odczyt', async () => {
+    let reads = 0;
+    const { service } = setup({
+      readLog: () => {
+        reads += 1;
+        return [];
+      },
+    });
+    const [a, b] = await Promise.all([service.preview(), service.preview()]);
+    const c = await service.preview();
+    expect(reads).toBe(1);
+    expect(a).toEqual(b);
+    expect(c).toEqual(a);
+  });
+});
+
+describe('odczyt konca logu (SEC-011)', () => {
+  function tempDir(): string {
+    return mkdtempSync(join(tmpdir(), 'cwm-log-tail-'));
+  }
+
+  it('zwraca ostatnie linie i dopelnia z pliku po rotacji', () => {
+    const dir = tempDir();
+    try {
+      writeFileSync(join(dir, 'app.log.1'), 'stara 1\nstara 2\n');
+      writeFileSync(join(dir, 'app.log'), 'nowa 1\n\nnowa 2\n');
+      expect(readLogTail(join(dir, 'app.log'), 3)).toEqual(['stara 2', 'nowa 1', 'nowa 2']);
+      expect(readLogTail(join(dir, 'brak.log'), 3)).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('czyta tylko koncowke duzego pliku i nie zwraca urwanej pierwszej linii', () => {
+    const dir = tempDir();
+    try {
+      const lines = Array.from({ length: 40_000 }, (_, i) => `linia ${i}`);
+      writeFileSync(join(dir, 'app.log'), `${lines.join('\n')}\n`);
+      const tail = readLogTail(join(dir, 'app.log'), 5);
+      expect(tail).toEqual(lines.slice(-5));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('odmawia katalogu i dowiazania zamiast zwyklego pliku', () => {
+    const dir = tempDir();
+    try {
+      mkdirSync(join(dir, 'app.log'));
+      expect(readLogTail(join(dir, 'app.log'), 3)).toEqual([]);
+      if (process.platform !== 'win32') {
+        writeFileSync(join(dir, 'prawdziwy.log'), 'tajne\n');
+        symlinkSync(join(dir, 'prawdziwy.log'), join(dir, 'link.log'));
+        expect(readLogTail(join(dir, 'link.log'), 3)).toEqual([]);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

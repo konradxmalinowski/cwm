@@ -14,6 +14,7 @@ import {
   startupKind,
 } from '../../core/state/startup';
 import { describeOutcome, itemsToRestoreText, type RebuildState } from './rebuild-model';
+import { ReportDialogComponent } from './report-dialog.component';
 
 const PLATFORM_LABEL: Readonly<Record<string, string>> = {
   darwin: 'macOS',
@@ -23,13 +24,16 @@ const PLATFORM_LABEL: Readonly<Record<string, string>> = {
 
 @Component({
   selector: 'app-diagnostics',
+  imports: [ReportDialogComponent],
   templateUrl: './diagnostics.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { '(document:keydown)': 'onKeydown($event)' },
 })
 export class DiagnosticsComponent {
   protected readonly startup = inject(StartupService);
   private readonly api = inject(DiagnosticsApiService);
   protected readonly rebuild = signal<RebuildState>({ status: 'idle' });
+  protected readonly reportOpen = signal(false);
   protected readonly describeOutcome = describeOutcome;
   protected readonly itemsToRestoreText = itemsToRestoreText;
   protected readonly baseName = baseName;
@@ -69,6 +73,31 @@ export class DiagnosticsComponent {
           ? 'Indeks otworzył się bez zastrzeżeń i baza odpowiada.'
           : 'Indeks otworzył się przy starcie, ale baza nie odpowiada poprawnie.';
     }
+  }
+
+  protected openReport(): void {
+    this.reportOpen.set(true);
+  }
+
+  protected closeReport(): void {
+    this.reportOpen.set(false);
+  }
+
+  /** `e` otwiera eksport raportu, tak jak `/` otwiera filtr w bibliotece: bez modyfikatorow, poza polami i oknami. */
+  protected onKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'e' || event.repeat) return;
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+    if (this.startup.state().status !== 'ready' || this.reportOpen()) return;
+    if (document.querySelector('dialog[open]') !== null) return;
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+    ) {
+      return;
+    }
+    event.preventDefault();
+    this.openReport();
   }
 
   protected reload(): void {

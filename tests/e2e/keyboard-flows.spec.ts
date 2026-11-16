@@ -353,3 +353,21 @@ test('okno usuwania z biblioteki: pulapka fokusu, Escape i powrot fokusu na "Usu
     );
   });
 });
+
+test('raport diagnostyczny: skrot e, pulapka fokusu, Escape i powrot fokusu na zdanie ekranu', async () => {
+  test.setTimeout(120_000);
+  await withWorld('seeded', async ({ page }) => {
+    await page.evaluate(() => {
+      window.location.hash = '#/diagnostyka';
+    });
+    await page.waitForSelector('[data-testid="report-open"]');
+    await page.locator('#diagnostics-heading').focus();
+    await page.keyboard.press('e');
+    await page.locator('[data-testid="report-save"]').waitFor();
+    await page.waitForFunction(() => document.activeElement?.closest('dialog') !== null);
+    await expectFocusTrapped(page);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-testid="report-dialog"]')).toHaveCount(0);
+    await expectFocus(page, '#diagnostics-heading', 'po Escape fokus wraca na zdanie ekranu');
+  });
+});

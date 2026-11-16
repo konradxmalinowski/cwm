@@ -4,6 +4,10 @@ import type { DiagnosticsReport } from '../../../../core/model/diagnostics';
 import type {
   RebuildIndexApplyResult,
   RebuildIndexPlanResult,
+  ReportPreviewDto,
+  ReportPreviewResult,
+  ReportSaveDto,
+  ReportSaveResult,
 } from '../../../../shared/ipc/diagnostics-contract';
 import type { Result } from '../../../../shared/ipc/library-contract';
 import type { BridgeSurface } from '../../../../shared/ipc/surface';
@@ -20,6 +24,27 @@ function isReport(value: unknown): value is DiagnosticsReport {
     typeof index === 'object' &&
     index !== null &&
     typeof (index as Record<string, unknown>)['outcome'] === 'string'
+  );
+}
+
+function isPreview(value: unknown): value is ReportPreviewDto {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record['previewId'] === 'string' &&
+    typeof record['text'] === 'string' &&
+    typeof record['fileName'] === 'string' &&
+    typeof record['lineCount'] === 'number' &&
+    typeof record['logLineCount'] === 'number'
+  );
+}
+
+function isSaveOutcome(value: unknown): value is ReportSaveDto {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    record['status'] === 'cancelled' ||
+    (record['status'] === 'saved' && typeof record['fileName'] === 'string')
   );
 }
 
@@ -41,6 +66,28 @@ export class DiagnosticsApiService {
     if (!response.ok) return response;
     if (!isReport(response.value)) {
       return failure('bad-response', 'Raport diagnostyczny ma nieoczekiwany format.');
+    }
+    return { ok: true, value: response.value };
+  }
+
+  /** Eksport raportu do zgloszenia (ADR 0053): main sklada i redaguje tresc, renderer ja tylko pokazuje. */
+  async reportPreview(): Promise<ReportPreviewResult> {
+    const response = await callBridge<unknown>((bridge) => bridge.diagnostics.reportPreview());
+    if (!response.ok) return response;
+    if (!isPreview(response.value)) {
+      return failure('bad-response', 'Podgląd raportu ma nieoczekiwany format.');
+    }
+    return { ok: true, value: response.value };
+  }
+
+  /** Przekazuje tylko identyfikator podgladu: tresci ani sciezki renderer nie podaje. */
+  async reportSave(previewId: string): Promise<ReportSaveResult> {
+    const response = await callBridge<unknown>((bridge) =>
+      bridge.diagnostics.reportSave({ previewId }),
+    );
+    if (!response.ok) return response;
+    if (!isSaveOutcome(response.value)) {
+      return failure('bad-response', 'Odpowiedź na zapis raportu ma nieoczekiwany format.');
     }
     return { ok: true, value: response.value };
   }

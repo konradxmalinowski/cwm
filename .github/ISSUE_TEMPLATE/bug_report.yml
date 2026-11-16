@@ -64,6 +64,8 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Diagnostics
-      description: Output of `cwm doctor` or the in-app diagnostics report, with private paths and names removed.
+      label: Diagnostics report
+      description: |
+        In the desktop app open Diagnostics, choose "Eksportuj raport" (or press E), read the preview, save the file and paste its contents here. Paths, names of library items, hosts, e-mail addresses and secrets are replaced with placeholders, and the list of rules is at the top of the report. The redaction is automatic, so read the report before posting. The report is written in Polish.
+        For the CLI, paste the output of `cwm doctor` instead, with private paths and names removed.
       render: text

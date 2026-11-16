@@ -35,3 +35,28 @@ export interface RebuildIndexReportDto {
 
 export type RebuildIndexPlanResult = Result<RebuildIndexPlanDto>;
 export type RebuildIndexApplyResult = Result<RebuildIndexReportDto>;
+
+/**
+ * Eksport raportu do zgloszenia bledu (ADR 0053). Dwa kanaly: podglad i zapis. Renderer nie
+ * przekazuje ani tresci, ani sciezki: zapis bierze to, co main wczesniej pokazal w podgladzie,
+ * po `previewId`, a plik wybiera main przez systemowe okno zapisu.
+ */
+export interface ReportPreviewDto {
+  /** Jednorazowy identyfikator podgladu zywy w main przez kilka minut. */
+  previewId: string;
+  /** Pelna tresc raportu po redakcji: dokladnie to trafi do pliku. */
+  text: string;
+  /** Proponowana nazwa pliku bez katalogu. */
+  fileName: string;
+  lineCount: number;
+  logLineCount: number;
+}
+
+export interface ReportSaveRequest {
+  previewId: string;
+}
+
+export type ReportSaveDto = { status: 'saved'; fileName: string } | { status: 'cancelled' };
+
+export type ReportPreviewResult = Result<ReportPreviewDto>;
+export type ReportSaveResult = Result<ReportSaveDto>;

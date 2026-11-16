@@ -26,6 +26,8 @@ export const IPC_CHANNELS = [
   'diagnostics:report',
   'diagnostics:rebuild-index-plan',
   'diagnostics:rebuild-index-apply',
+  'diagnostics:report-preview',
+  'diagnostics:report-save',
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];

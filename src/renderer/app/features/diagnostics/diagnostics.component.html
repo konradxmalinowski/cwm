@@ -345,10 +345,31 @@
           </dl>
         </section>
 
+        <section class="section" aria-labelledby="diag-export" data-testid="report-section">
+          <h2 class="section__title" id="diag-export">Raport do zgłoszenia błędu</h2>
+          <p class="notice__text">
+            Zgłaszasz błąd w publicznym repozytorium? Aplikacja zbierze wersje, stan indeksu, liczby
+            z biblioteki, wykryte narzędzia i ostatnie linie logu. Ścieżki, nazwy elementów, adresy
+            i sekrety zamieni na znaczniki. Całą treść zobaczysz, zanim cokolwiek zapiszesz, a
+            aplikacja niczego nie wysyła.
+          </p>
+          <p class="row-actions">
+            <button type="button" class="btn" data-testid="report-open" (click)="openReport()">
+              Eksportuj raport
+            </button>
+          </p>
+          <p class="hints">
+            <span><kbd>e</kbd> eksportuj raport</span>
+          </p>
+        </section>
+
         <p class="row-actions">
           <button type="button" class="btn" (click)="reload()">Odśwież raport</button>
         </p>
       </div>
     }
+  }
+  @if (reportOpen()) {
+    <app-report-dialog (closed)="closeReport()" />
   }
 </section>
