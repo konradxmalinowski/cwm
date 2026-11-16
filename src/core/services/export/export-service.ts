@@ -19,6 +19,10 @@ export type ExportErrorCode =
   | 'plan-expired'
   | 'plan-not-applicable'
   | 'not-approved'
+  /** Biblioteka albo katalog lokalizacji nie sa jeszcze przygotowane (eksport do ZIP). */
+  | 'export-unavailable'
+  /** Odmowa przy budowie archiwum ZIP (ADR 0054), np. `zip-too-large`. */
+  | `zip-${string}`
   /** Odmowa `WriteGate` przed zapisem, np. `gate-plan-changed`. */
   | `gate-${string}`;
 

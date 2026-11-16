@@ -255,7 +255,11 @@
       Odmowy
       <span class="group__count">{{ p.refusals.length }}</span>
     </p>
-    <p class="view__sub">Z tych elementów nie powstanie żaden plik w narzędziu {{ tool() }}.</p>
+    @if (isZip()) {
+      <p class="view__sub">Z tych elementów nie powstanie żaden plik w archiwum.</p>
+    } @else {
+      <p class="view__sub">Z tych elementów nie powstanie żaden plik w narzędziu {{ tool() }}.</p>
+    }
     <ul class="skipped">
       @for (r of p.refusals; track r.itemId) {
         <li class="skipped__row" data-testid="export-refusal">

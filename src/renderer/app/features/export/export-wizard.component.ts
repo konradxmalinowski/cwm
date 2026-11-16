@@ -13,6 +13,8 @@ import type {
   ConflictResolutionDto,
   ExportApplyDto,
   ExportPlanDto,
+  ExportZipPlanDto,
+  ZipHeldItemDto,
 } from '../../../../shared/ipc/export-contract';
 import type { ToolIdDto } from '../../../../shared/ipc/import-contract';
 import type { ItemSummaryDto } from '../../../../shared/ipc/library-contract';
@@ -71,11 +73,16 @@ export class ExportWizardComponent {
 
   protected readonly phase = signal<Phase>('select');
   protected readonly tool = signal<ToolIdDto | null>(null);
+  /** Cel "Archiwum ZIP" (ADR 0054): zamiast narzedzia plik wybrany w oknie systemowym. */
+  protected readonly zip = signal(false);
+  /** Uklad plikow w archiwum: wedlug tego narzedzia. */
+  protected readonly layout = signal<ToolIdDto>('claude-code');
+  protected readonly layoutOptions = TOOLS;
   protected readonly items = signal<ItemsState>({ status: 'loading' });
   protected readonly refreshing = signal(false);
   protected readonly query = signal('');
   protected readonly selected = signal<ReadonlySet<string>>(new Set());
-  protected readonly plan = signal<ExportPlanDto | null>(null);
+  protected readonly plan = signal<ExportPlanDto | ExportZipPlanDto | null>(null);
   protected readonly planError = signal<string | null>(null);
   protected readonly applyError = signal<string | null>(null);
   protected readonly result = signal<ExportApplyDto | null>(null);
@@ -83,6 +90,12 @@ export class ExportWizardComponent {
   /** Trwa przeliczanie planu po wyborze decyzji: do tego czasu stary plan nie jest wykonywalny. */
   protected readonly replanning = signal(false);
   protected readonly replanError = signal<string | null>(null);
+  /** Zgody na elementy prywatne i z podejrzeniem sekretu; plan archiwum liczy sie od nowa po kazdej zmianie. */
+  protected readonly zipConfirmed = signal<ReadonlySet<string>>(new Set());
+  protected readonly zipError = signal<{ code: string; message: string } | null>(null);
+  /** Okno zapisu zamkniete bez wyboru: plan zostaje, a uzytkownik dostaje o tym zdanie. */
+  protected readonly zipCancelled = signal(false);
+  protected readonly zipResult = signal<{ fileName: string; fileCount: number } | null>(null);
 
   /** Wybory uzytkownika dla konfliktow z opcjami, po `decisionKey`. */
   private readonly choices = signal<ReadonlyMap<string, ConflictResolutionDto>>(new Map());
@@ -90,7 +103,7 @@ export class ExportWizardComponent {
   private readonly points = signal<ReadonlyMap<string, Omit<DecisionView, 'chosen' | 'settled'>>>(
     new Map(),
   );
-  private lastRequest: { tool: ToolIdDto; itemIds: string[] } | null = null;
+  private lastRequest: { tool: ToolIdDto; itemIds: string[]; zip: boolean } | null = null;
 
   private seq = 0;
   private itemsSeq = 0;
@@ -117,9 +130,20 @@ export class ExportWizardComponent {
     () => this.visibleItems().length > 0 && this.selectedVisible() === this.visibleItems().length,
   );
 
+  protected readonly hasTarget = computed(() => this.zip() || this.tool() !== null);
+
   protected readonly canPlan = computed(
-    () => this.tool() !== null && this.selectedCount() > 0 && this.phase() === 'select',
+    () => this.hasTarget() && this.selectedCount() > 0 && this.phase() === 'select',
   );
+
+  /** Plan archiwum, gdy biezacy plan jest planem ZIP. */
+  protected readonly zipPlan = computed(() => {
+    const plan = this.plan();
+    return plan !== null && 'zip' in plan ? plan : null;
+  });
+
+  /** Elementy, ktorych zgode uzytkownik moze dac; `project` zostaje poza archiwum bez wyjatku. */
+  protected readonly zipHeld = computed(() => this.zipPlan()?.zip.held ?? []);
 
   protected readonly toolLocative = computed(() => {
     const tool = this.tool();
@@ -178,11 +202,15 @@ export class ExportWizardComponent {
         return 'Wybierz narzędzie i elementy, które trafią do jego konfiguracji.';
       }
       case 'planning':
-        return 'Przygotowuję plan zapisu. Niczego jeszcze nie zapisuję.';
+        return this.zip()
+          ? 'Przygotowuję plan archiwum. Niczego jeszcze nie zapisuję.'
+          : 'Przygotowuję plan zapisu. Niczego jeszcze nie zapisuję.';
       case 'plan': {
         const plan = this.plan();
         const counts = this.counts();
         if (plan === null || counts === null) return '';
+        const zipPlan = this.zipPlan();
+        if (zipPlan !== null) return this.zipSentence(zipPlan);
         if (plan.toolMissing) {
           return `Nie ma narzędzia ${this.planTool()} na tym komputerze, więc eksport jest niemożliwy.`;
         }
@@ -205,8 +233,12 @@ export class ExportWizardComponent {
         return 'Z tego wyboru nie powstanie żaden plik.';
       }
       case 'applying':
-        return `Zapisuję zmiany w ${this.planToolLocative()}.`;
+        return this.zipPlan() !== null
+          ? 'Czekam na wybór miejsca zapisu w oknie systemowym.'
+          : `Zapisuję zmiany w ${this.planToolLocative()}.`;
       case 'result': {
+        const saved = this.zipResult();
+        if (saved !== null) return `Zapisano archiwum ${saved.fileName}.`;
         const r = this.result();
         if (r === null) return '';
         const failed = r.entries.some((e) => e.outcome === 'failed');
@@ -262,6 +294,19 @@ export class ExportWizardComponent {
     void this.loadItems();
   }
 
+  private zipSentence(plan: ExportZipPlanDto): string {
+    if (this.replanning())
+      return 'Przeliczam plan po Twojej decyzji. Niczego jeszcze nie zapisuję.';
+    if (plan.conflicts.length > 0) return 'Plan ma konflikty, więc nie da się go zapisać.';
+    if (plan.applicable) {
+      const n = plan.zip.fileCount;
+      return `Archiwum będzie zawierać ${n} ${plural(n, 'plik', 'pliki', 'plików')}. Niczego jeszcze nie zapisuję.`;
+    }
+    const waiting = plan.zip.held.filter((h) => h.reason !== 'project' && !h.confirmed).length;
+    if (waiting > 0) return 'Żaden element nie trafi do archiwum, dopóki nie wyrazisz zgody.';
+    return 'Z tego wyboru nie powstanie żaden plik.';
+  }
+
   // ---- Krok 1 ----
 
   protected async loadItems(): Promise<void> {
@@ -303,6 +348,16 @@ export class ExportWizardComponent {
 
   protected onTool(value: ToolIdDto): void {
     this.tool.set(value);
+    this.zip.set(false);
+  }
+
+  protected onZip(): void {
+    this.tool.set(null);
+    this.zip.set(true);
+  }
+
+  protected onLayout(value: ToolIdDto): void {
+    this.layout.set(value);
   }
 
   protected toggleItem(id: string, checked: boolean): void {
@@ -327,16 +382,22 @@ export class ExportWizardComponent {
   }
 
   protected async preparePlan(): Promise<void> {
-    const tool = this.tool();
+    const zip = this.zip();
+    const tool = zip ? this.layout() : this.tool();
     if (tool === null || this.selectedCount() === 0 || this.phase() !== 'select') return;
     const seq = ++this.seq;
     this.planError.set(null);
     this.phase.set('planning');
     const itemIds = [...this.selected()];
-    this.lastRequest = { tool, itemIds };
+    this.lastRequest = { tool, itemIds, zip };
     this.choices.set(new Map());
     this.points.set(new Map());
-    const result = await this.exportApi.plan({ tool, itemIds });
+    this.zipConfirmed.set(new Set());
+    this.zipError.set(null);
+    this.zipCancelled.set(false);
+    const result = zip
+      ? await this.exportApi.zipPlan({ tool, itemIds })
+      : await this.exportApi.plan({ tool, itemIds });
     if (seq !== this.seq) return;
     if (!result.ok) {
       this.planError.set(result.error.message);
@@ -400,6 +461,69 @@ export class ExportWizardComponent {
     }, 0);
   }
 
+  /**
+   * Zgoda na element prywatny albo z podejrzeniem sekretu: ten sam plan zapytania z nowa lista zgod.
+   * Nowy plan ma nowy `planId`, a stare archiwum nie jest juz zapisywane.
+   */
+  protected async confirmHeld(item: ZipHeldItemDto, checked: boolean): Promise<void> {
+    const request = this.lastRequest;
+    if (request === null || !request.zip || this.phase() !== 'plan' || this.replanning()) return;
+    const previous = this.zipConfirmed();
+    const next = new Set(previous);
+    if (checked) next.add(item.itemId);
+    else next.delete(item.itemId);
+    const seq = ++this.seq;
+    this.zipConfirmed.set(next);
+    this.replanError.set(null);
+    this.zipError.set(null);
+    this.zipCancelled.set(false);
+    this.replanning.set(true);
+    const result = await this.exportApi.zipPlan({
+      tool: request.tool,
+      itemIds: request.itemIds,
+      confirmedItemIds: [...next],
+    });
+    if (seq !== this.seq) return;
+    this.replanning.set(false);
+    if (!result.ok) {
+      this.zipConfirmed.set(previous);
+      this.replanError.set(result.error.message);
+    } else {
+      this.plan.set(result.value);
+    }
+    setTimeout(() => document.getElementById(`zip-confirm-${item.itemId}`)?.focus(), 0);
+  }
+
+  /** Zapis archiwum: miejsce pliku wybiera main oknem systemowym, renderer podaje tylko `planId`. */
+  protected async saveZip(): Promise<void> {
+    const plan = this.zipPlan();
+    if (plan === null || !plan.applicable || this.phase() !== 'plan' || this.replanning()) return;
+    const seq = ++this.seq;
+    this.zipError.set(null);
+    this.zipCancelled.set(false);
+    this.phase.set('applying');
+    const result = await this.exportApi.zipSave({ planId: plan.planId, approved: true });
+    if (seq !== this.seq) return;
+    if (!result.ok) {
+      this.zipError.set({ code: result.error.code, message: result.error.message });
+      this.phase.set('plan');
+      return;
+    }
+    if (result.value.status === 'cancelled') {
+      this.zipCancelled.set(true);
+      this.phase.set('plan');
+      return;
+    }
+    this.zipResult.set({ fileName: result.value.fileName, fileCount: result.value.fileCount });
+    this.phase.set('result');
+  }
+
+  /** Plan wygasl albo zniknal: wybor zgod nie ma sensu, trzeba zaczac plan od nowa. */
+  protected zipPlanGone(): boolean {
+    const code = this.zipError()?.code;
+    return code === 'unknown-plan' || code === 'plan-expired';
+  }
+
   /** Zapamietuje konflikty z opcjami i usuwa wybory, ktorych plan juz nie oferuje. */
   private rememberDecisions(plan: ExportPlanDto): void {
     const points = new Map(this.points());
@@ -431,6 +555,9 @@ export class ExportWizardComponent {
     this.points.set(new Map());
     this.plan.set(null);
     this.applyError.set(null);
+    this.zipConfirmed.set(new Set());
+    this.zipError.set(null);
+    this.zipCancelled.set(false);
     this.confirming.set(false);
     this.phase.set('select');
   }
@@ -479,6 +606,10 @@ export class ExportWizardComponent {
     this.points.set(new Map());
     this.plan.set(null);
     this.result.set(null);
+    this.zipResult.set(null);
+    this.zipConfirmed.set(new Set());
+    this.zipError.set(null);
+    this.zipCancelled.set(false);
     this.applyError.set(null);
     this.planError.set(null);
     this.selected.set(new Set());

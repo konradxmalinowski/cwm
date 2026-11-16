@@ -9,6 +9,14 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ### Added
 
+- Eksport do archiwum ZIP (ADR 0054). W kreatorze eksportu nowy cel "Archiwum ZIP" obok Claude Code i Codeksa: ten sam wybór
+  elementów i ten sam plan, ale zamiast zapisu do katalogu narzędzia jeden plik `.zip` w miejscu wybranym oknem systemowym.
+  Pliki leżą w układzie wybranego narzędzia (`claude-code/.claude/skills/...`), a w korzeniu jest manifest `cwm-export.json`
+  z wersją aplikacji i sumami SHA-256. Archiwum jest deterministyczne (stała kolejność i data, tryby 0644 i 0755), bez
+  dowiązań i bez ścieżek bezwzględnych. Elementy prywatne i z możliwym sekretem trafiają do niego tylko po zgodzie na
+  każdy element, a elementy zależne od projektu nigdy. Zapis jest atomowy, odmawia katalogów konfiguracji narzędzi i danych
+  aplikacji, a wpis w Historii pokazuje cel i liczbę plików, bez ścieżki. Bez nowej zależności.
+
 - Eksport raportu diagnostycznego do zgłoszenia błędu (ADR 0053). Na ekranie Diagnostyka przycisk "Eksportuj raport"
   (skrót `e`) pokazuje całą treść przed zapisem: wersje, stan indeksu, liczby z biblioteki, wykryte narzędzia i ostatnie
   200 linii logu. Katalog domowy, nazwa konta, nazwy elementów biblioteki, hosty w adresach, adresy e-mail, sekrety i

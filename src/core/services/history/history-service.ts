@@ -73,6 +73,22 @@ function kindOf(group: OperationGroup): string {
   return group.rows[0]?.operation ?? 'unknown';
 }
 
+/** Liczba plikow z notatki wpisu (`pliki=12`); bez niej opis jest ogolny. */
+function zipSummary(group: OperationGroup): string {
+  const note = group.rows.find((r) => r.note !== undefined)?.note ?? '';
+  const files = /pliki=(\d+)/.exec(note)?.[1];
+  if (files === undefined) return 'Eksport do archiwum ZIP';
+  const n = Number(files);
+  const last = n % 10;
+  const noun =
+    n === 1
+      ? 'plik'
+      : last >= 2 && last <= 4 && (n % 100 < 10 || n % 100 >= 20)
+        ? 'pliki'
+        : 'plików';
+  return `Eksport do archiwum ZIP: ${n} ${noun}`;
+}
+
 function summaryOf(kind: string, group: OperationGroup, count: number): string {
   const tool = group.rows.find((r) => r.tool !== undefined)?.tool;
   const toolName = tool === undefined ? 'narzędzia' : TOOL_NAMES[tool];
@@ -97,6 +113,8 @@ function summaryOf(kind: string, group: OperationGroup, count: number): string {
       return `Przywrócono wersję: ${named}`;
     case 'rebuild-index':
       return 'Odbudowano indeks biblioteki';
+    case 'export-zip':
+      return zipSummary(group);
     default:
       return 'Operacja';
   }
@@ -117,7 +135,9 @@ export class HistoryService {
     const kind = kindOf(group);
     // Wpis odbudowy indeksu nie dotyczy zadnego elementu: jego `itemId` to stala.
     const itemIds =
-      kind === 'rebuild-index' ? [] : [...new Set(group.rows.map((r) => r.itemId as string))];
+      kind === 'rebuild-index' || kind === 'export-zip'
+        ? []
+        : [...new Set(group.rows.map((r) => r.itemId as string))];
     const backupId = group.rows.find((r) => r.backupId !== undefined)?.backupId ?? null;
     const writes = WRITE_KINDS.has(kind) && backupId !== null;
     const revertedBy =

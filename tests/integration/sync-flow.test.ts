@@ -96,6 +96,32 @@ describe('synchronizacja na plikach', () => {
     s.index.close();
   });
 
+  it('eksport do ZIP: wpis w historii z liczba plikow, bez sciezki, bez cofania i bez elementow', async () => {
+    const s = await exported();
+    await s.index.operationLog().append({
+      operation: 'export-zip',
+      itemId: 'zip-export' as typeof s.item.id,
+      itemKind: null,
+      slug: null,
+      at: '2026-11-16T10:00:00.000Z',
+      before: null,
+      after: null,
+      note: 'cel=zip; uklad=claude-code; pliki=12; elementy=3',
+    });
+    const entries = await s.history.list();
+    const zip = entries.find((e) => e.kind === 'export-zip');
+    expect(zip).toMatchObject({
+      summary: 'Eksport do archiwum ZIP: 12 plików',
+      itemIds: [],
+      tool: null,
+      revertible: false,
+    });
+    await expect(s.history.rollback(zip?.operationId ?? '')).rejects.toMatchObject({
+      code: 'not-revertible',
+    });
+    s.index.close();
+  });
+
   it('rollback przywraca stan sprzed eksportu bajt w bajt, a cofniecie rollbacku eksport', async () => {
     const s = await exported();
     const written = readFileSync(s.skillFile, 'utf8');

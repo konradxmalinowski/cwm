@@ -123,7 +123,9 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
   sekretem są domyślnie odznaczone. Źródło nie jest modyfikowane.
 - **Eksport.** Do Claude Code i Codeksa, z planem zapisu, podglądem różnic bez sekretów,
   ostrzeżeniami o utracie zgodności i potwierdzeniem. Przed zapisem powstaje kopia w `backups/`,
-  po zapisie plik jest czytany z powrotem.
+  po zapisie plik jest czytany z powrotem. Ten sam plan da się zapisać też jako archiwum ZIP
+  w układzie wybranego narzędzia, z manifestem i sumami SHA-256; elementy prywatne i z możliwym
+  sekretem trafiają do niego tylko za Twoją zgodą (ADR 0054).
 - **Synchronizacja i historia.** Stan każdego elementu względem każdego narzędzia, plan zmian,
   zapis i cofnięcie zapisu z widoku Historia.
 - **Diagnostyka.** Raport środowiska, stan indeksu, ręczna odbudowa indeksu i eksport raportu do zgłoszenia
@@ -142,7 +144,7 @@ Zastrzeżenia, które warto znać przed pierwszym użyciem (szczegóły w `docs/
 - Serwery MCP i ustawienia narzędzi nie są ani importowane, ani eksportowane (ADR 0020).
 - Reguły (rules) nie są obsługiwane.
 - Nie ma jeszcze: porównywania i scalania wersji poza podglądem w planie eksportu, profili,
-  ustawień aplikacji, eksportu do ZIP, autoaktualizacji ani integracji z Gitem.
+  ustawień aplikacji, importu z ZIP, autoaktualizacji ani integracji z Gitem.
 
 ## Polecenie `cwm` (CLI)
 

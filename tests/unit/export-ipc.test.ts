@@ -1,16 +1,27 @@
-import { describe, expect, it } from 'vitest';
+import { deflateRawSync } from 'node:zlib';
 
-import { registerExportHandlers } from '../../src/main/ipc/handlers/export';
+import { describe, expect, it, vi } from 'vitest';
+
+import { registerExportHandlers, type ZipPort } from '../../src/main/ipc/handlers/export';
 import { IpcRegistry } from '../../src/main/ipc/registry';
 import type { ExportService } from '../../src/core/services/export/export-service';
 import { IMPLEMENTED_CHANNELS, IPC_CHANNELS } from '../../src/shared/ipc/channels';
-import type { ExportApplyDto, ExportPlanDto } from '../../src/shared/ipc/export-contract';
+import { ZipExportService } from '../../src/core/services/export/zip-export-service';
+import {
+  parseZipPlanRequest,
+  parseZipSaveRequest,
+} from '../../src/main/ipc/handlers/export-validation';
+import type {
+  ExportApplyDto,
+  ExportPlanDto,
+  ExportZipPlanDto,
+} from '../../src/shared/ipc/export-contract';
 import type { Result } from '../../src/shared/ipc/library-contract';
 import { root } from './import-fakes';
 import { bytes } from './library-fakes';
 import { emptyPlan, entry, exportHarness } from './export-fakes';
 
-function wire(service: ExportService | null) {
+function wire(service: ExportService | null, zip: ZipPort | null = null) {
   const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const registry = new IpcRegistry({
     handle(channel, listener) {
@@ -20,6 +31,7 @@ function wire(service: ExportService | null) {
   const logged: unknown[] = [];
   registerExportHandlers(registry, {
     service: () => service,
+    zip: () => zip,
     logUnexpected: (e) => logged.push(e),
   });
   const call = async <T = unknown>(channel: string, payload?: unknown): Promise<Result<T>> =>
@@ -30,12 +42,22 @@ function wire(service: ExportService | null) {
 const SECRET_BODY = 'TRESC-NIE-DLA-LOGU';
 
 describe('kanaly export:*', () => {
-  it('oba kanaly sa na liscie i zaimplementowane, rejestr ma dokladnie dwa', () => {
-    for (const channel of ['export:plan', 'export:apply'] as const) {
+  it('kanaly sa na liscie i zaimplementowane, rejestr ma dokladnie cztery', () => {
+    for (const channel of [
+      'export:plan',
+      'export:apply',
+      'export:zip-plan',
+      'export:zip-save',
+    ] as const) {
       expect(IPC_CHANNELS).toContain(channel);
       expect(IMPLEMENTED_CHANNELS).toContain(channel);
     }
-    expect(wire(null).registry.list()).toEqual(['export:apply', 'export:plan']);
+    expect(wire(null).registry.list()).toEqual([
+      'export:apply',
+      'export:plan',
+      'export:zip-plan',
+      'export:zip-save',
+    ]);
   });
 
   it('bez serwisu odpowiadaja bledem, nie wyjatkiem', async () => {
@@ -252,6 +274,157 @@ describe('kanaly export:*', () => {
     const r = await call('export:plan', { tool: 'claude-code', itemIds: [h.itemId] });
     expect(r).toMatchObject({ ok: false, error: { code: 'internal' } });
     expect(JSON.stringify(r)).not.toContain('/Users');
+    expect(logged).toHaveLength(1);
+  });
+});
+
+describe('kanaly export:zip-* (ADR 0054)', () => {
+  async function zipWire() {
+    const h = await exportHarness();
+    const zip = new ZipExportService({
+      catalog: h.catalog,
+      exporters: [h.exporter],
+      library: h.library,
+      clock: h.clock,
+      appVersion: '1.2.3',
+      deflate: (b) => new Uint8Array(deflateRawSync(b)),
+      newPlanId: () => 'zip-plan-1',
+    });
+    const save = vi.fn<ZipPort['save']>(() =>
+      Promise.resolve({ ok: true, value: { status: 'cancelled' } }),
+    );
+    const port: ZipPort = { plan: (t, ids, confirmed) => zip.plan(t, ids, confirmed), save };
+    return { h, save, ...wire(null, port) };
+  }
+
+  it('bez portu oba kanaly odpowiadaja bledem, nie wyjatkiem', async () => {
+    const { call } = wire(null);
+    expect(await call('export:zip-plan', { tool: 'codex', itemIds: ['x'] })).toMatchObject({
+      ok: false,
+      error: { code: 'export-unavailable' },
+    });
+    expect(await call('export:zip-save', { planId: 'p', approved: true })).toMatchObject({
+      ok: false,
+      error: { code: 'export-unavailable' },
+    });
+  });
+
+  it('walidacja planu: uklad, elementy i zgody; reszta ladunku przepada', () => {
+    const ok = parseZipPlanRequest({
+      tool: 'codex',
+      itemIds: ['a'],
+      confirmedItemIds: ['a'],
+      path: '/etc/passwd',
+      fileName: 'x.zip',
+    });
+    expect(ok).toEqual({
+      ok: true,
+      value: { tool: 'codex', itemIds: ['a'], confirmedItemIds: ['a'] },
+    });
+    expect(parseZipPlanRequest({ tool: 'codex', itemIds: ['a'] })).toEqual({
+      ok: true,
+      value: { tool: 'codex', itemIds: ['a'] },
+    });
+    for (const payload of [
+      undefined,
+      null,
+      {},
+      { tool: 'zip', itemIds: ['a'] },
+      { tool: 'codex', itemIds: [] },
+      { tool: 'codex', itemIds: ['a'], confirmedItemIds: 'a' },
+      { tool: 'codex', itemIds: ['a'], confirmedItemIds: [1] },
+      { tool: 'codex', itemIds: ['a'], confirmedItemIds: ['a'.repeat(129)] },
+      { tool: 'codex', itemIds: ['a'], confirmedItemIds: Array.from({ length: 501 }, () => 'a') },
+    ]) {
+      expect(parseZipPlanRequest(payload).ok).toBe(false);
+    }
+  });
+
+  it('walidacja zapisu: tylko planId i jawne zatwierdzenie, bez sciezki', () => {
+    expect(parseZipSaveRequest({ planId: 'p', approved: true, path: '/tmp/x.zip' })).toEqual({
+      ok: true,
+      value: { planId: 'p', approved: true },
+    });
+    for (const payload of [
+      undefined,
+      {},
+      { planId: 'p' },
+      { planId: 'p', approved: false },
+      { planId: '', approved: true },
+      { planId: 'a'.repeat(129), approved: true },
+    ]) {
+      expect(parseZipSaveRequest(payload).ok).toBe(false);
+    }
+  });
+
+  it('plan: element prywatny czeka na zgode, ze zgoda archiwum jest do zapisu, a DTO nie niesie sciezek', async () => {
+    const { h, call } = await zipWire();
+    const first = await call<ExportZipPlanDto>('export:zip-plan', {
+      tool: 'claude-code',
+      itemIds: [h.itemId],
+    });
+    if (!first.ok) throw new Error('brak planu');
+    expect(first.value.applicable).toBe(false);
+    expect(first.value.toolMissing).toBe(false);
+    expect(first.value.zip.held).toMatchObject([
+      { itemId: h.itemId, slug: 'acme-review', reason: 'private', confirmed: false },
+    ]);
+
+    const second = await call<ExportZipPlanDto>('export:zip-plan', {
+      tool: 'claude-code',
+      itemIds: [h.itemId],
+      confirmedItemIds: [h.itemId],
+    });
+    if (!second.ok) throw new Error('brak planu');
+    expect(second.value.applicable).toBe(true);
+    expect(second.value.zip).toMatchObject({ fileCount: 2, held: [{ confirmed: true }] });
+    expect(second.value.zip.fileName).toMatch(/^cwm-export-claude-code-\d{8}-\d{6}\.zip$/);
+    expect(second.value.entries[0]).toMatchObject({
+      rootLabel: '~/.claude/skills',
+      relPath: 'acme-review/SKILL.md',
+      action: 'create',
+      recoverability: 'recoverable',
+    });
+    const json = JSON.stringify(second.value);
+    expect(json).not.toContain('rootId');
+    expect(json).not.toContain('r-claude');
+  });
+
+  it('zapis przekazuje portowi sam planId, a odpowiedz idzie bez zmian', async () => {
+    const { call, save } = await zipWire();
+    const result = await call('export:zip-save', {
+      planId: 'zip-plan-1',
+      approved: true,
+      path: '/tmp/x.zip',
+      bytes: [1, 2, 3],
+    });
+    expect(result).toEqual({ ok: true, value: { status: 'cancelled' } });
+    expect(save).toHaveBeenCalledWith('zip-plan-1');
+    expect(save.mock.calls[0]).toHaveLength(1);
+  });
+
+  it('blad nieoczekiwany w planie jest logowany, a klient dostaje ogolny komunikat', async () => {
+    const logged: unknown[] = [];
+    const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
+    const registry = new IpcRegistry({
+      handle(channel, listener) {
+        handlers.set(channel, listener);
+      },
+    });
+    registerExportHandlers(registry, {
+      service: () => null,
+      zip: () => ({
+        plan: () => Promise.reject(new Error('/home/acme/.claude zepsute')),
+        save: () => Promise.reject(new Error('x')),
+      }),
+      logUnexpected: (e) => logged.push(e),
+    });
+    const result = (await handlers.get('export:zip-plan')?.(
+      {},
+      { tool: 'codex', itemIds: ['x'] },
+    )) as Result<unknown>;
+    expect(result).toMatchObject({ ok: false, error: { code: 'internal' } });
+    expect(JSON.stringify(result)).not.toContain('/home');
     expect(logged).toHaveLength(1);
   });
 });

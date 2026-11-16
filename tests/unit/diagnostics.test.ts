@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { DatabaseProbe, RuntimeInfo } from '../../src/core/model/diagnostics';
 import type { IndexStore } from '../../src/core/ports/index-store';
@@ -17,6 +17,13 @@ import {
   type DiagnosticReportDeps,
 } from '../../src/main/services/diagnostic-report';
 import { parseReportSaveRequest } from '../../src/main/ipc/handlers/diagnostics-validation';
+import type { OperationRecord } from '../../src/core/ports/operation-log';
+import { ExportError } from '../../src/core/services/export/export-service';
+import type {
+  ZipExportService,
+  ZipPayload,
+} from '../../src/core/services/export/zip-export-service';
+import { ZipSaveService, type ZipSaveDeps } from '../../src/main/services/zip-export';
 
 const runtime: RuntimeInfo = {
   platform: 'darwin',
@@ -382,5 +389,218 @@ describe('odczyt konca logu (SEC-011)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('zapis archiwum ZIP (ADR 0054)', () => {
+  const payload: ZipPayload = {
+    planId: 'zip-1',
+    items: [],
+    tool: 'claude-code',
+    fileName: 'cwm-export-claude-code-20261116-100000.zip',
+    bytes: new Uint8Array([80, 75, 3, 4]),
+    fileCount: 2,
+    itemCount: 1,
+  };
+
+  function setup(over: Partial<ZipSaveDeps> = {}) {
+    const writes: { path: string; bytes: Uint8Array }[] = [];
+    const consumed: string[] = [];
+    const records: OperationRecord[] = [];
+    const picked: string[] = [];
+    const leftovers: string[] = [];
+    const stale = { value: false };
+    const service = {
+      peek: (id: string) => {
+        if (id !== payload.planId) throw new ExportError('unknown-plan', 'Nieznany plan.');
+        return payload;
+      },
+      consume: (id: string) => consumed.push(id),
+      verify: (id: string) => {
+        if (id !== payload.planId) throw new ExportError('unknown-plan', 'Nieznany plan.');
+        if (stale.value) throw new ExportError('zip-stale', 'Element zmienił się.');
+        return Promise.resolve();
+      },
+      plan: vi.fn(),
+    } as unknown as ZipExportService;
+    const deps: ZipSaveDeps = {
+      service: () => service,
+      pickPath: (name) => {
+        picked.push(name);
+        return Promise.resolve('/tmp/acme-out/archiwum.zip');
+      },
+      writeFile: (path, bytes) => {
+        writes.push({ path, bytes });
+        return Promise.resolve();
+      },
+      exists: () => false,
+      realpath: (path) => path,
+      protectedRoots: ['/home/acme/.claude', '/home/acme/.codex', '/home/acme/.config/CWM'],
+      enterWrite: () => () => undefined,
+      logLeftover: (name) => leftovers.push(name),
+      log: {
+        append: (record) => {
+          records.push(record);
+          return Promise.resolve();
+        },
+      },
+      clock: { now: () => new Date('2026-11-16T10:00:00.000Z') },
+      logUnexpected: () => undefined,
+      ...over,
+    };
+    return { save: new ZipSaveService(deps), writes, consumed, records, picked, leftovers, stale };
+  }
+
+  it('zapisuje archiwum z planu, zuzywa plan i dopisuje do historii liczby bez sciezki', async () => {
+    const { save, writes, consumed, records, picked } = setup();
+    const result = await save.save('zip-1');
+    expect(result).toEqual({
+      ok: true,
+      value: { status: 'saved', fileName: 'archiwum.zip', fileCount: 2 },
+    });
+    expect(picked).toEqual([payload.fileName]);
+    expect(writes).toEqual([{ path: '/tmp/acme-out/archiwum.zip', bytes: payload.bytes }]);
+    expect(consumed).toEqual(['zip-1']);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ operation: 'export-zip', before: null, after: null });
+    expect(records[0]?.note).toContain('pliki=2');
+    expect(records[0]?.backupId).toBeUndefined();
+    expect(JSON.stringify(records)).not.toContain('/tmp');
+    expect(JSON.stringify(result)).not.toContain('/tmp');
+  });
+
+  it('zamkniecie okna zapisu niczego nie zapisuje i zostawia plan do ponowienia', async () => {
+    const { save, writes, consumed, records } = setup({ pickPath: () => Promise.resolve(null) });
+    expect(await save.save('zip-1')).toEqual({ ok: true, value: { status: 'cancelled' } });
+    expect(writes).toEqual([]);
+    expect(consumed).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  it('nieznany plan: odmowa przed oknem zapisu', async () => {
+    const { save, picked } = setup();
+    expect(await save.save('inny')).toMatchObject({ ok: false, error: { code: 'unknown-plan' } });
+    expect(picked).toEqual([]);
+  });
+
+  it('odmawia zapisu w katalogach konfiguracji narzedzi i danych aplikacji, takze przez dowiazanie', async () => {
+    for (const chosen of [
+      '/home/acme/.claude/skills/a.zip',
+      '/home/acme/.codex/a.zip',
+      '/home/acme/.config/CWM/a.zip',
+    ]) {
+      const { save, writes } = setup({ pickPath: () => Promise.resolve(chosen) });
+      expect(await save.save('zip-1')).toMatchObject({
+        ok: false,
+        error: { code: 'forbidden-location' },
+      });
+      expect(writes).toEqual([]);
+    }
+    const linked = setup({
+      pickPath: () => Promise.resolve('/tmp/acme-out/link/a.zip'),
+      realpath: (path) => (path === '/tmp/acme-out/link' ? '/home/acme/.codex/skills' : path),
+    });
+    expect(await linked.save.save('zip-1')).toMatchObject({
+      ok: false,
+      error: { code: 'forbidden-location' },
+    });
+    expect(linked.writes).toEqual([]);
+  });
+
+  it('rozszerzenie dopisane po oknie zapisu nie nadpisuje istniejacego pliku', async () => {
+    const { save, writes } = setup({
+      pickPath: () => Promise.resolve('/tmp/acme-out/archiwum'),
+      exists: (path) => path.endsWith('archiwum.zip'),
+    });
+    expect(await save.save('zip-1')).toMatchObject({ ok: false, error: { code: 'target-exists' } });
+    expect(writes).toEqual([]);
+
+    const fresh = setup({ pickPath: () => Promise.resolve('/tmp/acme-out/archiwum') });
+    expect(await fresh.save.save('zip-1')).toMatchObject({
+      ok: true,
+      value: { fileName: 'archiwum.zip' },
+    });
+  });
+
+  it('blad zapisu atomowego daje komunikat bez sciezki, a plan zostaje do ponowienia', async () => {
+    const { save, consumed, records } = setup({
+      writeFile: () =>
+        Promise.reject(
+          new AtomicWriteError('no-space', 'unknown', 'brak miejsca: /tmp/acme-out/archiwum.zip'),
+        ),
+    });
+    const result = await save.save('zip-1');
+    expect(result).toMatchObject({ ok: false, error: { code: 'no-space' } });
+    expect(JSON.stringify(result)).not.toContain('/tmp');
+    expect(consumed).toEqual([]);
+    expect(records).toEqual([]);
+  });
+
+  it('awaria logu historii nie zamienia udanego zapisu w blad', async () => {
+    const unexpected: unknown[] = [];
+    const { save, consumed } = setup({
+      log: { append: () => Promise.reject(new Error('indeks niedostepny')) },
+      logUnexpected: (e) => unexpected.push(e),
+    });
+    expect(await save.save('zip-1')).toMatchObject({ ok: true, value: { status: 'saved' } });
+    expect(consumed).toEqual(['zip-1']);
+    expect(unexpected).toHaveLength(1);
+  });
+
+  it('blokada zapisow jest brana dopiero po oknie zapisu i zwalniana po zapisie', async () => {
+    const events: string[] = [];
+    const { save } = setup({
+      pickPath: () => {
+        events.push('okno');
+        return Promise.resolve('/tmp/acme-out/archiwum.zip');
+      },
+      enterWrite: () => {
+        events.push('blokada');
+        return () => events.push('zwolniona');
+      },
+      writeFile: () => {
+        events.push('zapis');
+        return Promise.resolve();
+      },
+    });
+    await save.save('zip-1');
+    expect(events).toEqual(['okno', 'blokada', 'zapis', 'zwolniona']);
+  });
+
+  it('trwajaca odbudowa indeksu: odpowiedz busy i nic nie zapisane', async () => {
+    const { save, writes } = setup({ enterWrite: () => null });
+    expect(await save.save('zip-1')).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(writes).toEqual([]);
+  });
+
+  it('element zmieniony albo plan wygasly w trakcie okna zapisu: odmowa przed zapisem', async () => {
+    const { save, writes, stale, consumed } = setup({
+      pickPath: () => {
+        stale.value = true;
+        return Promise.resolve('/tmp/acme-out/archiwum.zip');
+      },
+    });
+    expect(await save.save('zip-1')).toMatchObject({ ok: false, error: { code: 'zip-stale' } });
+    expect(writes).toEqual([]);
+    expect(consumed).toEqual([]);
+  });
+
+  it('plik tymczasowy pozostawiony po bledzie zapisu trafia do logu z nazwa, bez katalogu', async () => {
+    const failure = new AtomicWriteError('io', 'unknown', 'blad zapisu');
+    failure.leftover = { name: '.archiwum.zip.1.abc123.tmp', cause: new Error('rm') };
+    const { save, leftovers } = setup({ writeFile: () => Promise.reject(failure) });
+    expect(await save.save('zip-1')).toMatchObject({ ok: false });
+    expect(leftovers).toEqual(['.archiwum.zip.1.abc123.tmp']);
+  });
+
+  it('bez serwisu eksportu plan i zapis odpowiadaja bledem eksportu', async () => {
+    const { save } = setup({ service: () => null });
+    expect(await save.plan('claude-code', ['x'], []).catch((e: unknown) => e)).toMatchObject({
+      code: 'export-unavailable',
+    });
+    expect(await save.save('zip-1')).toMatchObject({
+      ok: false,
+      error: { code: 'export-unavailable' },
+    });
   });
 });

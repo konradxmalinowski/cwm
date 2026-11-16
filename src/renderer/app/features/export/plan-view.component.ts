@@ -82,6 +82,8 @@ export class PlanViewComponent {
 
   protected readonly counts = computed(() => countPlan(this.plan()));
   protected readonly tool = computed(() => toolLabel(this.plan().tool));
+  /** Plan archiwum ZIP (ADR 0054) ma te same wpisy co plan narzedzia, ale nie zapisuje w narzedziu. */
+  protected readonly isZip = computed(() => 'zip' in this.plan());
   protected readonly prefix = computed(() => `plan-${this.plan().planId}`);
 
   /** Wpisy nadpisujace z podgladem sa od razu rozwiniete: uzytkownik ma zobaczyc, co zniknie. */

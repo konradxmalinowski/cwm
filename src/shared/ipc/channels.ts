@@ -18,6 +18,8 @@ export const IPC_CHANNELS = [
   'import:apply',
   'export:plan',
   'export:apply',
+  'export:zip-plan',
+  'export:zip-save',
   'sync:plan',
   'sync:apply',
   'sync:status',
