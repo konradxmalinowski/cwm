@@ -11,6 +11,7 @@ import { probeQuarantine, quarantineIndex } from '../infra/db/quarantine';
 import { createLogger, logFilePath, type Logger } from '../infra/logging/logger';
 import { databaseFile, quarantineRoot, rendererRoot } from './bootstrap/paths';
 import { startIndex, type IndexOpenFailure } from './bootstrap/index-startup';
+import { registerCrashHandlers } from './bootstrap/crash-handlers';
 import { handleAppScheme, registerAppScheme } from './bootstrap/protocol';
 import { blockOutboundNetwork, denyAllPermissions, hardenWebContents } from './bootstrap/security';
 import { configureUserData, resolveMigration } from './bootstrap/user-data';
@@ -144,6 +145,7 @@ function start(): void {
   });
 
   hardenWebContents();
+  registerCrashHandlers(log);
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
