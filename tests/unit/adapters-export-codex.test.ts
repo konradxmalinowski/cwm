@@ -134,7 +134,7 @@ describe('eksport Codeksa: skille i komendy', () => {
     );
     const plan = await adapter.plan([original, renamed], ctx(target()));
     expect(plan.conflicts).toEqual([]);
-    expect(plan.refused).toEqual([]);
+    expect(plan.refusals).toEqual([]);
     expect(plan.entries.length).toBeGreaterThan(0);
   });
 });
