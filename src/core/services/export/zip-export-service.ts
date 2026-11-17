@@ -116,6 +116,7 @@ const LABEL_PREFIXES: readonly (readonly [string, string])[] = [
   ['~/', ''],
   ['$CLAUDE_CONFIG_DIR/', '.claude/'],
   ['$CODEX_HOME/', '.codex/'],
+  ['$GEMINI_CLI_HOME/', ''],
 ];
 
 function rootDirectory(label: string): string | null {

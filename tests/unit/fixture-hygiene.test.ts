@@ -18,6 +18,9 @@ const ELEMENT_DIRS = [
   'codex/home/.codex/skills',
   'codex/home/.codex/agents',
   'codex/home/.agents/skills',
+  'gemini-cli/home/.gemini/skills',
+  'gemini-cli/home/.gemini/agents',
+  'gemini-cli/home/.gemini/commands',
 ];
 
 /** Wpisy, ktore celowo nie sa elementami (korpus 12.3: plik obok agentow, ktory agentem nie jest). */

@@ -63,9 +63,15 @@ export function protectedRoots(home: string, userData: string): string[] {
   const overrides = [process.env['CLAUDE_CONFIG_DIR'], process.env['CODEX_HOME']].filter(
     (value): value is string => value !== undefined && value.trim() !== '',
   );
+  // GEMINI_CLI_HOME wskazuje katalog nadrzedny: konfiguracja jest w jego podkatalogu `.gemini`.
+  const geminiHome = process.env['GEMINI_CLI_HOME'];
+  if (geminiHome !== undefined && geminiHome.trim() !== '') {
+    overrides.push(join(geminiHome, '.gemini'));
+  }
   return [
     join(home, '.claude'),
     join(home, '.codex'),
+    join(home, '.gemini'),
     join(home, '.agents'),
     join(home, '.cwm'),
     userData,

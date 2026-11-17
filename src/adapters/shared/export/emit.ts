@@ -115,3 +115,19 @@ export function renderAgentToml(f: AgentTomlFields): string {
   lines.push(`developer_instructions = ${tomlMultiline(f.instructions)}`);
   return `${lines.join('\n')}\n`;
 }
+
+export interface CommandTomlFields {
+  /** Pusty opis oznacza brak klucza: Gemini CLI wylicza wtedy ogolny opis z nazwy pliku. */
+  readonly description: string | null;
+  readonly prompt: string;
+  readonly extras: readonly { readonly key: string; readonly value: JsonValue }[];
+}
+
+/** Plik komendy Gemini CLI w calosci: `description` (opcjonalny) i `prompt`. */
+export function renderCommandToml(f: CommandTomlFields): string {
+  const lines: string[] = [];
+  if (f.description !== null) lines.push(`description = ${tomlString(f.description)}`);
+  for (const e of f.extras) lines.push(`${tomlKey(e.key)} = ${tomlInline(e.value)}`);
+  lines.push(`prompt = ${tomlMultiline(f.prompt)}`);
+  return `${lines.join('\n')}\n`;
+}

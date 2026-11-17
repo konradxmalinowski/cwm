@@ -1,0 +1,6 @@
+description = "Shows the Acme status"
+prompt = """
+Current status:
+!{echo acme-status}
+"""
+acme_extra = "kept"

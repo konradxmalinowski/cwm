@@ -4,6 +4,7 @@ import { expect } from 'vitest';
 
 import { createClaudeCodeAdapter } from '../../src/adapters/claude-code';
 import { createCodexAdapter } from '../../src/adapters/codex';
+import { createGeminiCliAdapter } from '../../src/adapters/gemini-cli';
 import type { ItemDraft } from '../../src/core/model/item';
 import type { ToolAdapter, ToolExporter } from '../../src/core/ports/tool-adapter';
 import { describeExportContract } from './export-contract';
@@ -13,6 +14,7 @@ const fixtures = resolve(__dirname, '..', 'fixtures');
 const claude = resolve(fixtures, 'claude-code', 'home', '.claude');
 const codex = resolve(fixtures, 'codex', 'home', '.codex');
 const agentsHome = resolve(fixtures, 'codex', 'home', '.agents');
+const gemini = resolve(fixtures, 'gemini-cli', 'home', '.gemini');
 
 const exporter = <T extends ToolAdapter>(adapter: T): T & ToolExporter => {
   const candidate = adapter as Partial<ToolExporter>;
@@ -38,6 +40,20 @@ const hookDraft: ItemDraft = {
     },
   },
   classification,
+};
+
+const geminiHookDraft: ItemDraft = {
+  ...hookDraft,
+  identity: { slug: 'SessionEnd-9', declaredName: null, aliases: [] },
+  attributes: {
+    hook: {
+      event: 'SessionEnd',
+      matcher: null,
+      command: '/opt/acme/new-end.sh',
+      pathStyle: 'absolute',
+      timeoutSeconds: 3,
+    },
+  },
 };
 
 const agentDraft: ItemDraft = {
@@ -220,6 +236,51 @@ describeExportContract({
         message: /komentarz oddzielony/,
       },
       { name: 'plik nie jest poprawnym TOML-em', text: '[agents\nx = 1\n', message: /TOML/ },
+    ],
+  },
+});
+
+describeExportContract({
+  name: 'Gemini CLI',
+  adapter: exporter(createGeminiCliAdapter()),
+  fixtureRoots: [
+    { kind: 'skills', dir: resolve(gemini, 'skills') },
+    { kind: 'agents', dir: resolve(gemini, 'agents') },
+    { kind: 'commands', dir: resolve(gemini, 'commands') },
+    { kind: 'global-instructions', dir: resolve(gemini, 'GEMINI.md') },
+    { kind: 'hooks', dir: resolve(gemini, 'settings.json') },
+  ],
+  memoryRoots: [
+    { kind: 'skills' },
+    { kind: 'agents' },
+    { kind: 'commands' },
+    { kind: 'global-instructions', fileName: 'GEMINI.md', initial: '' },
+    { kind: 'hooks', fileName: 'settings.json', initial: '{\n  "model": "acme"\n}\n' },
+  ],
+  instructionFile: 'GEMINI.md',
+  shared: {
+    rootKind: 'hooks',
+    fileName: 'settings.json',
+    realistic: settings,
+    item: () => toLoaded(geminiHookDraft),
+    parseOutside: (before, after) => {
+      const a = JSON.parse(before) as Record<string, unknown>;
+      const b = JSON.parse(after) as Record<string, unknown>;
+      expect(withoutKey(b, 'hooks')).toEqual(withoutKey(a, 'hooks'));
+      const hooks = b['hooks'] as Record<string, unknown[]>;
+      expect(hooks['SessionStart']).toEqual(
+        (a['hooks'] as Record<string, unknown[]>)['SessionStart'],
+      );
+      // Czas w pliku Gemini CLI jest w milisekundach: 3 s to 3000.
+      expect(JSON.stringify(hooks['SessionEnd'])).toContain('/opt/acme/new-end.sh');
+      expect(JSON.stringify(hooks['SessionEnd'])).toContain('"timeout":3000');
+      const cut = before.indexOf('"hooks"');
+      expect(after.slice(0, cut)).toBe(before.slice(0, cut));
+      expect(after.endsWith('  "model": "acme"\n}\n')).toBe(true);
+    },
+    hostile: [
+      { name: 'plik nie jest poprawnym JSON-em', text: '{ "hooks": ', message: /JSON/ },
+      { name: 'klucz hooks nie jest obiektem', text: '{ "hooks": [] }\n', message: /hooks/ },
     ],
   },
 });

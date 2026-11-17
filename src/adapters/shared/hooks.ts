@@ -19,6 +19,8 @@ export interface HookSourceOptions {
   readonly warnings: readonly ImportWarning[];
   /** Nieznane klucze korzenia pliku, dopisywane do kazdego hooka. */
   readonly rootUnmapped: readonly { readonly path: string; readonly value: JsonValue }[];
+  /** Jednostek `timeout` w pliku narzedzia na sekunde: 1 dla Claude Code i Codeksa, 1000 dla Gemini CLI. */
+  readonly timeoutPerSecond?: number;
 }
 
 /**
@@ -79,7 +81,8 @@ export function addHookCandidates(
           if (!known) unmapped.push({ path: `hook.${k}`, value: v as JsonValue });
         }
         const command = hook['command'];
-        const timeout = typeof hook['timeout'] === 'number' ? hook['timeout'] : null;
+        const rawTimeout = typeof hook['timeout'] === 'number' ? hook['timeout'] : null;
+        const timeout = rawTimeout === null ? null : rawTimeout / (options.timeoutPerSecond ?? 1);
         const slug = deriveSlug(`${event}-${ordinal}`);
         const warnings: ImportWarning[] = [...options.warnings];
         if (slug.changed) {

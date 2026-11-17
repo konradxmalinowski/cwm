@@ -67,9 +67,10 @@
         @if (rootCount() === 0) {
           <div class="empty" data-testid="import-no-roots">
             <p>
-              Claude Code trzyma konfigurację w katalogu <span class="mono">~/.claude</span>, a
-              Codex w <span class="mono">~/.codex</span>. Żadnego z nich nie ma na tym komputerze,
-              więc nie ma skąd importować.
+              Claude Code trzyma konfigurację w katalogu <span class="mono">~/.claude</span>, Codex
+              w <span class="mono">~/.codex</span>, a Gemini CLI w
+              <span class="mono">~/.gemini</span>. Żadnego z nich nie ma na tym komputerze, więc nie
+              ma skąd importować.
             </p>
             <p class="row-actions">
               <button type="button" class="btn" (click)="loadDetect()">Sprawdź ponownie</button>

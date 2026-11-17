@@ -21,7 +21,7 @@ export type Timestamp = string;
 /** Nieprzezroczysty identyfikator lokalizacji (renderer nigdy nie dostaje sciezki). */
 export type RootId = string;
 
-export const TOOL_IDS = ['claude-code', 'codex'] as const;
+export const TOOL_IDS = ['claude-code', 'codex', 'gemini-cli'] as const;
 export type ToolId = (typeof TOOL_IDS)[number];
 
 export const ITEM_KINDS = [

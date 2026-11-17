@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "acme-server": { "command": "acme-mcp", "env": { "ACME_TOKEN": "acme-fake-token-0000" } }
+  },
+  "context": { "fileName": ["GEMINI.md"] },
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "write_file|replace",
+        "hooks": [{ "type": "command", "command": "$HOME/acme/check.sh", "timeout": 10000, "name": "acme-check" }]
+      }
+    ],
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "/opt/acme/start.sh" }] }],
+    "AfterAgent": [{ "hooks": [{ "type": "command", "command": "/opt/acme/done.sh", "timeout": 5000 }] }],
+    "Notification": [{ "hooks": [{ "type": "script", "path": "acme.sh" }] }]
+  }
+}

@@ -25,7 +25,7 @@ import path, { isAbsolute, join, resolve } from 'node:path';
  * w generatorze: aplikacja ma prawo zapisu do katalogow konfiguracyjnych.
  */
 
-export const OWNER_CONFIG_ROOTS = ['.claude', '.codex', '.agents'] as const;
+export const OWNER_CONFIG_ROOTS = ['.claude', '.codex', '.gemini', '.agents'] as const;
 
 const OWNER_FILES = [
   '.claude.json',
@@ -35,6 +35,8 @@ const OWNER_FILES = [
   '.codex/config.toml',
   '.codex/hooks.json',
   '.codex/AGENTS.md',
+  '.gemini/settings.json',
+  '.gemini/GEMINI.md',
 ] as const;
 
 const OWNER_DIRS = [
@@ -45,6 +47,10 @@ const OWNER_DIRS = [
   '.codex',
   '.codex/agents',
   '.codex/skills',
+  '.gemini',
+  '.gemini/agents',
+  '.gemini/skills',
+  '.gemini/commands',
   '.agents',
 ] as const;
 

@@ -660,6 +660,14 @@ czy kopią, to nie szczegół implementacyjny, bo od tego zależy, czy edycja ź
 (ADR 0015). Tryb wylicza `ExportService` z wykrytej zdolności systemu, adapter dostaje go w
 `ExportContext`, a każdy wpis planu niesie `materialization`, więc interfejs pokazuje go per wpis.
 
+### 5.0 Trzeci adapter: Gemini CLI (test założenia 10)
+
+Trzeci adapter (`src/adapters/gemini-cli`, ADR 0055) dołożono bez zmiany kontraktu `ToolAdapter` i
+`ToolExporter` ani modelu kanonicznego. Poza `src/adapters` ruszyć trzeba było tylko rejestru i
+tabel, które z założenia znają narzędzia: identyfikator w `TOOL_IDS`, wpisy w `CANDIDATES`
+(`infra/platform/locations`), rejestr w `main/bootstrap/adapters`, etykiety w rendererze i historii oraz
+prefiks w układzie ZIP. Pełna lista z uzasadnieniem jest w ADR 0055.
+
 ### 5.1 Granice adapterów
 
 Adapter wie wszystko o swoim narzędziu i nic o drugim. Nie zna modelu drugiego narzędzia, nie

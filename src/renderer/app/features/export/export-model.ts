@@ -11,11 +11,13 @@ import type { ToolIdDto } from '../../../../shared/ipc/import-contract';
 export const TOOLS: readonly { readonly value: ToolIdDto; readonly label: string }[] = [
   { value: 'claude-code', label: 'Claude Code' },
   { value: 'codex', label: 'Codex' },
+  { value: 'gemini-cli', label: 'Gemini CLI' },
 ];
 
 /** Miejscownik do zdan: "w Claude Code", "w Codeksie". */
 export function toolLocative(tool: ToolIdDto): string {
-  return tool === 'codex' ? 'Codeksie' : 'Claude Code';
+  if (tool === 'codex') return 'Codeksie';
+  return tool === 'gemini-cli' ? 'Gemini CLI' : 'Claude Code';
 }
 
 export const LEVELS: Readonly<
