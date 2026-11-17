@@ -12,7 +12,7 @@ import type { PlatformEnv } from './env';
  * narzedzia albo systemu to wpis w `CANDIDATES` plus test z podstawionym `PlatformEnv`.
  */
 
-type Base = 'claude' | 'codex' | 'agents';
+type Base = 'claude' | 'codex' | 'gemini' | 'agents';
 type EntryType = 'directory' | 'file';
 
 interface CandidateSpec {
@@ -73,16 +73,50 @@ export const CANDIDATES: readonly CandidateSpec[] = [
     segments: ['config.toml'],
     entry: 'file',
   },
+  // Gemini CLI (ADR 0055). Alias `~/.agents/skills` jest udokumentowany, ale wspoldzielony z Codeksem,
+  // wiec nie jest rootem tego narzedzia.
+  { tool: 'gemini-cli', kind: 'skills', base: 'gemini', segments: ['skills'], entry: 'directory' },
+  { tool: 'gemini-cli', kind: 'agents', base: 'gemini', segments: ['agents'], entry: 'directory' },
+  {
+    tool: 'gemini-cli',
+    kind: 'commands',
+    base: 'gemini',
+    segments: ['commands'],
+    entry: 'directory',
+  },
+  {
+    tool: 'gemini-cli',
+    kind: 'global-instructions',
+    base: 'gemini',
+    segments: ['GEMINI.md'],
+    entry: 'file',
+  },
+  {
+    tool: 'gemini-cli',
+    kind: 'hooks',
+    base: 'gemini',
+    segments: ['settings.json'],
+    entry: 'file',
+  },
 ];
 
-const BASE_DIR: Record<Base, { readonly dir: string; readonly override?: string }> = {
+const BASE_DIR: Record<
+  Base,
+  { readonly dir: string; readonly override?: string; readonly overrideIsParent?: boolean }
+> = {
   claude: { dir: '.claude', override: 'CLAUDE_CONFIG_DIR' },
   codex: { dir: '.codex', override: 'CODEX_HOME' },
+  // GEMINI_CLI_HOME to katalog nadrzedny: CLI tworzy w nim `.gemini` (dokumentacja configuration).
+  gemini: { dir: '.gemini', override: 'GEMINI_CLI_HOME', overrideIsParent: true },
   agents: { dir: '.agents' },
 };
 
 /** Katalog glowny narzedzia; `agents` jest wspoldzielony i nie jest czyimkolwiek domem. */
-const TOOL_HOME: Record<ToolId, Base> = { 'claude-code': 'claude', codex: 'codex' };
+const TOOL_HOME: Record<ToolId, Base> = {
+  'claude-code': 'claude',
+  codex: 'codex',
+  'gemini-cli': 'gemini',
+};
 
 export type PathProbe = (absolutePath: string) => Promise<'directory' | 'file' | 'missing'>;
 
@@ -163,10 +197,10 @@ export class FsLocationCatalog implements LocationCatalog {
 
   private baseDir(base: Base): string {
     const api = pathApiFor(this.platformEnv.platform);
-    const { dir, override } = BASE_DIR[base];
+    const { dir, override, overrideIsParent } = BASE_DIR[base];
     const overridden = override === undefined ? undefined : this.platformEnv.env[override];
     if (overridden !== undefined && overridden !== '' && api.isAbsolute(overridden)) {
-      return overridden;
+      return overrideIsParent === true ? api.join(overridden, dir) : overridden;
     }
     return api.join(this.platformEnv.homeDir, dir);
   }
@@ -180,7 +214,9 @@ export class FsLocationCatalog implements LocationCatalog {
     const overridden = override === undefined ? undefined : this.platformEnv.env[override];
     const prefix =
       overridden !== undefined && overridden !== '' && override !== undefined
-        ? `$${override}`
+        ? BASE_DIR[spec.base].overrideIsParent === true
+          ? `$${override}/${dir}`
+          : `$${override}`
         : `~/${dir}`;
     return [prefix, ...spec.segments].join('/');
   }

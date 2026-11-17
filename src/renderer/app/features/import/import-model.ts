@@ -8,9 +8,10 @@ import type {
 export const TOOL_LABEL: Readonly<Record<ToolIdDto, string>> = {
   'claude-code': 'Claude Code',
   codex: 'Codex',
+  'gemini-cli': 'Gemini CLI',
 };
 
-const TOOL_ORDER: readonly ToolIdDto[] = ['claude-code', 'codex'];
+const TOOL_ORDER: readonly ToolIdDto[] = ['claude-code', 'codex', 'gemini-cli'];
 
 export function toolLabel(tool: string): string {
   return TOOL_LABEL[tool as ToolIdDto] ?? tool;

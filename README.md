@@ -3,13 +3,13 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Local manager for AI coding tool configuration (skills, agents, commands, instructions, hooks)
-for Claude Code and OpenAI Codex, as a desktop app and a `cwm` command line tool.
+for Claude Code, OpenAI Codex and Gemini CLI, as a desktop app and a `cwm` command line tool.
 
 **What it does.**
 
 - Desktop app (Electron + Angular, macOS, Windows, Linux): keep a library of skills, agents,
-  commands, global instructions and hooks in one place, import them from `~/.claude`, `~/.codex`
-  and `~/.agents`, and export them back with a plan, a diff preview and a backup before every write.
+  commands, global instructions and hooks in one place, import them from `~/.claude`, `~/.codex`,
+  `~/.gemini` and `~/.agents`, and export them back with a plan, a diff preview and a backup before every write.
 - `cwm` CLI: manage companies, projects and resources in `~/.cwm`, compose a per-company profile,
   and launch Claude Code with it. Anything with executable fields (hooks, MCP commands, plugins)
   needs your approval first, and the approval is pinned to a content hash.
@@ -51,8 +51,8 @@ node dist/cli/index.js start                                            # approv
 # CWM - Claude Workspace Manager
 
 Aplikacja desktopowa do zarządzania konfiguracją narzędzi AI do programowania z jednego
-miejsca: skillami, agentami, komendami, instrukcjami globalnymi i hookami. Obsługuje Claude Code
-i OpenAI Codex. Działa lokalnie na macOS, Windowsie i Linuksie, bez backendu i bez kont.
+miejsca: skillami, agentami, komendami, instrukcjami globalnymi i hookami. Obsługuje Claude Code,
+OpenAI Codex i Gemini CLI. Działa lokalnie na macOS, Windowsie i Linuksie, bez backendu i bez kont.
 Twoja biblioteka to zwykłe pliki w katalogu danych aplikacji.
 
 Wydania są niepodpisane (ADR 0003), więc system ostrzeże cię przy pierwszym uruchomieniu.

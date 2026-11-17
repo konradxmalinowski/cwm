@@ -47,10 +47,25 @@ function slots(groups: unknown[]): Slot[] {
   return out;
 }
 
-function newHook(def: HookDefinition, base: JsonRecord | null): JsonRecord {
+function newHook(def: HookDefinition, base: JsonRecord | null, perSecond: number): JsonRecord {
   const hook: JsonRecord = { ...(base ?? {}), type: 'command', command: def.command };
-  if (def.timeoutSeconds !== null) hook['timeout'] = def.timeoutSeconds;
-  else delete hook['timeout'];
+  const original = base?.['timeout'];
+  if (perSecond !== 1 && typeof original === 'number') {
+    // Wartosc ze zrodla zostaje, gdy po zaokragleniu daje te same sekundy (albo byla nieprawidlowa
+    // i zostala przy imporcie pominieta), zeby eksport nie zmienial pliku bez powodu.
+    const valid = Number.isFinite(original) && original > 0;
+    const same = valid
+      ? def.timeoutSeconds !== null &&
+        Math.max(1, Math.ceil(original / perSecond)) === def.timeoutSeconds
+      : def.timeoutSeconds === null;
+    if (same) return hook;
+  }
+  if (def.timeoutSeconds !== null) {
+    const scaled = def.timeoutSeconds * perSecond;
+    if (Number.isFinite(scaled))
+      hook['timeout'] = perSecond === 1 ? def.timeoutSeconds : Math.round(scaled);
+    else delete hook['timeout'];
+  } else delete hook['timeout'];
   return hook;
 }
 
@@ -65,7 +80,11 @@ export function parseOriginalHook(bytes: Uint8Array | undefined): JsonRecord | n
   return null;
 }
 
-export function mergeHooks(existing: unknown, inputs: readonly HookInput[]): HookMerge | string {
+export function mergeHooks(
+  existing: unknown,
+  inputs: readonly HookInput[],
+  timeoutPerSecond = 1,
+): HookMerge | string {
   if (existing !== undefined && !isJsonRecord(existing)) {
     return 'Klucz "hooks" w pliku nie jest obiektem, więc aplikacja go nie zmieni.';
   }
@@ -87,7 +106,7 @@ export function mergeHooks(existing: unknown, inputs: readonly HookInput[]): Hoo
     );
     const found = byOriginal ?? byCommand;
     if (found !== undefined && matcherOf(found.group) === def.matcher) {
-      const updated = newHook(def, found.hook);
+      const updated = newHook(def, found.hook, timeoutPerSecond);
       if (!jsonEqual(updated, found.hook)) {
         if (found.direct) {
           groups[found.index] = {
@@ -106,7 +125,7 @@ export function mergeHooks(existing: unknown, inputs: readonly HookInput[]): Hoo
         if (found.list.length === 0) groups.splice(groups.indexOf(found.group), 1);
       }
     }
-    const fresh = newHook(def, found?.hook ?? null);
+    const fresh = newHook(def, found?.hook ?? null, timeoutPerSecond);
     const target = slots(groups).find((s) => !s.direct && matcherOf(s.group) === def.matcher);
     if (target !== undefined) target.list.push(fresh);
     else {

@@ -153,6 +153,7 @@ function prepareHome(): string {
   const home = createTempTree('acme-home-');
   cpSync('tests/fixtures/claude-code/home', home, { recursive: true });
   cpSync('tests/fixtures/codex/home', home, { recursive: true });
+  cpSync('tests/fixtures/gemini-cli/home', home, { recursive: true });
   return home;
 }
 

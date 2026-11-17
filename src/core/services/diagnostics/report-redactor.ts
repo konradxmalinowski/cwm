@@ -88,6 +88,7 @@ const NAME_EDGE = String.raw`[\p{L}\p{N}<>]`;
 const KNOWN_SEGMENTS: ReadonlySet<string> = new Set([
   'claude',
   'codex',
+  'gemini',
   'cwm',
   'agents',
   'config',

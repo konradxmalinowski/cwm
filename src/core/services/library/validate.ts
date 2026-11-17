@@ -120,7 +120,7 @@ export function slugDeclaredNameWarning(identity: {
     code: 'slug-differs-from-declared-name',
     message:
       `Nazwa elementu ("${identity.slug}") różni się od nazwy zadeklarowanej w pliku ` +
-      `("${identity.declaredName}"). Claude Code użyje pierwszej, Codex drugiej.`,
+      `("${identity.declaredName}"). Claude Code użyje pierwszej, Codex i Gemini CLI drugiej.`,
   };
 }
 

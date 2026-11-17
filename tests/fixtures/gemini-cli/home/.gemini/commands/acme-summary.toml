@@ -1,0 +1,4 @@
+description = "Summarizes the Acme changes"
+prompt = """
+Summarize the changes described in {{args}}.
+"""

@@ -19,6 +19,8 @@ export interface HookSourceOptions {
   readonly warnings: readonly ImportWarning[];
   /** Nieznane klucze korzenia pliku, dopisywane do kazdego hooka. */
   readonly rootUnmapped: readonly { readonly path: string; readonly value: JsonValue }[];
+  /** Jednostek `timeout` w pliku narzedzia na sekunde: 1 dla Claude Code i Codeksa, 1000 dla Gemini CLI. */
+  readonly timeoutPerSecond?: number;
 }
 
 /**
@@ -79,9 +81,29 @@ export function addHookCandidates(
           if (!known) unmapped.push({ path: `hook.${k}`, value: v as JsonValue });
         }
         const command = hook['command'];
-        const timeout = typeof hook['timeout'] === 'number' ? hook['timeout'] : null;
-        const slug = deriveSlug(`${event}-${ordinal}`);
+        const rawTimeout = typeof hook['timeout'] === 'number' ? hook['timeout'] : null;
+        const perSecond = options.timeoutPerSecond ?? 1;
         const warnings: ImportWarning[] = [...options.warnings];
+        let timeout: number | null = rawTimeout;
+        if (rawTimeout !== null && perSecond !== 1) {
+          // Model trzyma calkowite sekundy dodatnie (validate.ts); narzedzie podaje milisekundy.
+          if (!Number.isFinite(rawTimeout) || rawTimeout <= 0) {
+            timeout = null;
+            warnings.push({
+              code: 'hook-timeout-invalid',
+              message: `Czas hooka (${String(rawTimeout)}) nie jest dodatni, więc go pominięto. Eksport nie zapisze go z powrotem.`,
+            });
+          } else {
+            timeout = Math.max(1, Math.ceil(rawTimeout / perSecond));
+            if (timeout * perSecond !== rawTimeout) {
+              warnings.push({
+                code: 'hook-timeout-rounded',
+                message: `Czas hooka (${rawTimeout} ms) zaokrąglono w górę do ${timeout} s. Oryginalna wartość zostaje w snapshocie.`,
+              });
+            }
+          }
+        }
+        const slug = deriveSlug(`${event}-${ordinal}`);
         if (slug.changed) {
           warnings.push({
             code: 'slug-derived',

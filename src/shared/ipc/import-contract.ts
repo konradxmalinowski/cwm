@@ -4,7 +4,7 @@ import type { ItemKindDto, Result, WarningDto } from './library-contract';
  * Kontrakt kanalow `import:*` (ARCHITECTURE 3.4). Renderer dostaje `rootId` i etykiete,
  * nigdy sciezki bezwzglednej. Odpowiedzi zawsze jako `Result`.
  */
-export type ToolIdDto = 'claude-code' | 'codex';
+export type ToolIdDto = 'claude-code' | 'codex' | 'gemini-cli';
 
 export interface DetectedRootDto {
   rootId: string;

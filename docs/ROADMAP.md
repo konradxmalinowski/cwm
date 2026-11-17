@@ -742,7 +742,6 @@ W kolejności według stosunku wartości do ryzyka, nie według atrakcyjności.
 | Integracja z Git jako warstwa opcjonalna | Wymagania wprost: warstwa dodatkowa, nigdy wymóg (ADR 0019) |
 | Podpisanie i notaryzacja wydań | Warunek autoaktualizacji i usunięcia ostrzeżeń systemowych (ADR 0003) |
 | Autoaktualizacja | Po podpisaniu. `latest.yml` jest generowany od MVP, więc to konfiguracja |
-| Trzeci adapter | Prawdziwy test założenia 10 z wymagań. Dopiero on pokaże, czy kontrakt adaptera jest dobry |
 | Reguły bezpieczeństwa i zakresów dla MCP | Warunek odblokowania synchronizacji MCP. Osobny ADR, osobny etap (ADR 0020) |
 | DPAPI na Windowsie | Warunek dla jakiejkolwiek funkcji przechowującej sekrety (ADR 0018) |
 | Limit rozmiaru i czyszczenie content store | Świadomie odroczone (ADR 0027). Dołożą politykę nad istniejącym store'em, nie zmienią modelu danych. Usuwanie wymaga liczenia referencji, nie wieku obiektu |

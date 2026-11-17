@@ -50,7 +50,11 @@ export interface HistoryServiceDeps {
 
 const DEFAULT_LIMIT = 50;
 export const MAX_HISTORY_LIMIT = 200;
-const TOOL_NAMES: Record<ToolId, string> = { 'claude-code': 'Claude Code', codex: 'Codex' };
+const TOOL_NAMES: Record<ToolId, string> = {
+  'claude-code': 'Claude Code',
+  codex: 'Codex',
+  'gemini-cli': 'Gemini CLI',
+};
 const WRITE_KINDS = new Set(['export', 'sync', 'rollback']);
 
 type Current =

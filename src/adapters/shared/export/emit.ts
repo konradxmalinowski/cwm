@@ -67,6 +67,11 @@ function tomlKey(key: string): string {
     .join('.');
 }
 
+/** Klucz bez dzielenia po kropkach: dopuszczalny goly zapis albo caly w cudzyslowie. */
+function tomlWholeKey(key: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : tomlString(key);
+}
+
 function tomlInline(value: JsonValue): string {
   if (value === null) return '""';
   if (typeof value === 'string') return tomlString(value);
@@ -113,5 +118,21 @@ export function renderAgentToml(f: AgentTomlFields): string {
   if (f.effort !== null) lines.push(`model_reasoning_effort = ${tomlString(f.effort)}`);
   for (const e of f.extras) lines.push(`${tomlKey(e.key)} = ${tomlInline(e.value)}`);
   lines.push(`developer_instructions = ${tomlMultiline(f.instructions)}`);
+  return `${lines.join('\n')}\n`;
+}
+
+export interface CommandTomlFields {
+  /** Pusty opis oznacza brak klucza: Gemini CLI wylicza wtedy ogolny opis z nazwy pliku. */
+  readonly description: string | null;
+  readonly prompt: string;
+  readonly extras: readonly { readonly key: string; readonly value: JsonValue }[];
+}
+
+/** Plik komendy Gemini CLI w calosci: `description` (opcjonalny) i `prompt`. */
+export function renderCommandToml(f: CommandTomlFields): string {
+  const lines: string[] = [];
+  if (f.description !== null) lines.push(`description = ${tomlString(f.description)}`);
+  for (const e of f.extras) lines.push(`${tomlWholeKey(e.key)} = ${tomlInline(e.value)}`);
+  lines.push(`prompt = ${tomlMultiline(f.prompt)}`);
   return `${lines.join('\n')}\n`;
 }

@@ -214,6 +214,10 @@ export async function planInstructions(
 export interface HooksSpec extends FileTargetSpec {
   /** Zdarzenia, ktore narzedzie czyta; inne dostaja ostrzezenie przy wpisie. */
   readonly knownEvents: readonly string[] | null;
+  /** Jednostek `timeout` na sekunde w pliku narzedzia (domyslnie 1). */
+  readonly timeoutPerSecond?: number;
+  /** Ostrzezenia dopisywane do wpisu pliku hookow (np. ze hook uruchamia polecenie). */
+  readonly entryWarnings?: readonly string[];
 }
 
 export async function planHooks(
@@ -278,12 +282,12 @@ export async function planHooks(
   if (inputs.length === 0) return;
   const ids = used.map((l) => l.item.id);
 
-  const merged = mergeHooks(parsed['hooks'], inputs);
+  const merged = mergeHooks(parsed['hooks'], inputs, spec.timeoutPerSecond ?? 1);
   if (typeof merged === 'string') {
     refuseAll(b, used, merged);
     return;
   }
-  const warnings: string[] = [];
+  const warnings: string[] = [...(spec.entryWarnings ?? [])];
   if (spec.knownEvents !== null) {
     for (const { def } of inputs) {
       if (!spec.knownEvents.includes(def.event)) {
