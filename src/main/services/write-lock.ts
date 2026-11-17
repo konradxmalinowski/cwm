@@ -4,7 +4,9 @@
  * Zapisy (biblioteka, import, eksport, synchronizacja, cofniecie) moga dzialac obok siebie,
  * bo kazdy ma wlasna serializacje. Odbudowa indeksu nie moze: wymienia plik, na ktorym te
  * operacje pracuja. Dlatego odbudowa wchodzi tylko wtedy, gdy nie trwa zaden zapis, a zaden
- * zapis nie wchodzi w trakcie odbudowy.
+ * zapis nie wchodzi w trakcie odbudowy. Tak samo czyszczenie historii i content store
+ * (ADR 0056): obiekt wlozony przez trwajacy zapis, zanim dopisze on wiersz logu, wygladalby
+ * na osierocony, wiec przebieg retencji wchodzi wylacznie bez zadnego zapisu.
  */
 export type Release = () => void;
 
@@ -21,13 +23,18 @@ export class OperationLock {
     });
   }
 
-  /** `null`, gdy trwa jakikolwiek zapis albo inna odbudowa. */
-  tryEnterRebuild(): Release | null {
+  /** `null`, gdy trwa jakikolwiek zapis albo inna operacja wylaczna. */
+  tryEnterExclusive(): Release | null {
     if (this.rebuilding || this.writers > 0) return null;
     this.rebuilding = true;
     return once(() => {
       this.rebuilding = false;
     });
+  }
+
+  /** Odbudowa indeksu to operacja wylaczna; osobna nazwa zostaje dla czytelnosci wywolan. */
+  tryEnterRebuild(): Release | null {
+    return this.tryEnterExclusive();
   }
 
   isRebuilding(): boolean {

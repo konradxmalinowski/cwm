@@ -17,6 +17,7 @@ import type {
   OperationRow,
   OperationType,
 } from '../../core/ports/operation-log';
+import type { RetentionLog, RetentionLogRow } from '../../core/ports/retention';
 import type { SyncRecord, SyncStateStore, SyncedFile } from '../../core/ports/sync-state';
 import type { LibraryIndex } from '../../core/ports/library-index';
 import { redactHomePath } from '../logging/redact';
@@ -119,6 +120,16 @@ function toOperationRow(row: RawLogRow): OperationRow {
     ...(row.reverts === null ? {} : { reverts: row.reverts }),
     ...(row.note === null ? {} : { note: row.note }),
   };
+}
+
+interface RawRetentionRow {
+  readonly seq: number;
+  readonly operation: string;
+  readonly at: string;
+  readonly backup_id: string | null;
+  readonly reverts: string | null;
+  readonly before_version_hash: string | null;
+  readonly after_version_hash: string | null;
 }
 
 interface RawSyncRow {
@@ -446,6 +457,50 @@ export class SqliteIndexStore implements IndexStore {
           return Promise.reject(error instanceof Error ? error : new Error(String(error)));
         }
       },
+    };
+  }
+
+  /**
+   * Log operacji w zakresie potrzebnym retencji (ADR 0056). Usuniecie wierszy to jedna transakcja:
+   * albo znikaja wszystkie wskazane, albo zaden. Kolejnosc wzgledem plikow obiektow pilnuje serwis.
+   */
+  retentionLog(): RetentionLog {
+    const wrap = <T>(work: () => T): Promise<T> => {
+      try {
+        return Promise.resolve(work());
+      } catch (error: unknown) {
+        return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    };
+    return {
+      rows: () =>
+        wrap(() => {
+          const raw = this.db
+            .prepare(
+              `SELECT seq, operation, at, backup_id, reverts, before_version_hash, after_version_hash
+               FROM operation_log ORDER BY seq`,
+            )
+            .all() as RawRetentionRow[];
+          return raw.map((row): RetentionLogRow => ({
+            seq: row.seq,
+            operation: row.operation,
+            at: row.at,
+            backupId: row.backup_id,
+            reverts: row.reverts,
+            versionHashes: [row.before_version_hash, row.after_version_hash].filter(
+              (hash): hash is Sha256 => hash !== null,
+            ),
+          }));
+        }),
+      deleteRows: (seqs) =>
+        wrap(() => {
+          const remove = this.db.prepare('DELETE FROM operation_log WHERE seq = ?');
+          return this.db.transaction((list: readonly number[]) => {
+            let removed = 0;
+            for (const seq of list) removed += remove.run(seq).changes;
+            return removed;
+          })(seqs);
+        }),
     };
   }
 

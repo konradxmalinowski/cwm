@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { IndexStartupInfo } from '../../src/core/model/index-health';
+import {
+  NO_RETENTION_LIMITS,
+  type RetentionReport,
+  type RetentionSettings,
+} from '../../src/core/model/retention';
 import { createUlidGenerator } from '../../src/core/ports/id-generator';
 import type { IndexStore } from '../../src/core/ports/index-store';
 import { LibraryService } from '../../src/core/services/library/library-service';
+import type { RetentionService } from '../../src/core/services/retention/retention-service';
 import type { IndexOpenFailure } from '../../src/main/bootstrap/index-startup';
 import { parseRebuildApplyRequest } from '../../src/main/ipc/handlers/diagnostics-validation';
+import { parseRetentionApplyRequest } from '../../src/main/ipc/handlers/retention-validation';
 import { BUSY_RESULT, IpcRegistry } from '../../src/main/ipc/registry';
 import {
   IndexRebuildService,
@@ -13,6 +20,7 @@ import {
   type IndexSnapshot,
   type QuarantineProbeResult,
 } from '../../src/main/services/index-rebuild';
+import { PREVIEW_TOKEN_TTL_MS, RetentionRunner } from '../../src/main/services/retention-runner';
 import { OperationLock } from '../../src/main/services/write-lock';
 import {
   FakeClock,
@@ -534,5 +542,233 @@ describe('kanaly nie przyjmuja sciezki (ADR 0030)', () => {
       error: { code: 'invalid-request' },
     });
     expect(h.quarantine).not.toHaveBeenCalled();
+  });
+});
+
+describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)', () => {
+  const report: RetentionReport = {
+    applied: true,
+    blocked: null,
+    entriesBefore: 3,
+    entriesRemoved: 1,
+    objectsBefore: 5,
+    objectsRemoved: 2,
+    bytesBefore: 100,
+    bytesFreed: 40,
+    sizeLimitUnmet: false,
+    objectsFailed: 0,
+    objectsSkipped: 0,
+    ageRuleSkipped: false,
+  };
+
+  function retention(
+    options: { service?: 'missing' | 'throws'; settings?: RetentionSettings } = {},
+  ) {
+    let stored: RetentionSettings = options.settings ?? NO_RETENTION_LIMITS;
+    let clock = 1_000_000;
+    const run = vi.fn(() =>
+      options.service === 'throws'
+        ? Promise.reject(new Error('sekret z /home/acme/objects'))
+        : Promise.resolve(report),
+    );
+    const lock = new OperationLock();
+    const runner = new RetentionRunner({
+      settings: {
+        load: () => Promise.resolve(stored),
+        save: (next) => {
+          stored = next;
+          return Promise.resolve();
+        },
+      },
+      service: () =>
+        options.service === 'missing' ? null : ({ run } as unknown as RetentionService),
+      lock,
+      now: () => clock,
+    });
+    return {
+      runner,
+      run,
+      lock,
+      stored: () => stored,
+      advance: (ms: number) => {
+        clock += ms;
+      },
+    };
+  }
+
+  async function tokenOf(h: ReturnType<typeof retention>): Promise<string> {
+    const preview = await h.runner.preview();
+    if (!preview.ok || preview.value.previewToken === null) throw new Error('brak tokenu');
+    return preview.value.previewToken;
+  }
+
+  it('wykonanie wymaga potwierdzenia i tokenu z podgladu, a token jest jednorazowy', async () => {
+    const h = retention();
+    expect(await h.runner.apply(false, 'x')).toMatchObject({
+      ok: false,
+      error: { code: 'confirmation-required' },
+    });
+    expect(await h.runner.apply(true, 'nie-ma-takiego')).toMatchObject({
+      ok: false,
+      error: { code: 'plan-expired' },
+    });
+    expect(h.run).not.toHaveBeenCalled();
+
+    const token = await tokenOf(h);
+    expect(h.run).toHaveBeenLastCalledWith({ apply: false });
+    expect(await h.runner.apply(true, token)).toMatchObject({ ok: true });
+    expect(h.run).toHaveBeenLastCalledWith({
+      apply: true,
+      ceiling: { entries: 1, objects: 2 },
+    });
+    expect(await h.runner.apply(true, token)).toMatchObject({
+      ok: false,
+      error: { code: 'plan-expired' },
+    });
+  });
+
+  it('token wygasa po kilku minutach, a zmiana ustawien uniewaznia podglad', async () => {
+    const h = retention();
+    const token = await tokenOf(h);
+    h.advance(PREVIEW_TOKEN_TTL_MS + 1);
+    expect(await h.runner.apply(true, token)).toMatchObject({ error: { code: 'plan-expired' } });
+
+    const second = await tokenOf(h);
+    await h.runner.setSettings({ maxAgeDays: 30, confirmed: true });
+    expect(await h.runner.apply(true, second)).toMatchObject({ error: { code: 'stale-plan' } });
+  });
+
+  it('plan, ktory urosl od podgladu, daje plan-changed i nic nie jest wykonane', async () => {
+    const h = retention();
+    const token = await tokenOf(h);
+    h.run.mockResolvedValueOnce({ ...report, applied: false, blocked: 'plan-changed' });
+
+    const result = await h.runner.apply(true, token);
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'plan-changed' } });
+  });
+
+  it('podglad z limitami z formularza przekazuje je dalej, a zle limity odrzuca', async () => {
+    const h = retention();
+    await h.runner.preview({ settings: { maxEntries: 50, maxAgeDays: null, maxStoreMiB: null } });
+    expect(h.run).toHaveBeenLastCalledWith({
+      apply: false,
+      settings: { maxEntries: 50, maxAgeDays: null, maxStoreMiB: null },
+    });
+    expect(await h.runner.preview({ settings: { maxEntries: 3 } })).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-request' },
+    });
+  });
+
+  it('trwajacy zapis blokuje czyszczenie, a czyszczenie blokuje zapisy i zwalnia blokade po koncu', async () => {
+    const h = retention();
+    const writer = h.lock.tryEnterWrite();
+    expect(await h.runner.preview()).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(h.run).not.toHaveBeenCalled();
+    writer?.();
+
+    let duringRun: (() => void) | null = null;
+    h.run.mockImplementationOnce(() => {
+      duringRun = h.lock.tryEnterWrite();
+      return Promise.resolve(report);
+    });
+    await h.runner.preview();
+    expect(duringRun).toBeNull();
+    expect(h.lock.tryEnterWrite()).not.toBeNull();
+  });
+
+  it('brak serwisu to unavailable, a blad serwisu nie wycieka tresci i zwalnia blokade', async () => {
+    expect(await retention({ service: 'missing' }).runner.preview()).toMatchObject({
+      ok: false,
+      error: { code: 'unavailable' },
+    });
+
+    const h = retention({ service: 'throws' });
+    const result = await h.runner.preview();
+    expect(result).toMatchObject({ ok: false, error: { code: 'internal' } });
+    expect(JSON.stringify(result)).not.toContain('sekret');
+    expect(h.lock.tryEnterWrite()).not.toBeNull();
+  });
+
+  it('ustawienia: zakres sprawdza main, a wlaczenie i zaostrzenie limitu wymaga potwierdzenia', async () => {
+    const h = retention();
+    expect(await h.runner.setSettings({ maxEntries: 9 })).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-request' },
+    });
+    expect(await h.runner.setSettings({ maxAgeDays: 1.5 })).toMatchObject({ ok: false });
+    expect(await h.runner.setSettings({ maxStoreMiB: '100' })).toMatchObject({ ok: false });
+    expect(await h.runner.setSettings({ maxEntries: 1_000_001 })).toMatchObject({ ok: false });
+
+    // Wlaczenie limitu bez potwierdzenia nie zapisuje niczego.
+    expect(await h.runner.setSettings({ maxEntries: 50 })).toMatchObject({
+      ok: false,
+      error: { code: 'confirmation-required' },
+    });
+    expect(h.stored()).toEqual(NO_RETENTION_LIMITS);
+
+    const saved = await h.runner.setSettings({
+      maxEntries: 50,
+      maxAgeDays: null,
+      maxStoreMiB: 1_048_576,
+      confirmed: true,
+      path: '/etc',
+    });
+    expect(saved).toEqual({
+      ok: true,
+      value: { maxEntries: 50, maxAgeDays: null, maxStoreMiB: 1_048_576, startupNotice: null },
+    });
+    expect(h.stored()).toEqual({ maxEntries: 50, maxAgeDays: null, maxStoreMiB: 1_048_576 });
+
+    // Zaostrzenie wymaga potwierdzenia, poluzowanie i wylaczenie nie.
+    expect(await h.runner.setSettings({ maxEntries: 20, maxStoreMiB: 100 })).toMatchObject({
+      ok: false,
+      error: { code: 'confirmation-required' },
+    });
+    expect(await h.runner.setSettings({ maxEntries: 100 })).toMatchObject({
+      ok: true,
+    });
+    expect(await h.runner.setSettings({})).toMatchObject({ ok: true });
+    expect(h.stored()).toEqual(NO_RETENTION_LIMITS);
+  });
+
+  it('przebieg przy starcie rusza tylko przy wlaczonym limicie, bez nadzoru, i pomija niewiarygodny indeks', async () => {
+    const off = retention();
+    await off.runner.runAtStartup();
+    expect(off.run).not.toHaveBeenCalled();
+
+    const on = retention({ settings: { ...NO_RETENTION_LIMITS, maxAgeDays: 90 } });
+    await on.runner.runAtStartup();
+    expect(on.run).toHaveBeenCalledWith({ apply: true, unattended: true });
+
+    const fresh = retention({ settings: { ...NO_RETENTION_LIMITS, maxAgeDays: 90 } });
+    await fresh.runner.runAtStartup('index-new');
+    expect(fresh.run).not.toHaveBeenCalled();
+    expect(await fresh.runner.getSettings()).toMatchObject({
+      ok: true,
+      value: { startupNotice: 'index-new' },
+    });
+
+    const blocked = retention({ settings: { ...NO_RETENTION_LIMITS, maxAgeDays: 90 } });
+    blocked.run.mockResolvedValueOnce({ ...report, applied: false, blocked: 'mass-prune' });
+    await blocked.runner.runAtStartup();
+    expect(await blocked.runner.getSettings()).toMatchObject({
+      value: { startupNotice: 'mass-prune' },
+    });
+  });
+
+  it('parser wykonania gubi wszystko poza potwierdzeniem i tokenem', () => {
+    expect(
+      parseRetentionApplyRequest({ confirmed: true, token: 'abc', hashes: ['x'], path: '/' }),
+    ).toEqual({ ok: true, value: { confirmed: true, token: 'abc' } });
+    expect(parseRetentionApplyRequest({ token: 'abc' })).toEqual({
+      ok: true,
+      value: { confirmed: false, token: 'abc' },
+    });
+    expect(parseRetentionApplyRequest({ confirmed: true }).ok).toBe(false);
+    expect(parseRetentionApplyRequest({ confirmed: true, token: 'a'.repeat(129) }).ok).toBe(false);
+    expect(parseRetentionApplyRequest(null).ok).toBe(false);
+    expect(parseRetentionApplyRequest([]).ok).toBe(false);
   });
 });

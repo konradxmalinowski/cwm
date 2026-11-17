@@ -180,7 +180,7 @@ export function buildReport(input: ReportInput, redactor: ReportRedactor): Built
     '',
     '## Ustawienia aplikacji',
     '',
-    '- ta wersja nie zapisuje trwałych ustawień, więc nie ma czego dołączyć',
+    '- jedyne trwałe ustawienia to limity retencji historii (ADR 0056); ich wartości nie są dołączane',
     '',
     '## Ograniczenia',
     '',

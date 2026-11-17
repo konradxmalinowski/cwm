@@ -15,6 +15,7 @@ import {
 } from '../../core/state/startup';
 import { describeOutcome, itemsToRestoreText, type RebuildState } from './rebuild-model';
 import { ReportDialogComponent } from './report-dialog.component';
+import { RetentionSectionComponent } from './retention-section.component';
 
 const PLATFORM_LABEL: Readonly<Record<string, string>> = {
   darwin: 'macOS',
@@ -24,7 +25,7 @@ const PLATFORM_LABEL: Readonly<Record<string, string>> = {
 
 @Component({
   selector: 'app-diagnostics',
-  imports: [ReportDialogComponent],
+  imports: [ReportDialogComponent, RetentionSectionComponent],
   templateUrl: './diagnostics.component.html',
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { '(document:keydown)': 'onKeydown($event)' },

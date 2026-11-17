@@ -119,6 +119,8 @@ function summaryOf(kind: string, group: OperationGroup, count: number): string {
       return 'Odbudowano indeks biblioteki';
     case 'export-zip':
       return zipSummary(group);
+    case 'prune-history':
+      return 'Przycięto historię i wyczyszczono content store';
     default:
       return 'Operacja';
   }
@@ -139,7 +141,7 @@ export class HistoryService {
     const kind = kindOf(group);
     // Wpis odbudowy indeksu nie dotyczy zadnego elementu: jego `itemId` to stala.
     const itemIds =
-      kind === 'rebuild-index' || kind === 'export-zip'
+      kind === 'rebuild-index' || kind === 'export-zip' || kind === 'prune-history'
         ? []
         : [...new Set(group.rows.map((r) => r.itemId as string))];
     const backupId = group.rows.find((r) => r.backupId !== undefined)?.backupId ?? null;

@@ -758,6 +758,10 @@ Kanały z handlerem:
 | `diagnostics:report` | brak | raport środowiska, nieznanych konstrukcji i stanu otwarcia indeksu |
 | `diagnostics:report-preview` | brak | `{ previewId, text, fileName, lineCount, logLineCount }`: pełna treść raportu po redakcji (ADR 0053) |
 | `diagnostics:report-save` | `{ previewId }` | `{ status: 'saved', fileName }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
+| `retention:get` | brak | `{ maxEntries, maxAgeDays, maxStoreMiB, startupNotice }`, limity liczbą albo `null` (bez limitu), `startupNotice` to powód, dla którego czyszczenie przy starcie tej sesji nic nie zrobiło (ADR 0056) |
+| `retention:set` | `{ maxEntries, maxAgeDays, maxStoreMiB, confirmed? }` | zapisane ustawienia; zakresy sprawdza main, nieznane pola przepadają; włączenie albo zaostrzenie limitu bez `confirmed: true` to `confirmation-required` |
+| `retention:preview` | `{ settings? }` | suchy przebieg na podanych (albo zapisanych) limitach: `blocked`, liczby wpisów, obiektów i bajtów do usunięcia, `sizeLimitUnmet`, `ageRuleSkipped` i `previewToken` (jednorazowy, 5 minut) |
+| `retention:apply` | `{ confirmed: true, token }` | te same liczby po wykonaniu, `objectsFailed`; przerywa się (`plan-changed`), gdy przeliczony plan usuwa więcej niż podgląd |
 
 Każdy kanał z `IPC_CHANNELS` ma handler; rejestr przy starcie odmawia startu, gdy któregoś brakuje
 (`IMPLEMENTED_CHANNELS` to ta sama lista). Kanały `diff:compute`, `profiles:list`, `profiles:save`,
@@ -782,6 +786,13 @@ przyjmuje tylko `planId`: ścieżkę wybiera main oknem zapisu, odmawia katalog�
 zapisuje atomowo i dopisuje do Historii wiersz `export-zip` (liczby, bez ścieżki). `export:zip-save` bierze
 `OperationLock` dopiero na czas zapisu pliku i wpisu w historii, nie na czas okna systemowego. Elementy prywatne i z trafieniem klasyfikatora sekretów dołączają się
 wyłącznie przez `confirmedItemIds`, a elementy projektowe nigdy.
+
+`retention:*` (ADR 0056) przycinają historię i czyszczą content store. Żaden kanał nie przyjmuje ścieżki ani hashy:
+`retention:set` jest walidowany w main (trzy znane pola, liczby całkowite w zakresach), a `retention:apply` buduje wynik
+z jednego pola (`confirmed`). Podgląd i wykonanie liczą wszystko od nowa pod `OperationLock` w trybie wyłącznym
+(`tryEnterExclusive`, ta sama blokada co odbudowa indeksu): trwający zapis daje `busy` temu przebiegowi, a w trakcie
+przebiegu zapisy dostają `busy`. Kanały `retention:*` nie są w `WRITE_CHANNELS`, bo biorą blokadę same; za to każdy nowy kanał, który zapisuje obiekty
+albo wiersze logu, musi być w `WRITE_CHANNELS`, bo inaczej jego zapis w toku wyglądałby dla retencji na osierocone obiekty.
 
 `diagnostics:report-preview` i `diagnostics:report-save` (ADR 0053) składają raport do zgłoszenia błędu. Podgląd nie
 przyjmuje niczego; zapis przyjmuje tylko `previewId` (parser buduje wynik z jednego pola), a treść pochodzi z tego, co main
@@ -1001,7 +1012,8 @@ v0.1.0 są przy pierwszym starcie kopiowane z dawnego katalogu, który zostaje n
       snapshots/<tool>/... surowe zrodlo, bajt w bajt
     items/.<itemId>.<work|ready|old>.<pid>.<hex12>/   katalog pomocniczy zapisu, nie element (patrz nizej)
   index.db                 indeks SQLite: schema_migrations, operation_log, sync_state, items, items_fts
-  objects/<aa>/<sha256>    content-addressed store (wersje elementow, kopie zapisow)
+  objects/<aa>/<sha256>    content-addressed store (wersje elementow, kopie zapisow); retencja i GC: ADR 0056
+  retention.json           limity retencji (ADR 0056); brak pliku to brak limitow
   backups/<id>/            kopia przed zapisem do narzedzia: files/ plus MANIFEST (id to znacznik czasu i 3 bajty losowe)
   materialized/<tool>/...  wyrenderowane kopie elementow, do ktorych wskazuja dowiazania (ADR 0015)
   quarantine/              uszkodzony indeks odstawiony przed odbudowa (ADR 0029)
@@ -1063,9 +1075,20 @@ dodatkowa jest w backlogu (ADR 0019).
 Store trzyma **pełne treści każdej wersji**, nie łańcuch różnic (ADR 0027). Adresowanie hashem
 daje deduplikację, więc koszt jest znikomy przy plikach tekstowych rzędu kilku kilobajtów,
 a przywrócenie dowolnej wersji jest zapisem jednego obiektu, bez rekonstrukcji, która mogłaby
-zawieść. Limit rozmiaru i czyszczenie są świadomie odroczone: dołożą politykę nad istniejącym
-store'em, nie zmienią modelu danych. Settings pokazuje rozmiar store'u, żeby jego wzrost był
-widoczny, a nie odkrywany przy braku miejsca na dysku.
+zawieść. Limit rozmiaru i czyszczenie są polityką nad istniejącym store'em, nie zmianą modelu
+danych (ADR 0056): domyślnie nic nie jest przycinane, a rozmiar store'u jest widoczny w podglądzie
+czyszczenia w Diagnostyce, żeby jego wzrost nie był odkrywany przy braku miejsca na dysku.
+
+**Retencja jest przeliczeniem osiągalności, nie czyszczeniem po wieku** (ADR 0056). Korzenie to rekord wersji
+wskazywany przez `item.json` każdego elementu biblioteki, hashe `before` i `after` z zachowanych wierszy logu
+operacji oraz pliki `before` z `MANIFEST` kopii zachowanych wpisów; rekord wersji i manifest stanu z dysku
+wskazują dalej na assety, snapshoty i pliki z dysku. Obiekt bez odwołania z żadnego korzenia można usunąć, każdy
+inny zostaje, jakkolwiek jest stary. Przycinane są wpisy (grupy wierszy ze wspólnym `backup_id`, czyli to, co
+widzi Historia), nigdy obiekty: obiekty znikają dopiero jako skutek braku odwołań. Biblioteka i ostatnia
+operacja, którą da się cofnąć, są chronione zawsze. Kolejność przy wykonaniu: najpierw wiersze logu w jednej
+transakcji SQLite, potem pliki obiektów; przerwanie zostawia obiekty bez odwołań, które usunie następny przebieg.
+Gdy któregoś elementu biblioteki albo obiektu nie da się odczytać, przebieg niczego nie usuwa, bo nie potrafi
+wykazać osiągalności.
 
 SQLite przez `better-sqlite3`, nie `node:sqlite`. Uzasadnienie i koszt w ADR 0007: synchroniczne
 API pasuje do main, FTS5 daje wyszukiwanie bez dodatkowej biblioteki (jest dostępne, choć biblioteka z niego jeszcze nie korzysta), a cena to przebudowa modułu
@@ -1516,7 +1539,7 @@ przeniesione do ADR-ów. Otwarte zostaje jedno, z zapisem, który etap blokuje.
 | 3. Tożsamość przy rozjechanej nazwie | Oba identyfikatory przechowywane, rozstrzygane per narzędzie przy eksporcie. Rozjechanie to ostrzeżenie, nie błąd | 0026 |
 | 4. Polityka usuwania przy synchronizacji | Aplikacja nigdy sama nie usuwa plików w narzędziu i nie dopisuje znaczników własności. Sieroty są tylko raportowane (`WritePlan.orphans`, `SyncStatusDto.orphans`), blok instrukcji bez elementu też. Usunięcie jest możliwe wyłącznie przy cofnięciu operacji aplikacji (`delete`, `restore-link`) | 0034 |
 | 5. Zakres projektowy w MVP | Tylko konfiguracje globalne: `~/.claude`, `~/.codex`, wspólny `~/.agents`. Konfiguracje projektowe po MVP; `scope: project` zostaje etykietą bez egzekwowania | 0032 |
-| 7. Retencja historii | Pełne treści w content store adresowanym hashem, z deduplikacją. Limit i czyszczenie świadomie odroczone, dołożą politykę, nie zmienią modelu danych | 0027 |
+| 7. Retencja historii | Pełne treści w content store adresowanym hashem, z deduplikacją. Limit i czyszczenie to polityka nad store'em, liczona z osiągalności, nie z wieku obiektu; domyślnie wyłączona | 0027, 0056 |
 | 8. Tworzenie drzewa narzędzia od zera | Eksport tylko do narzędzia z istniejącym katalogiem głównym (`~/.claude`, `~/.codex`, z `CLAUDE_CONFIG_DIR` i `CODEX_HOME`); brakujące podkatalogi i pliki w nim są tworzone. `~/.agents` nie przesądza o obecności Codeksa | 0033 |
 
 ### 15.2 Otwarte

@@ -18,7 +18,12 @@ export type OperationType =
   /** Cofniecie wczesniejszego zapisu do narzedzia z jego kopii (ADR 0019). */
   | 'rollback'
   /** Reczna odbudowa indeksu z Diagnostyki (ADR 0030); `itemId` to stala `index`. */
-  | 'rebuild-index';
+  | 'rebuild-index'
+  /**
+   * Przyciecie historii i czyszczenie content store (ADR 0056); `itemId` to stala `retention`,
+   * a `note` niesie liczby, nigdy sciezke.
+   */
+  | 'prune-history';
 
 export interface OperationState {
   readonly revision: number;

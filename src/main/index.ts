@@ -28,14 +28,18 @@ import {
 } from './ipc/handlers/diagnostics';
 import { createDiagnosticReportService } from './bootstrap/diagnostic-report';
 import { createZipSaveService } from './bootstrap/zip-export';
+import { createRetentionService, createRetentionSettings } from './bootstrap/retention';
 import { registerExportHandlers } from './ipc/handlers/export';
 import { registerSyncHandlers } from './ipc/handlers/sync';
 import { registerImportHandlers } from './ipc/handlers/import';
+import { registerRetentionHandlers } from './ipc/handlers/retention';
 import { registerLibraryHandlers } from './ipc/handlers/library';
 import { IpcRegistry } from './ipc/registry';
 import { IndexRebuildService } from './services/index-rebuild';
+import { RetentionRunner } from './services/retention-runner';
 import { OperationLock } from './services/write-lock';
 import { systemClock } from '../core/ports/clock';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 registerAppScheme();
@@ -50,6 +54,7 @@ let exportService: ExportService | null = null;
 let zipExportService: ZipExportService | null = null;
 let syncService: SyncService | null = null;
 let historyService: HistoryService | null = null;
+let retentionRunner: RetentionRunner | null = null;
 
 /** Konczy sie, gdy start wypelnil indeks biblioteki z plikow; raport diagnostyczny na to czeka. */
 let startupSettled: Promise<void> = Promise.resolve();
@@ -76,6 +81,13 @@ function logImportError(error: unknown): void {
 function logExportError(error: unknown): void {
   log().error(
     '[cwm] nieoczekiwany blad eksportu:',
+    error instanceof Error ? error.name : 'nieznany',
+  );
+}
+
+function logRetentionError(error: unknown): void {
+  log().error(
+    '[cwm] nieoczekiwany blad czyszczenia historii:',
     error instanceof Error ? error.name : 'nieznany',
   );
 }
@@ -278,6 +290,31 @@ function start(): void {
       history: () => historyService,
       logUnexpected: logExportError,
     });
+    // Retencja (ADR 0056): serwis liczy osiagalnosc z biblioteki i indeksu, wiec jest dostepny
+    // dopiero, gdy oba sa otwarte; ustawienia dzialaja zawsze.
+    const retentionSettings = createRetentionSettings(userData);
+    const retentionService = createRetentionService(
+      {
+        userDataDir: userData,
+        library: () => libraryService,
+        indexStore: () => indexState.store,
+        onUnexpected: logRetentionError,
+      },
+      retentionSettings,
+    );
+    retentionRunner = new RetentionRunner({
+      settings: retentionSettings,
+      service: () =>
+        libraryService !== null && indexState.store instanceof SqliteIndexStore
+          ? retentionService
+          : null,
+      lock: writeLock,
+      logUnexpected: logRetentionError,
+      logInfo: (message) => {
+        log().info(message);
+      },
+    });
+    registerRetentionHandlers(registry, { runner: () => retentionRunner });
     registry.assertImplementedRegistered();
 
     // Okno powstaje PRZED otwarciem indeksu (ADR 0029 punkt 3). Odmowa startu
@@ -307,6 +344,9 @@ function start(): void {
         .catch(logExportError);
     }
 
+    // Czy plik indeksu istnial przed startem: nowy indeks ma pusty log, a pusty log nie jest dowodem,
+    // ze obiekty w store sa zbedne (ADR 0056).
+    const indexExisted = existsSync(dbPath);
     const result = startIndex({
       openStore: () => SqliteIndexStore.open(dbPath, { home }),
       // Nazwa pliku w kwarantannie (kontrakt `quarantinedAs`), nie katalog.
@@ -335,6 +375,17 @@ function start(): void {
         indexState = { store: indexState.store, info };
       })
       .finally(() => releaseStartup?.());
+
+    // Po wypelnieniu indeksu i zwolnieniu blokady: przebieg retencji, tylko przy wlaczonych limitach.
+    // Osobny lancuch, zeby raport diagnostyczny nie czekal na czyszczenie.
+    const retentionSkip: 'index-new' | 'index-rebuilt' | null = !indexExisted
+      ? 'index-new'
+      : result.info.outcome !== 'ready' || result.info.quarantinedAs !== undefined
+        ? 'index-rebuilt'
+        : null;
+    void startupSettled
+      .then(() => retentionRunner?.runAtStartup(retentionSkip))
+      .catch(() => undefined);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();

@@ -9,6 +9,15 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ### Added
 
+- Limit i czyszczenie historii oraz content store (ADR 0056). Na ekranie Diagnostyka nowa sekcja "Retencja historii i content
+  store": limity liczby wpisów, wieku wpisu (dni) i rozmiaru danych (MiB), każdy opcjonalny, domyślnie bez limitów. Akcja
+  "Wyczyść teraz" najpierw pokazuje podgląd (ile wpisów i ile danych zniknie), a usuwa dopiero po potwierdzeniu. Obiekt jest
+  usuwany wyłącznie wtedy, gdy nie prowadzi do niego żaden zachowany wpis historii, kopia zapisu ani element biblioteki;
+  wiek obiektu nie ma znaczenia. Biblioteka i ostatnia operacja, którą da się cofnąć, są zawsze chronione, a gdy aplikacja
+  nie potrafi odczytać któregoś elementu albo obiektu, nic nie usuwa. Przycięcie wpisów jest nieodwracalne, bo log operacji nie
+  wraca z plików (ADR 0014). 10 najnowszych wpisów zostaje zawsze. Włączenie albo zaostrzenie limitu wymaga obejrzenia podglądu i potwierdzenia. Przy włączonym limicie to samo czyszczenie wykonuje się przy starcie, ale nie na nowym, odbudowanym ani odłożonym do kwarantanny indeksie i nie wtedy, gdy usunęłoby ponad 90% wpisów; powód jest widoczny w Diagnostyce. Wynik trafia do Historii
+  jako wpis "Przycięcie historii". Katalog `backups/` nie jest czyszczony.
+
 - Trzeci adapter: Gemini CLI (ADR 0055). Aplikacja wykrywa `~/.gemini` (z `GEMINI_CLI_HOME`), importuje stamtąd skille,
   agentów, komendy (`commands/*.toml`), `GEMINI.md` i hooki z `settings.json`, a eksportuje je z planem, podglądem różnic
   i kopią zapasową tak samo jak do Claude Code i Codeksa. Narzędzie jest też celem synchronizacji i układem w archiwum
