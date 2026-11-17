@@ -1,11 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { IndexStartupInfo } from '../../src/core/model/index-health';
+import {
+  NO_RETENTION_LIMITS,
+  type RetentionReport,
+  type RetentionSettings,
+} from '../../src/core/model/retention';
 import { createUlidGenerator } from '../../src/core/ports/id-generator';
 import type { IndexStore } from '../../src/core/ports/index-store';
 import { LibraryService } from '../../src/core/services/library/library-service';
+import type { RetentionService } from '../../src/core/services/retention/retention-service';
 import type { IndexOpenFailure } from '../../src/main/bootstrap/index-startup';
 import { parseRebuildApplyRequest } from '../../src/main/ipc/handlers/diagnostics-validation';
+import { parseRetentionApplyRequest } from '../../src/main/ipc/handlers/retention-validation';
 import { BUSY_RESULT, IpcRegistry } from '../../src/main/ipc/registry';
 import {
   IndexRebuildService,
@@ -13,6 +20,7 @@ import {
   type IndexSnapshot,
   type QuarantineProbeResult,
 } from '../../src/main/services/index-rebuild';
+import { RetentionRunner } from '../../src/main/services/retention-runner';
 import { OperationLock } from '../../src/main/services/write-lock';
 import {
   FakeClock,
@@ -534,5 +542,134 @@ describe('kanaly nie przyjmuja sciezki (ADR 0030)', () => {
       error: { code: 'invalid-request' },
     });
     expect(h.quarantine).not.toHaveBeenCalled();
+  });
+});
+
+describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)', () => {
+  const report: RetentionReport = {
+    applied: true,
+    blocked: null,
+    entriesBefore: 3,
+    entriesRemoved: 1,
+    objectsBefore: 5,
+    objectsRemoved: 2,
+    bytesBefore: 100,
+    bytesFreed: 40,
+    sizeLimitUnmet: false,
+    objectsFailed: 0,
+    objectsSkipped: 0,
+  };
+
+  function retention(
+    options: { service?: 'missing' | 'throws'; settings?: RetentionSettings } = {},
+  ) {
+    let stored: RetentionSettings = options.settings ?? NO_RETENTION_LIMITS;
+    const run = vi.fn(() =>
+      options.service === 'throws'
+        ? Promise.reject(new Error('sekret z /home/acme/objects'))
+        : Promise.resolve(report),
+    );
+    const lock = new OperationLock();
+    const runner = new RetentionRunner({
+      settings: {
+        load: () => Promise.resolve(stored),
+        save: (next) => {
+          stored = next;
+          return Promise.resolve();
+        },
+      },
+      service: () =>
+        options.service === 'missing' ? null : ({ run } as unknown as RetentionService),
+      lock,
+    });
+    return { runner, run, lock, stored: () => stored };
+  }
+
+  it('wykonanie bez potwierdzenia nie startuje, a podglad nie wymaga potwierdzenia', async () => {
+    const h = retention();
+    expect(await h.runner.apply(false)).toMatchObject({
+      ok: false,
+      error: { code: 'confirmation-required' },
+    });
+    expect(h.run).not.toHaveBeenCalled();
+
+    expect(await h.runner.preview()).toMatchObject({ ok: true, value: { entriesRemoved: 1 } });
+    expect(h.run).toHaveBeenCalledWith({ apply: false });
+    expect(await h.runner.apply(true)).toMatchObject({ ok: true });
+    expect(h.run).toHaveBeenLastCalledWith({ apply: true });
+  });
+
+  it('trwajacy zapis blokuje czyszczenie, a czyszczenie blokuje zapisy i zwalnia blokade po koncu', async () => {
+    const h = retention();
+    const writer = h.lock.tryEnterWrite();
+    expect(await h.runner.apply(true)).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(h.run).not.toHaveBeenCalled();
+    writer?.();
+
+    let duringRun: (() => void) | null = null;
+    h.run.mockImplementationOnce(() => {
+      duringRun = h.lock.tryEnterWrite();
+      return Promise.resolve(report);
+    });
+    await h.runner.apply(true);
+    expect(duringRun).toBeNull();
+    expect(h.lock.tryEnterWrite()).not.toBeNull();
+  });
+
+  it('brak serwisu to unavailable, a blad serwisu nie wycieka tresci i zwalnia blokade', async () => {
+    expect(await retention({ service: 'missing' }).runner.preview()).toMatchObject({
+      ok: false,
+      error: { code: 'unavailable' },
+    });
+
+    const h = retention({ service: 'throws' });
+    const result = await h.runner.apply(true);
+    expect(result).toMatchObject({ ok: false, error: { code: 'internal' } });
+    expect(JSON.stringify(result)).not.toContain('sekret');
+    expect(h.lock.tryEnterWrite()).not.toBeNull();
+  });
+
+  it('ustawienia: zakres jest sprawdzany w main, a nieznane pola przepadaja', async () => {
+    const h = retention();
+    expect(await h.runner.setSettings({ maxEntries: 9 })).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-request' },
+    });
+    expect(await h.runner.setSettings({ maxAgeDays: 1.5 })).toMatchObject({ ok: false });
+    expect(await h.runner.setSettings({ maxStoreMiB: '100' })).toMatchObject({ ok: false });
+    expect(h.stored()).toEqual(NO_RETENTION_LIMITS);
+
+    const saved = await h.runner.setSettings({
+      maxEntries: 10,
+      maxAgeDays: null,
+      maxStoreMiB: 1_048_576,
+      path: '/etc',
+    });
+    expect(saved).toEqual({
+      ok: true,
+      value: { maxEntries: 10, maxAgeDays: null, maxStoreMiB: 1_048_576 },
+    });
+    expect(h.stored()).toEqual({ maxEntries: 10, maxAgeDays: null, maxStoreMiB: 1_048_576 });
+    expect(await h.runner.setSettings({ maxEntries: 1_000_001 })).toMatchObject({ ok: false });
+  });
+
+  it('przebieg przy starcie rusza tylko przy wlaczonym limicie', async () => {
+    const off = retention();
+    await off.runner.runAtStartup();
+    expect(off.run).not.toHaveBeenCalled();
+
+    const on = retention({ settings: { ...NO_RETENTION_LIMITS, maxAgeDays: 90 } });
+    await on.runner.runAtStartup();
+    expect(on.run).toHaveBeenCalledWith({ apply: true });
+  });
+
+  it('parser wykonania gubi wszystko poza potwierdzeniem', () => {
+    expect(parseRetentionApplyRequest({ confirmed: true, hashes: ['x'], path: '/' })).toEqual({
+      ok: true,
+      value: { confirmed: true },
+    });
+    expect(parseRetentionApplyRequest({})).toEqual({ ok: true, value: { confirmed: false } });
+    expect(parseRetentionApplyRequest(null).ok).toBe(false);
+    expect(parseRetentionApplyRequest([]).ok).toBe(false);
   });
 });

@@ -12,6 +12,7 @@ const KIND_LABEL: Readonly<Record<string, string>> = {
   'export-zip': 'Eksport do ZIP',
   sync: 'Synchronizacja',
   rollback: 'Cofnięcie',
+  'prune-history': 'Przycięcie historii',
 };
 
 export function historyKindLabel(kind: string): string {

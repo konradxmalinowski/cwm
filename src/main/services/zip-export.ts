@@ -103,7 +103,10 @@ export class ZipSaveService implements ZipPort {
       }
       const release = this.deps.enterWrite();
       if (release === null) {
-        return err('busy', 'Trwa odbudowa indeksu. Spróbuj ponownie za chwilę.');
+        return err(
+          'busy',
+          'Trwa odbudowa indeksu albo czyszczenie historii. Spróbuj ponownie za chwilę.',
+        );
       }
       try {
         await this.deps.writeFile(target, payload.bytes);

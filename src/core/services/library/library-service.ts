@@ -34,6 +34,7 @@ import {
 } from '../../ports/store-failure';
 import type { LibraryIndex, LibraryIndexEntry } from '../../ports/library-index';
 import type { ObjectStore } from '../../ports/object-store';
+import type { RetentionRoots } from '../../ports/retention';
 import type { OperationLog, OperationRecord, OperationState } from '../../ports/operation-log';
 import { sha256Bytes, sha256Text } from '../normalization/hash';
 import { detectLineEnding, normalizeToLf } from '../normalization/line-endings';
@@ -355,6 +356,34 @@ export class LibraryService {
 
   async list(): Promise<ListResult> {
     return this.exclusive(() => this.listUnlocked());
+  }
+
+  /**
+   * Korzenie osiagalnosci dla retencji content store (ADR 0056): rekord wersji, na ktory wskazuje
+   * `item.json` kazdego elementu, takze niespojnego (przywrocenie wersji potrzebuje go w `objects/`).
+   * `unreadable` liczy elementy, ktorych wskaznika nie da sie ustalic; przy wartosci wiekszej niz
+   * zero retencja niczego nie usuwa, bo nie potrafi wykazac, co biblioteka jeszcze potrzebuje.
+   */
+  async retentionRoots(): Promise<RetentionRoots> {
+    return this.exclusive(async () => {
+      const hashes = new Set<Sha256>();
+      let unreadable = 0;
+      for (const name of await this.listNames()) {
+        if (!isItemId(name)) continue;
+        try {
+          const bytes = await this.deps.store.readItemJson(name);
+          if (bytes === null) {
+            unreadable += 1;
+            continue;
+          }
+          const { versionRecordHash } = decodeItemJson(bytes, name);
+          if (versionRecordHash !== null) hashes.add(versionRecordHash);
+        } catch {
+          unreadable += 1;
+        }
+      }
+      return { hashes: [...hashes], unreadable };
+    });
   }
 
   /**

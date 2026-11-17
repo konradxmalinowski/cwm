@@ -724,3 +724,40 @@ describe('generator ULID', () => {
     expect(isItemId('01JAAAAAAAAAAAAAAAAAAAAAAA')).toBe(true);
   });
 });
+
+describe('retentionRoots (ADR 0056)', () => {
+  it('zwraca rekord wersji kazdego elementu, a ten rekord lezy w content store', async () => {
+    const h = createHarness();
+    await h.service.create(draft({ slug: 'acme-a' }));
+    await h.service.create(draft({ slug: 'acme-b' }));
+
+    const roots = await h.service.retentionRoots();
+
+    expect(roots.unreadable).toBe(0);
+    expect(roots.hashes).toHaveLength(2);
+    for (const hash of roots.hashes) expect(h.objects.objects.has(hash)).toBe(true);
+  });
+
+  it('element z nieczytelnym item.json jest liczony jako nieczytelny, a pozostale zostaja', async () => {
+    const h = createHarness();
+    const { item: broken } = await h.service.create(draft({ slug: 'acme-a' }));
+    const { item: fine } = await h.service.create(draft({ slug: 'acme-b' }));
+    const files = h.store.items.get(broken.id);
+    if (files === undefined) throw new Error('brak elementu w fake');
+    h.store.items.set(broken.id, { ...files, itemJson: bytes('to nie jest json') });
+
+    const roots = await h.service.retentionRoots();
+
+    expect(roots.unreadable).toBe(1);
+    expect(roots.hashes).toHaveLength(1);
+    expect(fine.id).not.toBe(broken.id);
+  });
+
+  it('blad odczytu item.json to element nieczytelny, nie wyjatek', async () => {
+    const h = createHarness();
+    const { item } = await h.service.create(draft());
+    h.store.unreadableItemJson.set(item.id, new Error('EIO'));
+
+    expect(await h.service.retentionRoots()).toEqual({ hashes: [], unreadable: 1 });
+  });
+});

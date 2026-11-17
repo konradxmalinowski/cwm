@@ -30,6 +30,10 @@ export const IPC_CHANNELS = [
   'diagnostics:rebuild-index-apply',
   'diagnostics:report-preview',
   'diagnostics:report-save',
+  'retention:get',
+  'retention:set',
+  'retention:preview',
+  'retention:apply',
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];

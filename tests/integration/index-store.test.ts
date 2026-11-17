@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import type { ItemId, Sha256 } from '../../src/core/model/item';
 import {
   IndexStoreOpenError,
   SCHEMA_VERSION,
@@ -243,6 +244,71 @@ describe('rozpoznanie przyczyny awarii indeksu', () => {
       ).toBe('not-writable');
     } finally {
       chmodSync(locked, 0o700);
+    }
+  });
+});
+
+describe('log operacji dla retencji (ADR 0056)', () => {
+  const itemId = '01JAAAAAAAAAAAAAAAAAAAAAAA' as ItemId;
+  const hashA = 'a'.repeat(64) as Sha256;
+  const hashB = 'b'.repeat(64) as Sha256;
+  const state = (revision: number, versionHash: Sha256) => ({
+    revision,
+    contentHash: hashA,
+    versionHash,
+  });
+
+  it('rows oddaje wiersze rosnaco z hashami wersji, a deleteRows usuwa dokladnie wskazane', async () => {
+    const tree = createTempTree('acme-db-');
+    const store = SqliteIndexStore.open(join(tree, 'index.db'), {
+      home: tree,
+      schemaFile: SCHEMA_FILE,
+    });
+    try {
+      const log = store.operationLog();
+      const base = { itemId, itemKind: 'skill' as const, slug: 'acme-review' };
+      await log.append({
+        ...base,
+        operation: 'create',
+        at: '2026-11-01T00:00:00.000Z',
+        before: null,
+        after: state(1, hashA),
+      });
+      await log.append({
+        ...base,
+        operation: 'update',
+        at: '2026-11-02T00:00:00.000Z',
+        before: state(1, hashA),
+        after: state(2, hashB),
+      });
+      await log.append({
+        ...base,
+        operation: 'export',
+        at: '2026-11-03T00:00:00.000Z',
+        before: null,
+        after: null,
+        tool: 'codex',
+        backupId: 'b1',
+        reverts: 'b0',
+      });
+
+      const retention = store.retentionLog();
+      const rows = await retention.rows();
+      expect(rows.map((r) => r.seq)).toEqual([1, 2, 3]);
+      expect(rows[0]?.versionHashes).toEqual([hashA]);
+      expect(rows[1]?.versionHashes).toEqual([hashA, hashB]);
+      expect(rows[2]).toMatchObject({
+        operation: 'export',
+        backupId: 'b1',
+        reverts: 'b0',
+        versionHashes: [],
+      });
+
+      expect(await retention.deleteRows([1, 2, 99])).toBe(2);
+      expect((await retention.rows()).map((r) => r.seq)).toEqual([3]);
+      expect(await retention.deleteRows([])).toBe(0);
+    } finally {
+      store.close();
     }
   });
 });

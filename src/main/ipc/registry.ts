@@ -29,7 +29,7 @@ export const BUSY_RESULT = {
   ok: false,
   error: {
     code: 'busy',
-    message: 'Trwa odbudowa indeksu. Spróbuj ponownie za chwilę.',
+    message: 'Trwa odbudowa indeksu albo czyszczenie historii. Spróbuj ponownie za chwilę.',
   },
 } as const;
 

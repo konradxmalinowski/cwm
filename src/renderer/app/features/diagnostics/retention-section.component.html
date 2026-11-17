@@ -1,0 +1,232 @@
+<section class="section" aria-labelledby="diag-retention" data-testid="retention-section">
+  <h2 class="section__title" id="diag-retention">Retencja historii i content store</h2>
+  <p class="notice__text">
+    Historia trzyma pełne treści każdej wersji, więc content store tylko rośnie. Tu ustawisz, ile
+    wpisów i jak długo zachować. Obiekt znika wyłącznie wtedy, gdy nie prowadzi do niego żaden
+    zachowany wpis ani element biblioteki. Biblioteka i ostatnia operacja, którą da się cofnąć, są
+    zawsze chronione. Pole puste znaczy brak limitu.
+  </p>
+
+  @let l = load();
+  @if (l.status === 'loading') {
+    <p role="status" data-testid="retention-loading">Odczytuję ustawienia retencji.</p>
+  } @else if (l.status === 'error') {
+    <div class="notice" role="alert" data-testid="retention-load-error">
+      <p class="notice__text"><span class="notice__label">Błąd.</span> {{ l.message }}</p>
+    </div>
+    <p class="row-actions">
+      <button type="button" class="btn" (click)="reload()">Spróbuj ponownie</button>
+    </p>
+  } @else {
+    <div class="form" data-testid="retention-form">
+      @for (field of fields; track field) {
+        @let m = meta[field];
+        <div class="field">
+          <label class="field__label" [attr.for]="m.id">{{ m.label }}</label>
+          <input
+            class="control"
+            type="text"
+            inputmode="numeric"
+            autocomplete="off"
+            spellcheck="false"
+            [id]="m.id"
+            [attr.data-testid]="m.id"
+            [value]="form()[field]"
+            [attr.aria-invalid]="errors()[field] ? 'true' : null"
+            [attr.aria-describedby]="m.id + '-note'"
+            (input)="onInput(field, $any($event.target).value)"
+          />
+          @if (errors()[field]; as message) {
+            <p class="field__error" [id]="m.id + '-note'"><strong>Błąd:</strong> {{ message }}</p>
+          } @else {
+            <p class="field__hint" [id]="m.id + '-note'">
+              {{ m.hint }} Zakres: {{ bounds[field].min }} do {{ bounds[field].max }}.
+            </p>
+          }
+        </div>
+      }
+    </div>
+    <p class="row-actions">
+      <button
+        type="button"
+        class="btn"
+        data-testid="retention-save"
+        [disabled]="!dirty() || !parsed().ok || save().status === 'saving'"
+        (click)="saveSettings()"
+      >
+        {{ save().status === 'saving' ? 'Zapisuję…' : 'Zapisz ustawienia' }}
+      </button>
+    </p>
+    @let s = save();
+    @if (s.status === 'saved') {
+      <p role="status" data-testid="retention-saved">
+        Ustawienia zapisane.
+        @if (automatic()) {
+          Przy każdym starcie aplikacja przytnie historię i wyczyści store według tych limitów.
+        } @else {
+          Bez limitów aplikacja niczego nie przycina.
+        }
+      </p>
+    } @else if (s.status === 'error') {
+      <div class="notice" role="alert" data-testid="retention-save-error">
+        <p class="notice__text">
+          <span class="notice__label">Błąd.</span> Nie zapisano ustawień. {{ s.message }}
+        </p>
+      </div>
+    }
+
+    <h3 class="field__label" id="retention-clean">Wyczyść teraz</h3>
+    @let r = run();
+    @if (r.status === 'idle') {
+      <p class="notice__text">
+        Podgląd pokazuje, ile wpisów i danych zniknie przy zapisanych ustawieniach, i niczego nie
+        zmienia. Bez limitów czyszczenie usuwa tylko obiekty, do których nic już nie prowadzi.
+      </p>
+      <p class="row-actions">
+        <button
+          type="button"
+          class="btn"
+          data-testid="retention-preview"
+          [disabled]="dirty()"
+          (click)="openPreview()"
+        >
+          Sprawdź, ile zwolni
+        </button>
+      </p>
+      @if (dirty()) {
+        <p class="hints">Zapisz poprawne ustawienia, żeby sprawdzić, ile zwolni.</p>
+      }
+    } @else if (r.status === 'working') {
+      <p role="status" data-testid="retention-working">Liczę, co można usunąć.</p>
+    } @else if (r.status === 'preview' || r.status === 'applying') {
+      @let p = r.report;
+      @if (p.blocked !== null) {
+        <div class="notice" role="note" data-testid="retention-blocked">
+          <p class="notice__text">
+            <span class="notice__label">Zablokowane.</span> {{ blockedText(p.blocked) }}
+          </p>
+        </div>
+        <p class="row-actions">
+          <button type="button" class="btn" (click)="cancel()">Zamknij</button>
+          <button type="button" class="btn" (click)="openPreview()">Sprawdź ponownie</button>
+        </p>
+      } @else {
+        <div data-testid="retention-plan">
+          <dl class="report__grid">
+            <dt>Wpisy historii</dt>
+            <dd data-testid="retention-plan-entries">
+              {{ p.entriesRemoved }} do usunięcia z {{ p.entriesBefore }}
+            </dd>
+            <dt>Obiekty w store</dt>
+            <dd data-testid="retention-plan-objects">
+              {{ p.objectsRemoved }} do usunięcia z {{ p.objectsBefore }}
+            </dd>
+            <dt>Zwolni</dt>
+            <dd data-testid="retention-plan-bytes">
+              {{ formatBytes(p.bytesFreed) }} z {{ formatBytes(p.bytesBefore) }}
+            </dd>
+          </dl>
+          @if (p.sizeLimitUnmet) {
+            <p class="notice__text" data-testid="retention-limit-unmet">
+              Limit rozmiaru nie zostanie osiągnięty: reszta jest potrzebna bibliotece albo
+              ostatniej operacji do cofnięcia.
+            </p>
+          }
+          @if (p.objectsSkipped > 0) {
+            <p class="notice__text">
+              Pominięte wpisy w katalogu store (dowiązania lub obce pliki): {{ p.objectsSkipped }}.
+              Aplikacja ich nie rusza.
+            </p>
+          }
+          @if (!hasChanges(p)) {
+            <p class="notice__text" data-testid="retention-nothing">
+              Nie ma nic do usunięcia przy tych ustawieniach.
+            </p>
+            <p class="row-actions">
+              <button type="button" class="btn" (click)="cancel()">Zamknij</button>
+            </p>
+          } @else {
+            <label class="check">
+              <input
+                type="checkbox"
+                data-testid="retention-confirm"
+                [checked]="r.status === 'preview' && r.acknowledged"
+                [disabled]="r.status === 'applying'"
+                (change)="acknowledge($any($event.target).checked)"
+              />
+              <span>
+                Rozumiem, że usunięte wpisy historii i obiekty nie wrócą. Cofnięcie starszych
+                operacji z przyciętej historii nie będzie już możliwe.
+              </span>
+            </label>
+            <p class="row-actions">
+              <button
+                type="button"
+                class="btn btn--primary"
+                data-testid="retention-apply"
+                [disabled]="r.status !== 'preview' || !r.acknowledged"
+                (click)="apply()"
+              >
+                {{ r.status === 'applying' ? 'Czyszczę…' : 'Wyczyść teraz' }}
+              </button>
+              <button
+                type="button"
+                class="btn"
+                [disabled]="r.status === 'applying'"
+                (click)="cancel()"
+              >
+                Anuluj
+              </button>
+            </p>
+            @if (r.status === 'applying') {
+              <p role="status">Przycinam historię i czyszczę content store.</p>
+            }
+          }
+        </div>
+      }
+    } @else if (r.status === 'done') {
+      @let d = r.report;
+      <div
+        class="notice notice--info"
+        role="status"
+        data-testid="retention-result"
+        [attr.data-blocked]="d.blocked"
+      >
+        <p class="notice__text">
+          <span class="notice__label">{{
+            d.blocked === null ? 'Wyczyszczono.' : 'Zablokowane.'
+          }}</span>
+          @if (d.blocked === null) {
+            Usunięto wpisów: {{ d.entriesRemoved }}, obiektów: {{ d.objectsRemoved }}, zwolniono
+            {{ formatBytes(d.bytesFreed) }}.
+          } @else {
+            {{ blockedText(d.blocked) }}
+          }
+        </p>
+        @if (d.objectsFailed > 0) {
+          <p class="notice__text">
+            Nie udało się usunąć plików: {{ d.objectsFailed }}. Nic z nich nie jest już potrzebne;
+            następne czyszczenie je usunie.
+          </p>
+        }
+      </div>
+      <p class="row-actions">
+        <button type="button" class="btn" (click)="cancel()">Zamknij</button>
+      </p>
+    } @else {
+      <div class="notice" role="alert" data-testid="retention-error">
+        <p class="notice__text">
+          <span class="notice__label">Błąd.</span>
+          {{
+            r.step === 'preview'
+              ? 'Nie udało się policzyć. '
+              : 'Czyszczenie nie zostało wykonane. '
+          }}{{ r.message }}
+        </p>
+      </div>
+      <p class="row-actions">
+        <button type="button" class="btn" (click)="cancel()">Zamknij</button>
+      </p>
+    }
+  }
+</section>

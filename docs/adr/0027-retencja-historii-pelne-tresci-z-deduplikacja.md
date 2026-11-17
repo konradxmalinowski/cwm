@@ -5,6 +5,8 @@ Data: 2026-10-20
 
 Nazwa produktu zmieniona przez ADR 0035: kopie zapasowe zapisują od v0.2.0 `format: 'cwm-backup'`; odczyt przyjmuje też `uasm-backup` w wersji 1, zapisany przez v0.1.0.
 
+Limit rozmiaru i czyszczenie, odroczone w tym ADR, są rozstrzygnięte w ADR 0056; wymóg liczenia referencji z tego ADR pozostaje obowiązujący.
+
 ## Kontekst
 
 Wymagania: przeglądanie historii zmian, porównywanie wersji, przywracanie poprzedniej wersji,
