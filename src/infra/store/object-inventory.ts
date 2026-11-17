@@ -90,6 +90,9 @@ export class FsObjectInventory implements ObjectInventory {
     if (!info.isFile()) {
       throw new ObjectStoreError('not-regular-file', 'wpis content store ma zly typ');
     }
+    // Znane ograniczenie (zaakceptowane): `lstat` katalogu <aa> i `unlink` nie sa atomowe. Podmiana
+    // katalogu na dowiazanie w tym oknie wymaga zapisu w userData, a skutek jest ograniczony do
+    // pliku o nazwie z 64-znakowego hasha.
     try {
       await unlink(path);
     } catch (error: unknown) {

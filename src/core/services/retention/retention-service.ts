@@ -84,6 +84,10 @@ export class RetentionService {
   /**
    * Suchy przebieg (`apply: false`) liczy to samo co wykonanie, ale niczego nie zmienia.
    * Obiekty osierocone przez wczesniej przerwany przebieg sa liczone tak samo jak inne bez odwolan.
+   *
+   * Znane ograniczenie (zaakceptowane): wolajacy trzyma blokade wylaczna przez caly przebieg, tez
+   * podczas odczytu korzeni, wiec przy duzej historii zapisy dostaja `busy` przez dluzszy czas.
+   * Raport postepu albo limit czasu to otwarta sprawa.
    */
   async run(options: RetentionRunOptions): Promise<RetentionReport> {
     const settings = options.settings ?? (await this.deps.settings.load());
