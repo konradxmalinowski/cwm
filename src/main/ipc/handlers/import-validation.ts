@@ -10,6 +10,8 @@ const BAD_SHAPE = 'Nieprawidłowe żądanie.';
 const MAX_ID = 128;
 const MAX_ROOTS = 32;
 const MAX_CANDIDATES = 5000;
+/** Zapas ponad 64 znaki slugu: dluzsza nazwe odrzuci walidator slugow z czytelnym komunikatem, a nie limit ladunku. */
+const MAX_RENAME_LENGTH = 256;
 
 function fail<T>(field?: string): Parsed<T> {
   return {
@@ -39,6 +41,26 @@ export function parseScanRequest(payload: unknown): Parsed<ImportScanRequest> {
   return { ok: true, value: { rootIds } };
 }
 
+/**
+ * Mapa `candidateId` na nowy slug. Obiekt bez prototypu, zeby klucz `__proto__` z ladunku nie
+ * zmienil jego prototypu; klucze musza nalezec do wybranych kandydatow. Sam slug waliduje serwis,
+ * bo tylko on zna biblioteke i reszte partii.
+ */
+function renameMap(value: unknown, selected: ReadonlySet<string>): Record<string, string> | null {
+  if (!isRecord(value)) return null;
+  const entries = Object.entries(value);
+  if (entries.length > MAX_CANDIDATES) return null;
+  const out: Record<string, string> = Object.create(null) as Record<string, string>;
+  for (const [candidateId, slug] of entries) {
+    if (candidateId.length === 0 || candidateId.length > MAX_ID || !selected.has(candidateId)) {
+      return null;
+    }
+    if (typeof slug !== 'string' || slug.length > MAX_RENAME_LENGTH) return null;
+    out[candidateId] = slug;
+  }
+  return out;
+}
+
 export function parseApplyRequest(payload: unknown): Parsed<ImportApplyRequest> {
   if (!isRecord(payload)) return fail();
   const { scanToken } = payload;
@@ -55,6 +77,11 @@ export function parseApplyRequest(payload: unknown): Parsed<ImportApplyRequest> 
     const list = idList(raw, MAX_CANDIDATES);
     if (list === null) return fail(field);
     value[field] = list;
+  }
+  if (payload['renames'] !== undefined) {
+    const renames = renameMap(payload['renames'], new Set(candidateIds));
+    if (renames === null) return fail('renames');
+    value.renames = renames;
   }
   return { ok: true, value };
 }

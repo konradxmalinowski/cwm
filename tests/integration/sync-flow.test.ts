@@ -122,6 +122,23 @@ describe('synchronizacja na plikach', () => {
     s.index.close();
   });
 
+  it('historia: utworzenie z przemianowaniem pokazuje nazwe ze zrodla', async () => {
+    const s = await exported();
+    await s.index.operationLog().append({
+      operation: 'create',
+      itemId: s.item.id,
+      itemKind: 'skill',
+      slug: 'acme-case-2',
+      at: '2026-11-17T10:00:00.000Z',
+      before: null,
+      after: null,
+      note: 'slug-z=Acme-Case',
+    });
+    const created = (await s.history.list()).find((e) => e.summary.includes('acme-case-2'));
+    expect(created?.summary).toBe('Utworzono element acme-case-2 (nazwa ze źródła: Acme-Case)');
+    s.index.close();
+  });
+
   it('rollback przywraca stan sprzed eksportu bajt w bajt, a cofniecie rollbacku eksport', async () => {
     const s = await exported();
     const written = readFileSync(s.skillFile, 'utf8');

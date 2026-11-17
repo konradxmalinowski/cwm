@@ -537,3 +537,168 @@ describe('ImportService.apply', () => {
     ).rejects.toBeInstanceOf(ImportError);
   });
 });
+
+describe('ImportService.apply: nowy slug dla konfliktu (ADR 0017, addendum)', () => {
+  /** Biblioteka ma `acme-case`, skan przynosi `Acme-Case` jako konflikt i `acme-other` jako nowy. */
+  async function conflictSetup() {
+    const h = setup({
+      'r-claude': [
+        candidate({ slug: 'Acme-Case', root: claude, body: 'tresc konfliktu\n' }),
+        candidate({ slug: 'acme-other', root: claude }),
+      ],
+    });
+    const existing = await h.library.create(candidate({ slug: 'acme-case', root: claude }).draft);
+    const scan = await h.service.scan(['r-claude']);
+    expect(scan.candidates.map((c) => c.status)).toEqual(['conflict', 'new']);
+    return { h, scan, existing };
+  }
+
+  it('zapisuje konflikt pod nowym slugiem, nazwa ze zrodla trafia do aliasow i do historii', async () => {
+    const { h, scan } = await conflictSetup();
+    const report = await h.service.apply({
+      scanToken: scan.scanToken,
+      candidateIds: ['cand-1'],
+      renames: { 'cand-1': 'acme-case-2' },
+    });
+    expect(report.imported).toHaveLength(1);
+    expect(report.skipped).toEqual([]);
+    expect(report.failed).toEqual([]);
+
+    const items = (await h.library.list()).items;
+    const renamed = items.find((i) => i.identity.slug === 'acme-case-2');
+    expect(renamed?.identity.aliases).toEqual(['Acme-Case']);
+    expect(renamed?.content.body).toBe('tresc konfliktu\n');
+    expect(items.map((i) => i.identity.slug).sort()).toEqual(['acme-case', 'acme-case-2']);
+
+    const record = h.log.records.at(-1);
+    expect(record).toMatchObject({
+      operation: 'create',
+      slug: 'acme-case-2',
+      note: 'slug-z=Acme-Case',
+    });
+  });
+
+  it('skan niesie zajete nazwy biblioteki do zywej walidacji w kreatorze', async () => {
+    const { scan } = await conflictSetup();
+    expect(scan.librarySlugs).toEqual([{ kind: 'skill', slug: 'acme-case' }]);
+  });
+
+  it('bez wpisu w renames konflikt nadal jest pomijany', async () => {
+    const { h, scan } = await conflictSetup();
+    const report = await h.service.apply({ scanToken: scan.scanToken, candidateIds: ['cand-1'] });
+    expect(report.skipped).toEqual([{ candidateId: 'cand-1', reason: 'conflict' }]);
+    expect(report.imported).toEqual([]);
+  });
+
+  it('main waliduje nazwe od nowa: format, nazwa zastrzezona Windowsa i kolizja z biblioteka', async () => {
+    const { h, scan } = await conflictSetup();
+    const tries: [string, string][] = [
+      ['zle nazwy!', 'slug-invalid'],
+      ['a'.repeat(65), 'slug-invalid'],
+      ['', 'slug-invalid'],
+      ['con', 'slug-reserved'],
+      ['ACME-CASE', 'slug-collision'],
+    ];
+    for (const [slug, code] of tries) {
+      const report = await h.service.apply({
+        scanToken: scan.scanToken,
+        candidateIds: ['cand-1'],
+        renames: { 'cand-1': slug },
+      });
+      expect(report.failed, slug).toMatchObject([{ candidateId: 'cand-1', code }]);
+      expect(report.imported, slug).toEqual([]);
+    }
+    expect((await h.library.list()).items).toHaveLength(1);
+    // Odrzucona nazwa nie zuzywa kandydata: poprawna wchodzi w tym samym skanie.
+    const ok = await h.service.apply({
+      scanToken: scan.scanToken,
+      candidateIds: ['cand-1'],
+      renames: { 'cand-1': 'acme-case-2' },
+    });
+    expect(ok.imported).toHaveLength(1);
+  });
+
+  it('nowa nazwa nie moze zajac slugu kandydata z tej samej partii, niezaleznie od kolejnosci', async () => {
+    const { h, scan } = await conflictSetup();
+    const report = await h.service.apply({
+      scanToken: scan.scanToken,
+      candidateIds: ['cand-1', 'cand-2'],
+      renames: { 'cand-1': 'ACME-OTHER' },
+    });
+    expect(report.failed).toMatchObject([{ candidateId: 'cand-1', code: 'slug-collision' }]);
+    expect(report.imported.map((i) => i.candidateId)).toEqual(['cand-2']);
+  });
+
+  it('dwa konflikty z ta sama nowa nazwa: pierwszy wchodzi, drugi dostaje blad kolizji', async () => {
+    const h = setup({
+      'r-claude': [
+        candidate({ slug: 'Acme-Case', root: claude }),
+        candidate({ slug: 'ACME-CASE', root: claude, body: 'inna\n' }),
+        candidate({ slug: 'acme-case', root: claude, body: 'jeszcze inna\n' }),
+      ],
+    });
+    const scan = await h.service.scan(['r-claude']);
+    expect(scan.candidates.map((c) => c.status)).toEqual(['new', 'conflict', 'conflict']);
+    const report = await h.service.apply({
+      scanToken: scan.scanToken,
+      candidateIds: ['cand-2', 'cand-3'],
+      renames: { 'cand-2': 'acme-nowy', 'cand-3': 'Acme-Nowy' },
+    });
+    expect(report.imported.map((i) => i.candidateId)).toEqual(['cand-2']);
+    expect(report.failed).toMatchObject([{ candidateId: 'cand-3', code: 'slug-collision' }]);
+  });
+
+  it('przemianowanie dziala tez dla konfliktu w obrebie skanu (drugi root)', async () => {
+    const body = 'wspolna\n';
+    const h = setup(
+      {
+        'r-claude': [candidate({ slug: 'acme-shared', root: claude, body })],
+        'r-codex': [candidate({ slug: 'Acme-Shared', root: codexMain, body })],
+      },
+      [claude, codexMain],
+    );
+    const scan = await h.service.scan(['r-claude', 'r-codex']);
+    const report = await h.service.apply({
+      scanToken: scan.scanToken,
+      candidateIds: ['cand-1', 'cand-2'],
+      renames: { 'cand-2': 'acme-shared-codex' },
+    });
+    expect(report.imported).toHaveLength(2);
+    expect((await h.library.list()).items.map((i) => i.identity.slug).sort()).toEqual([
+      'acme-shared',
+      'acme-shared-codex',
+    ]);
+  });
+
+  it('rename dla kandydata, ktory nie jest konfliktem, jest odrzucony', async () => {
+    const { h, scan } = await conflictSetup();
+    const report = await h.service.apply({
+      scanToken: scan.scanToken,
+      candidateIds: ['cand-2'],
+      renames: { 'cand-2': 'acme-inna-nazwa' },
+    });
+    expect(report.skipped).toEqual([{ candidateId: 'cand-2', reason: 'rename-not-allowed' }]);
+    expect(report.imported).toEqual([]);
+  });
+
+  it('przemianowany konflikt z sekretem nadal wymaga potwierdzenia', async () => {
+    const h = setup({
+      'r-claude': [
+        candidate({
+          slug: 'Acme-Secret',
+          root: claude,
+          assets: [{ relPath: 'conf.txt', text: `api_key: ${'Zq8'.repeat(8)}1\n` }],
+        }),
+      ],
+    });
+    await h.library.create(candidate({ slug: 'acme-secret', root: claude }).draft);
+    const scan = await h.service.scan(['r-claude']);
+    expect(scan.candidates[0]?.secrets.length).toBeGreaterThan(0);
+    const blocked = await h.service.apply({
+      scanToken: scan.scanToken,
+      candidateIds: ['cand-1'],
+      renames: { 'cand-1': 'acme-secret-2' },
+    });
+    expect(blocked.skipped).toEqual([{ candidateId: 'cand-1', reason: 'secrets-not-confirmed' }]);
+  });
+});

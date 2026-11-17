@@ -1,4 +1,11 @@
-import type { ItemDraft, LibraryItem, SecretFinding, Sha256, ToolId } from '../../model/item';
+import type {
+  ItemDraft,
+  ItemKind,
+  LibraryItem,
+  SecretFinding,
+  Sha256,
+  ToolId,
+} from '../../model/item';
 import { LibraryError } from '../../model/library-errors';
 import type { Clock } from '../../ports/clock';
 import { cryptoRandomBytes } from '../../ports/id-generator';
@@ -12,6 +19,7 @@ import type {
 } from '../../ports/tool-adapter';
 import type { SourceReader } from '../../ports/source-reader';
 import type { LibraryService } from '../library/library-service';
+import { validateSlug } from '../library/validate';
 import { sha256Bytes, sha256Text } from '../normalization/hash';
 import { normalizeToLf } from '../normalization/line-endings';
 import {
@@ -46,10 +54,17 @@ export interface ScannedSkip extends ImportSkip {
   readonly rootLabel: string;
 }
 
+export interface LibrarySlug {
+  readonly kind: ItemKind;
+  readonly slug: string;
+}
+
 export interface ScanReport {
   readonly scanToken: string;
   readonly candidates: readonly ScannedCandidate[];
   readonly skipped: readonly ScannedSkip[];
+  /** Zajete nazwy w bibliotece w chwili skanu: kreator waliduje na nich nowy slug na zywo. */
+  readonly librarySlugs: readonly LibrarySlug[];
 }
 
 export interface ApplyRequest {
@@ -57,6 +72,11 @@ export interface ApplyRequest {
   readonly candidateIds: readonly string[];
   readonly confirmedSecrets?: readonly string[];
   readonly replaceChanged?: readonly string[];
+  /**
+   * `candidateId` na nowy slug, tylko dla `conflict` (ADR 0017, addendum). Kazda nazwa jest
+   * walidowana tu od nowa, bo renderer nie jest zrodlem prawdy.
+   */
+  readonly renames?: Readonly<Record<string, string>>;
 }
 
 export interface ApplyReport {
@@ -76,7 +96,8 @@ export type ApplySkipReason =
   | 'conflict'
   | 'changed-not-replaced'
   | 'secrets-not-confirmed'
-  | 'slug-taken-in-this-import';
+  | 'slug-taken-in-this-import'
+  | 'rename-not-allowed';
 
 export type ImportErrorCode = 'unknown-root' | 'unknown-scan';
 
@@ -164,6 +185,40 @@ export function sameContent(draft: ItemDraft, existing: LibraryItem): boolean {
     if (stableJson(wanted) !== stableJson(have)) return false;
   }
   return true;
+}
+
+function slugKey(kind: ItemKind, slug: string): string {
+  return `${kind}\0${slug.toLowerCase()}`;
+}
+
+/**
+ * Walidacja nowego sluga kandydata z konfliktem, te same reguly co walidator biblioteki
+ * (ADR 0017): ASCII, dlugosc, nazwy zastrzezone, brak kolizji `lower(slug)` z biblioteka
+ * i z innymi kandydatami tej samej partii.
+ */
+function renameProblem(
+  kind: ItemKind,
+  slug: string,
+  libraryKeys: ReadonlySet<string>,
+  claimed: ReadonlySet<string>,
+  taken: ReadonlySet<string>,
+): { code: string; message: string } | null {
+  const invalid = validateSlug(slug);
+  if (invalid !== null) return { code: invalid.reason, message: invalid.message };
+  const key = slugKey(kind, slug);
+  if (libraryKeys.has(key)) {
+    return {
+      code: 'slug-collision',
+      message: `Element tego typu o nazwie "${slug}" już istnieje w bibliotece (wielkość liter nie ma znaczenia). Wybierz inną nazwę.`,
+    };
+  }
+  if (claimed.has(key) || taken.has(key)) {
+    return {
+      code: 'slug-collision',
+      message: `Nazwa "${slug}" jest już zajęta przez inny element w tym imporcie (wielkość liter nie ma znaczenia). Wybierz inną nazwę.`,
+    };
+  }
+  return null;
 }
 
 function baseName(relPath: string): string {
@@ -267,7 +322,8 @@ export class ImportService {
     const library = (await this.deps.library.list()).items;
     const candidates = this.resolveStatuses(raw, library);
     const scanToken = this.remember(candidates);
-    return { scanToken, candidates, skipped };
+    const librarySlugs = library.map((item) => ({ kind: item.kind, slug: item.identity.slug }));
+    return { scanToken, candidates, skipped, librarySlugs };
   }
 
   /** Krok `finalize` adaptera po skanie rootow jednego narzedzia; blad adaptera nie psuje reszty. */
@@ -415,6 +471,33 @@ export class ImportService {
     });
   }
 
+  /**
+   * Powod pominiecia kandydata albo `null`, gdy przechodzi wszystkie bramki. Czysta funkcja:
+   * ta sama decyzja jest uzywana przy zbieraniu nazw zajetych w imporcie i przy zapisie.
+   */
+  private gate(
+    scanned: ScannedCandidate | undefined,
+    candidateId: string,
+    opts: {
+      readonly confirmed: ReadonlySet<string>;
+      readonly replace: ReadonlySet<string>;
+      readonly renames: ReadonlyMap<string, string>;
+    },
+  ): ApplySkipReason | null {
+    if (scanned === undefined) return 'unknown-candidate';
+    if (scanned.status === 'duplicate' || scanned.status === 'unchanged') return scanned.status;
+    const renamed = opts.renames.has(candidateId);
+    if (renamed && scanned.status !== 'conflict') return 'rename-not-allowed';
+    if (scanned.status === 'conflict' && !renamed) return 'conflict';
+    if (scanned.secrets.length > 0 && !opts.confirmed.has(candidateId)) {
+      return 'secrets-not-confirmed';
+    }
+    if (scanned.status === 'changed' && !opts.replace.has(candidateId)) {
+      return 'changed-not-replaced';
+    }
+    return null;
+  }
+
   async apply(request: ApplyRequest): Promise<ApplyReport> {
     this.purge(this.deps.clock.now().getTime());
     const session = this.sessions.get(request.scanToken);
@@ -424,53 +507,72 @@ export class ImportService {
         'Skan wygasł albo nie istnieje. Zeskanuj lokalizacje jeszcze raz.',
       );
     }
-    const confirmed = new Set(request.confirmedSecrets ?? []);
-    const replace = new Set(request.replaceChanged ?? []);
+    const gateOpts = {
+      confirmed: new Set(request.confirmedSecrets ?? []),
+      replace: new Set(request.replaceChanged ?? []),
+      renames: new Map(Object.entries(request.renames ?? {})),
+    };
+    const ids = [...new Set(request.candidateIds)];
     const imported: { candidateId: string; itemId: string; action: 'created' | 'updated' }[] = [];
     const skipped: { candidateId: string; reason: ApplySkipReason }[] = [];
     const failed: { candidateId: string; code: string; message: string }[] = [];
     const takenSlugs = new Set<string>();
 
-    for (const candidateId of new Set(request.candidateIds)) {
+    // Nowa nazwa nie moze zajac miejsca po elemencie z biblioteki ani po kandydacie, ktory idzie
+    // do zapisu pod swoja nazwa, niezaleznie od kolejnosci w zadaniu. Biblioteke czytamy tutaj,
+    // pod blokada zapisu kanalu `import:apply`; ostateczne rozstrzygniecie i tak robi
+    // `LibraryService` w swojej kolejce, wiec wyscig z innym zapisem konczy sie bledem, nie nadpisaniem.
+    let libraryKeys = new Set<string>();
+    const claimed = new Set<string>();
+    if (gateOpts.renames.size > 0) {
+      libraryKeys = new Set(
+        (await this.deps.library.list()).items.map((item) =>
+          slugKey(item.kind, item.identity.slug),
+        ),
+      );
+      for (const candidateId of ids) {
+        const scanned = session.candidates.get(candidateId);
+        if (scanned === undefined || gateOpts.renames.has(candidateId)) continue;
+        if (this.gate(scanned, candidateId, gateOpts) !== null) continue;
+        claimed.add(slugKey(scanned.candidate.kind, scanned.candidate.draft.identity.slug));
+      }
+    }
+
+    for (const candidateId of ids) {
       const scanned = session.candidates.get(candidateId);
-      const skip = (reason: ApplySkipReason): void => {
-        skipped.push({ candidateId, reason });
-      };
-      if (scanned === undefined) {
-        skip('unknown-candidate');
-        continue;
-      }
-      if (scanned.status === 'duplicate' || scanned.status === 'unchanged') {
-        skip(scanned.status);
-        continue;
-      }
-      if (scanned.status === 'conflict') {
-        skip('conflict');
-        continue;
-      }
-      if (scanned.secrets.length > 0 && !confirmed.has(candidateId)) {
-        skip('secrets-not-confirmed');
-        continue;
-      }
-      if (scanned.status === 'changed' && !replace.has(candidateId)) {
-        skip('changed-not-replaced');
+      const reason = this.gate(scanned, candidateId, gateOpts);
+      if (reason !== null || scanned === undefined) {
+        skipped.push({ candidateId, reason: reason ?? 'unknown-candidate' });
         continue;
       }
 
       const { kind, draft } = scanned.candidate;
-      const slugKey = `${kind}\0${draft.identity.slug.toLowerCase()}`;
-      if (takenSlugs.has(slugKey)) {
-        skip('slug-taken-in-this-import');
+      const newSlug = gateOpts.renames.get(candidateId);
+      const finalSlug = newSlug ?? draft.identity.slug;
+      if (newSlug !== undefined) {
+        const problem = renameProblem(kind, newSlug, libraryKeys, claimed, takenSlugs);
+        if (problem !== null) {
+          failed.push({ candidateId, code: problem.code, message: problem.message });
+          continue;
+        }
+      }
+      const slugKeyOfFinal = slugKey(kind, finalSlug);
+      if (takenSlugs.has(slugKeyOfFinal)) {
+        skipped.push({ candidateId, reason: 'slug-taken-in-this-import' });
         continue;
       }
 
       try {
-        const toSave = this.toDraft(scanned, session);
+        const toSave = this.toDraft(scanned, session, newSlug);
+        const note =
+          newSlug !== undefined && newSlug !== draft.identity.slug
+            ? `slug-z=${draft.identity.slug}`
+            : undefined;
         const result =
           scanned.status === 'changed' && scanned.existingItemId !== null
             ? await this.deps.library.update(scanned.existingItemId, toSave)
-            : await this.deps.library.create(toSave);
-        takenSlugs.add(slugKey);
+            : await this.deps.library.create(toSave, note === undefined ? undefined : { note });
+        takenSlugs.add(slugKeyOfFinal);
         session.candidates.delete(candidateId);
         imported.push({
           candidateId,
@@ -490,7 +592,11 @@ export class ImportService {
   }
 
   /** Szkic z adaptera plus pochodzenie (rootId i sciezka wzgledna) i trafienia klasyfikatora. */
-  private toDraft(scanned: ScannedCandidate, session: ScanSession): ItemDraft {
+  private toDraft(
+    scanned: ScannedCandidate,
+    session: ScanSession,
+    newSlug: string | undefined,
+  ): ItemDraft {
     const { candidate } = scanned;
     const { draft } = candidate;
     const findings: SecretFinding[] = scanned.secrets.map((s) => ({
@@ -515,8 +621,22 @@ export class ImportService {
           snapshots.push(snapshot);
       }
     }
+    // Przemianowanie: nazwa ze zrodla zostaje w aliasach, a `declaredName` bez zmian (ADR 0026),
+    // wiec rozjechanie nazw pokaze sie jako zwykle ostrzezenie.
+    const renamed = newSlug !== undefined && newSlug !== draft.identity.slug;
+    const identity =
+      newSlug === undefined || !renamed
+        ? draft.identity
+        : {
+            ...draft.identity,
+            slug: newSlug,
+            aliases: draft.identity.aliases.includes(draft.identity.slug)
+              ? draft.identity.aliases
+              : [...draft.identity.aliases, draft.identity.slug],
+          };
     return {
       ...draft,
+      identity,
       classification: {
         scope: draft.classification?.scope ?? 'private',
         secretFindings: findings,

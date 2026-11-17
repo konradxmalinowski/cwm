@@ -107,10 +107,6 @@
   border-left-color: var(--cobalt-200);
 }
 
-.cand--blocked {
-  border-left-color: var(--text);
-}
-
 .cand__box {
   padding-top: 2px;
 }
@@ -153,6 +149,11 @@
 .cand__path {
   overflow-wrap: anywhere;
   color: var(--text-muted);
+}
+
+.cand__rename {
+  max-width: 40ch;
+  margin-top: var(--s1);
 }
 
 .cand__desc {

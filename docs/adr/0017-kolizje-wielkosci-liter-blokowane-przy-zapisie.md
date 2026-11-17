@@ -1,7 +1,11 @@
 # ADR 0017: Kolizje wielkości liter blokowane przy zapisie do biblioteki
 
-Status: zaakceptowane
+Status: zaakceptowane, uzupełnione przez ADR 0057
 Data: 2026-10-20
+
+> Uzupełnienie wprowadzone przez ADR 0057: kandydat z konfliktem nazwy można w kreatorze importu
+> zaimportować pod nowym slugiem podanym przez użytkownika. Nazwa ze źródła trafia do aliasów,
+> a kolizja `lower(slug)` nadal blokuje zapis. Nie ma cichego sufiksu.
 
 ## Kontekst
 

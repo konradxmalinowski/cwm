@@ -105,8 +105,13 @@ function summaryOf(kind: string, group: OperationGroup, count: number): string {
       return `Synchronizacja z ${toolName}: ${plural(count)}`;
     case 'rollback':
       return `Cofnięcie zapisu do ${toolName}: ${plural(count)}`;
-    case 'create':
-      return `Utworzono ${named}`;
+    case 'create': {
+      // Import z przemianowaniem zostawia w notatce nazwe ze zrodla (`slug-z=<nazwa>`).
+      const from = /^slug-z=(\S+)$/.exec(group.rows[0]?.note ?? '')?.[1];
+      return from === undefined
+        ? `Utworzono ${named}`
+        : `Utworzono ${named} (nazwa ze źródła: ${from})`;
+    }
     case 'update':
       return `Zmieniono ${named}`;
     case 'delete':

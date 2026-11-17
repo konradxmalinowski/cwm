@@ -85,7 +85,8 @@ function toScanDto(report: ScanReport): ImportScanDto {
     reason: s.reason,
     message: s.message,
   }));
-  return { scanToken: report.scanToken, candidates, skipped };
+  const librarySlugs = report.librarySlugs.map((l) => ({ kind: l.kind, slug: l.slug }));
+  return { scanToken: report.scanToken, candidates, skipped, librarySlugs };
 }
 
 function toApplyDto(report: ApplyReport): ImportApplyDto {
