@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { createClaudeCodeAdapter } from '../../src/adapters/claude-code';
 import { createCodexAdapter } from '../../src/adapters/codex';
+import { createGeminiCliAdapter } from '../../src/adapters/gemini-cli';
 import type { ItemDraft, LibraryItem, LoadedItem, ToolId } from '../../src/core/model/item';
 import type { WritePlan } from '../../src/core/model/plan';
 import { systemClock } from '../../src/core/ports/clock';
@@ -36,6 +37,7 @@ export interface RoundTrip {
 const ADAPTERS: Record<ToolId, () => ToolAdapter> = {
   'claude-code': createClaudeCodeAdapter,
   codex: createCodexAdapter,
+  'gemini-cli': createGeminiCliAdapter,
 };
 
 export interface Stack {
