@@ -67,6 +67,11 @@ function tomlKey(key: string): string {
     .join('.');
 }
 
+/** Klucz bez dzielenia po kropkach: dopuszczalny goly zapis albo caly w cudzyslowie. */
+function tomlWholeKey(key: string): string {
+  return /^[A-Za-z0-9_-]+$/.test(key) ? key : tomlString(key);
+}
+
 function tomlInline(value: JsonValue): string {
   if (value === null) return '""';
   if (typeof value === 'string') return tomlString(value);
@@ -127,7 +132,7 @@ export interface CommandTomlFields {
 export function renderCommandToml(f: CommandTomlFields): string {
   const lines: string[] = [];
   if (f.description !== null) lines.push(`description = ${tomlString(f.description)}`);
-  for (const e of f.extras) lines.push(`${tomlKey(e.key)} = ${tomlInline(e.value)}`);
+  for (const e of f.extras) lines.push(`${tomlWholeKey(e.key)} = ${tomlInline(e.value)}`);
   lines.push(`prompt = ${tomlMultiline(f.prompt)}`);
   return `${lines.join('\n')}\n`;
 }

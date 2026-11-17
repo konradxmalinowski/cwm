@@ -49,8 +49,23 @@ function slots(groups: unknown[]): Slot[] {
 
 function newHook(def: HookDefinition, base: JsonRecord | null, perSecond: number): JsonRecord {
   const hook: JsonRecord = { ...(base ?? {}), type: 'command', command: def.command };
-  if (def.timeoutSeconds !== null) hook['timeout'] = Math.round(def.timeoutSeconds * perSecond);
-  else delete hook['timeout'];
+  const original = base?.['timeout'];
+  if (perSecond !== 1 && typeof original === 'number') {
+    // Wartosc ze zrodla zostaje, gdy po zaokragleniu daje te same sekundy (albo byla nieprawidlowa
+    // i zostala przy imporcie pominieta), zeby eksport nie zmienial pliku bez powodu.
+    const valid = Number.isFinite(original) && original > 0;
+    const same = valid
+      ? def.timeoutSeconds !== null &&
+        Math.max(1, Math.ceil(original / perSecond)) === def.timeoutSeconds
+      : def.timeoutSeconds === null;
+    if (same) return hook;
+  }
+  if (def.timeoutSeconds !== null) {
+    const scaled = def.timeoutSeconds * perSecond;
+    if (Number.isFinite(scaled))
+      hook['timeout'] = perSecond === 1 ? def.timeoutSeconds : Math.round(scaled);
+    else delete hook['timeout'];
+  } else delete hook['timeout'];
   return hook;
 }
 

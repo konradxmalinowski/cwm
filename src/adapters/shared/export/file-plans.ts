@@ -216,6 +216,8 @@ export interface HooksSpec extends FileTargetSpec {
   readonly knownEvents: readonly string[] | null;
   /** Jednostek `timeout` na sekunde w pliku narzedzia (domyslnie 1). */
   readonly timeoutPerSecond?: number;
+  /** Ostrzezenia dopisywane do wpisu pliku hookow (np. ze hook uruchamia polecenie). */
+  readonly entryWarnings?: readonly string[];
 }
 
 export async function planHooks(
@@ -285,7 +287,7 @@ export async function planHooks(
     refuseAll(b, used, merged);
     return;
   }
-  const warnings: string[] = [];
+  const warnings: string[] = [...(spec.entryWarnings ?? [])];
   if (spec.knownEvents !== null) {
     for (const { def } of inputs) {
       if (!spec.knownEvents.includes(def.event)) {

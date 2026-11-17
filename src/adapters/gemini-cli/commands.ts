@@ -16,6 +16,9 @@ const KNOWN_KEYS = new Set(['prompt', 'description']);
  */
 export const SHELL_INJECTION = /!\{/;
 
+/** Wstawka pliku `@{...}`: tresc pliku z dysku trafia do promptu, wiec to tez wymaga uwagi. */
+export const FILE_INJECTION = /@\{/;
+
 /**
  * Komendy Gemini CLI z katalogu `commands/`: plik `.toml` to jedna komenda. Podkatalogi tworza w
  * narzedziu przestrzenie nazw (`git/commit.toml` to `/git:commit`); tego jeszcze nie obslugujemy
@@ -162,6 +165,14 @@ function buildCommand(ctx: ScanContext, input: CommandInput): void {
       code: 'command-runs-shell',
       message:
         'Prompt zawiera wstawkę powłoki !{...}. Gemini CLI wykona to polecenie po potwierdzeniu w narzędziu, więc potraktuj tę komendę jak kod do uruchomienia.',
+    });
+  }
+
+  if (FILE_INJECTION.test(prompt)) {
+    warnings.push({
+      code: 'command-reads-files',
+      message:
+        'Prompt zawiera wstawkę pliku @{...}. Gemini CLI wczyta wskazany plik lub katalog i wyśle jego treść do modelu, więc sprawdź, co komenda czyta.',
     });
   }
 

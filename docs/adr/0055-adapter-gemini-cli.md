@@ -64,11 +64,15 @@ Strony czytane przez pobranie surowych plików `docs/` z gałęzi main; dokument
    utrata, a nie po cichu "naprawiane". Agent: `partial` (poziom rozumowania, kolor i pamięć nie mają odpowiednika; `model`
    przyjmuje nazwy modeli Gemini, więc nie jest wyliczany); `lossy` przy dopisaniu `name` lub `description`. Hook: pełna
    dla znanego zdarzenia bez matchera, `partial` dla obcego zdarzenia (narzędzie go nie uruchomi) i dla matchera.
-5. **Wstawki powłoki.** Komenda z `!{...}` jest traktowana jak kod do uruchomienia: ostrzeżenie przy imporcie
-   (`command-runs-shell`), powód w werdykcie i ostrzeżenie we wpisie planu eksportu. Zatwierdzenie planu przez
-   użytkownika jest tą samą bramką co dla hooków w obecnych adapterach; sama aplikacja niczego nie uruchamia.
-6. **Czas hooka.** Model trzyma sekundy, Gemini CLI milisekundy [D]. Adapter przelicza w obie strony przez parametr
-   `timeoutPerSecond` wspólnego kodu hooków (1 dla pozostałych narzędzi).
+5. **Wstawki powłoki i pliku, hooki: ostrzeżenie doradcze.** Komenda z `!{...}` (powłoka) albo `@{...}` (treść pliku do
+   modelu) i każdy hook dostają ostrzeżenie przy imporcie (`command-runs-shell`, `command-reads-files`), powód w werdykcie
+   (`partial`) i ostrzeżenie we wpisie planu eksportu. To jest ostrzeżenie doradcze, nie bramka blokująca: plan z takim
+   wpisem zatwierdza się tak samo jak każdy inny, a aplikacja niczego nie uruchamia. Faktyczna bramka (osobne potwierdzenie
+   elementów wykonywalnych) nie istnieje także dla hooków w obecnych adapterach i jest decyzją projektową na później.
+6. **Czas hooka.** Model trzyma całkowite sekundy dodatnie, Gemini CLI milisekundy [D]. Adapter przelicza w obie strony przez
+   parametr `timeoutPerSecond` wspólnego kodu hooków (1 dla pozostałych narzędzi). Import zaokrągla w górę do pełnej sekundy
+   (minimum 1) z ostrzeżeniem `hook-timeout-rounded`; wartość niedodatnia lub nieskończona jest pomijana z ostrzeżeniem
+   `hook-timeout-invalid`. Eksport zostawia oryginalne milisekundy ze snapshotu, gdy dają te same sekundy.
 7. **MCP i sekrety.** Bez synchronizacji MCP (ADR 0020). `settings.json` jest czytany tylko w kluczu `hooks`; `mcpServers`
    z `env` i `headers` nie trafia do biblioteki.
 8. **Lokalizacje.** `~/.gemini` z nadpisaniem `GEMINI_CLI_HOME` jako katalogiem nadrzędnym (etykieta
@@ -117,6 +121,8 @@ katalogi. Dowodem jest CI na PR.
 
 ## Otwarte
 
+- Blokująca bramka dla elementów wykonywalnych (hooki, komendy z `!{...}` i `@{...}`): osobne potwierdzenie przed zapisem.
+  Dziś jest tylko ostrzeżenie doradcze w planie, tak samo jak dla hooków w pozostałych adapterach.
 - Przestrzenie nazw komend (import i eksport podkatalogów) wymagają decyzji, jak nazwać slug (`git:commit`) i czy
   `WriteGate` tworzy zagnieżdżone katalogi w rootach katalogowych.
 - Konfiguracje projektowe i rozszerzenia Gemini CLI.

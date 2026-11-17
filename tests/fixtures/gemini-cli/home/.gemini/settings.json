@@ -12,6 +12,14 @@
     ],
     "SessionStart": [{ "hooks": [{ "type": "command", "command": "/opt/acme/start.sh" }] }],
     "AfterAgent": [{ "hooks": [{ "type": "command", "command": "/opt/acme/done.sh", "timeout": 5000 }] }],
+    "AfterModel": [
+      {
+        "hooks": [
+          { "type": "command", "command": "/opt/acme/slow.sh", "timeout": 1500 },
+          { "type": "command", "command": "/opt/acme/zero.sh", "timeout": 0 }
+        ]
+      }
+    ],
     "Notification": [{ "hooks": [{ "type": "script", "path": "acme.sh" }] }]
   }
 }

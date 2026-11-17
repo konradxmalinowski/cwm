@@ -25,7 +25,7 @@ import {
   worst,
 } from '../shared/export/verdicts';
 import type { YamlValue } from '../shared/frontmatter';
-import { SHELL_INJECTION, parseCommandDraft } from './commands';
+import { FILE_INJECTION, SHELL_INJECTION, parseCommandDraft } from './commands';
 
 const TOOL = 'gemini-cli' as const;
 
@@ -101,6 +101,12 @@ export function geminiCapabilities(item: LibraryItem): CompatibilityVerdict {
         level = worst(level, 'partial');
         reasons.push(
           'Prompt zawiera wstawkę powłoki !{...}, którą Gemini CLI wykona po potwierdzeniu w narzędziu. Traktuj ją jak kod do uruchomienia.',
+        );
+      }
+      if (FILE_INJECTION.test(body)) {
+        level = worst(level, 'partial');
+        reasons.push(
+          'Prompt zawiera wstawkę pliku @{...}, przez którą Gemini CLI wyśle treść wskazanych plików do modelu. Sprawdź, co komenda czyta.',
         );
       }
       return verdict(level, reasons, lost);
@@ -289,11 +295,17 @@ export async function planGemini(
           break;
         }
         const file = `${item.identity.slug}.toml`;
-        const notes = SHELL_INJECTION.test(item.content.body)
-          ? [
-              'Komenda zawiera wstawkę powłoki !{...}. Gemini CLI wykona ją po potwierdzeniu w narzędziu. Sprawdź treść przed zapisem.',
-            ]
-          : [];
+        const notes: string[] = [];
+        if (SHELL_INJECTION.test(item.content.body)) {
+          notes.push(
+            'Komenda zawiera wstawkę powłoki !{...}. Gemini CLI wykona ją po potwierdzeniu w narzędziu. To tylko ostrzeżenie: aplikacja nie blokuje zapisu, więc sprawdź treść przed zatwierdzeniem planu.',
+          );
+        }
+        if (FILE_INJECTION.test(item.content.body)) {
+          notes.push(
+            'Komenda zawiera wstawkę pliku @{...}. Gemini CLI wyśle treść wskazanych plików do modelu. To tylko ostrzeżenie: sprawdź treść przed zatwierdzeniem planu.',
+          );
+        }
         await planWholeFile(b, ctx, choice.root, loaded, file, renderCommand(loaded, file), notes);
         break;
       }
@@ -323,6 +335,9 @@ export async function planGemini(
       fileName: 'settings.json',
       knownEvents: GEMINI_HOOK_EVENTS,
       timeoutPerSecond: HOOK_TIMEOUT_PER_SECOND,
+      entryWarnings: [
+        'Hook uruchamia polecenie z uprawnieniami użytkownika przy każdym zdarzeniu. To tylko ostrzeżenie: aplikacja nie blokuje zapisu, więc sprawdź polecenie przed zatwierdzeniem planu.',
+      ],
     },
     hooks,
   );

@@ -14,7 +14,7 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
   i kopią zapasową tak samo jak do Claude Code i Codeksa. Narzędzie jest też celem synchronizacji i układem w archiwum
   ZIP (`gemini-cli/.gemini/...`). Z `settings.json` czytany jest wyłącznie klucz `hooks`; serwery MCP i sekrety nie są
   ruszane (ADR 0020). Czas hooka jest przeliczany między sekundami modelu a milisekundami Gemini CLI. Komendy z
-  wstawką powłoki `!{...}` dostają ostrzeżenie przy imporcie i w planie eksportu. Nie są jeszcze obsługiwane przestrzenie
+  wstawką powłoki `!{...}` lub pliku `@{...}` oraz hooki dostają ostrzeżenie doradcze przy imporcie i w planie eksportu. Nie są jeszcze obsługiwane przestrzenie
   nazw komend (podkatalogi `commands/`): są wymienione jako pominięte z powodem.
 
 - Eksport do archiwum ZIP (ADR 0054). W kreatorze eksportu nowy cel "Archiwum ZIP" obok Claude Code i Codeksa: ten sam wybór
