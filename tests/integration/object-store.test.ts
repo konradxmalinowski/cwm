@@ -551,7 +551,7 @@ function retentionService(world: RetentionWorld, rows: RetentionLogRow[], o: Ser
       readManifest: (id) => {
         const manifest = o.manifests?.[id];
         return manifest === undefined
-          ? Promise.reject(new Error('brak kopii'))
+          ? Promise.reject(Object.assign(new Error('brak kopii'), { code: 'ENOENT' }))
           : Promise.resolve(manifest);
       },
       readFile: () => Promise.reject(new Error('nie uzywane')),
