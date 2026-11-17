@@ -191,6 +191,7 @@ export function launchAppWithHome(home: string, userDataDir: string): Promise<La
     USERPROFILE: home,
     CLAUDE_CONFIG_DIR: join(home, '.claude'),
     CODEX_HOME: join(home, '.codex'),
+    GEMINI_CLI_HOME: home,
   });
 }
 
