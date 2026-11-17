@@ -682,9 +682,36 @@ export const SCENES: readonly Scene[] = [
       await expect(t(page, 'group-conflict')).toBeVisible();
       await expect(t(page, 'import-skipped')).toBeVisible();
       await expect(t(page, 'import-apply')).toBeEnabled();
-      await expect(
-        page.locator('[data-testid="candidate"][data-status="conflict"] input'),
-      ).toHaveCount(0);
+      // Konflikt da sie zaimportowac pod nowa nazwa: ma pole wyboru i pole z podpowiedzia.
+      const conflict = page.locator('[data-testid="candidate"][data-status="conflict"]').first();
+      await expect(conflict.locator('input[type="checkbox"]')).toBeEnabled();
+      await expect(conflict.locator('[data-testid="import-rename"]')).not.toHaveValue('');
+      await expect(conflict.locator('[data-testid="import-rename-error"]')).toHaveCount(0);
+    },
+  },
+  {
+    id: 'import/podglad-konflikt-nazwa',
+    view: 'Import',
+    state: 'blad',
+    world: 'seeded',
+    reach: async (c) => {
+      await startScan(c);
+      await t(c.page, 'group-conflict').waitFor();
+      const conflict = c.page.locator('[data-testid="candidate"][data-status="conflict"]').first();
+      await conflict.locator('[data-testid="import-rename"]').fill('zla nazwa!');
+      await conflict.locator('input[type="checkbox"]').check();
+      await t(c.page, 'import-apply').click();
+      await t(c.page, 'import-rename-blocked').waitFor();
+    },
+    assert: async ({ page }) => {
+      const conflict = page.locator('[data-testid="candidate"][data-status="conflict"]').first();
+      const field = conflict.locator('[data-testid="import-rename"]');
+      await expect(field).toHaveAttribute('aria-invalid', 'true');
+      await expect(field).toBeFocused();
+      await expect(conflict.locator('[data-testid="import-rename-error"]')).toContainText(
+        'niedozwolona',
+      );
+      await expect(t(page, 'import-rename-blocked')).toContainText('Popraw nowe nazwy');
     },
   },
   {
@@ -712,7 +739,10 @@ export const SCENES: readonly Scene[] = [
     reach: async (c) => {
       await c.mock('import:scan', {
         kind: 'reply',
-        result: { ok: true, value: { scanToken: 'acme-skan', candidates: [], skipped: [] } },
+        result: {
+          ok: true,
+          value: { scanToken: 'acme-skan', candidates: [], skipped: [], librarySlugs: [] },
+        },
       });
       await startScan(c);
       await t(c.page, 'import-no-candidates').waitFor();

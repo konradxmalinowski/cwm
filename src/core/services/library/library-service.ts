@@ -238,7 +238,8 @@ export class LibraryService {
     return run;
   }
 
-  async create(draft: ItemDraft): Promise<MutationResult> {
+  /** `options.note` trafia do wpisu historii (krotki opis bez sciezek), np. przemianowanie przy imporcie. */
+  async create(draft: ItemDraft, options?: { readonly note?: string }): Promise<MutationResult> {
     return this.exclusive(async () => {
       const id = this.deps.ids.next();
       await this.requireFreeId(id);
@@ -251,6 +252,7 @@ export class LibraryService {
         ...identityOf(built.loaded.item),
         before: null,
         after: built.encoded.state,
+        ...(options?.note === undefined ? {} : { note: options.note }),
       });
       return {
         item: built.loaded.item,
@@ -1145,6 +1147,7 @@ export class LibraryService {
     readonly slug: string | null;
     readonly before: OperationState | null;
     readonly after: OperationState | null;
+    readonly note?: string;
   }): Promise<LibraryWarning[]> {
     try {
       await this.deps.log.append({
@@ -1155,6 +1158,7 @@ export class LibraryService {
         at: this.deps.clock.now().toISOString(),
         before: input.before,
         after: input.after,
+        ...(input.note === undefined ? {} : { note: input.note }),
       });
       return [];
     } catch {

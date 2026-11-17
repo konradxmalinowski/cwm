@@ -18,6 +18,13 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
   wraca z plików (ADR 0014). 10 najnowszych wpisów zostaje zawsze. Włączenie albo zaostrzenie limitu wymaga obejrzenia podglądu i potwierdzenia. Przy włączonym limicie to samo czyszczenie wykonuje się przy starcie, ale nie na nowym, odbudowanym ani odłożonym do kwarantanny indeksie i nie wtedy, gdy usunęłoby ponad 90% wpisów; powód jest widoczny w Diagnostyce. Wynik trafia do Historii
   jako wpis "Przycięcie historii". Katalog `backups/` nie jest czyszczony.
 
+- Import konfliktu nazwy pod nowym slugiem (ADR 0057). Kandydat, którego nazwa różni się od elementu biblioteki albo od
+  innego kandydata tylko wielkością liter, był dotąd pomijany. Teraz w kreatorze importu ma pole "Nowa nazwa (slug)"
+  z podpowiedzią (`nazwa-2`) i sprawdzaniem na żywo: litery ASCII, długość, nazwy zastrzeżone Windowsa, brak kolizji
+  z biblioteką i z innymi elementami importu. Podpowiedź trafia do biblioteki dopiero po zaznaczeniu elementu. Aplikacja
+  sprawdza nazwę jeszcze raz przy zapisie, a nazwa ze źródła zostaje w aliasach elementu. Historia pokazuje, z jakiej
+  nazwy powstał element.
+
 - Trzeci adapter: Gemini CLI (ADR 0055). Aplikacja wykrywa `~/.gemini` (z `GEMINI_CLI_HOME`), importuje stamtąd skille,
   agentów, komendy (`commands/*.toml`), `GEMINI.md` i hooki z `settings.json`, a eksportuje je z planem, podglądem różnic
   i kopią zapasową tak samo jak do Claude Code i Codeksa. Narzędzie jest też celem synchronizacji i układem w archiwum

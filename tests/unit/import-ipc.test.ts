@@ -124,12 +124,49 @@ describe('kanaly import:*', () => {
       { scanToken: 't', candidateIds: 'cand-1' },
       { scanToken: 't', candidateIds: [], confirmedSecrets: [5] },
       { scanToken: 't', candidateIds: [], replaceChanged: 'x' },
+      { scanToken: 't', candidateIds: ['cand-1'], renames: 'acme-b' },
+      { scanToken: 't', candidateIds: ['cand-1'], renames: ['acme-b'] },
+      { scanToken: 't', candidateIds: ['cand-1'], renames: { 'cand-1': 5 } },
+      { scanToken: 't', candidateIds: ['cand-1'], renames: { 'cand-2': 'acme-b' } },
     ]) {
       expect(await call('import:apply', payload)).toMatchObject({
         ok: false,
         error: { code: 'invalid-request' },
       });
     }
+  });
+
+  it('apply z renames: konflikt wchodzi pod nowym slugiem, zla nazwa wraca jako failed', async () => {
+    const adapter = new FakeAdapter('claude-code', ['skills'], {
+      'r-claude': [candidate({ slug: 'Acme-Review', root: claude })],
+    });
+    const h = importHarness([claude], [adapter]);
+    await h.library.create(candidate({ slug: 'acme-review', root: claude }).draft);
+    const { call } = wire(h.service);
+
+    const scan = await call<ImportScanDto>('import:scan', { rootIds: ['r-claude'] });
+    if (!scan.ok) throw new Error('skan nie powiodl sie');
+    expect(scan.value.candidates[0]?.status).toBe('conflict');
+    expect(scan.value.librarySlugs).toEqual([{ kind: 'skill', slug: 'acme-review' }]);
+
+    const bad = await call<ImportApplyDto>('import:apply', {
+      scanToken: scan.value.scanToken,
+      candidateIds: ['cand-1'],
+      renames: { 'cand-1': 'ACME-REVIEW' },
+    });
+    if (!bad.ok) throw new Error('apply nie powiodl sie');
+    expect(bad.value.imported).toEqual([]);
+    expect(bad.value.failed).toMatchObject([{ candidateId: 'cand-1', code: 'slug-collision' }]);
+
+    const good = await call<ImportApplyDto>('import:apply', {
+      scanToken: scan.value.scanToken,
+      candidateIds: ['cand-1'],
+      renames: { 'cand-1': 'acme-review-2' },
+    });
+    if (!good.ok) throw new Error('apply nie powiodl sie');
+    expect(good.value.imported).toHaveLength(1);
+    const slugs = (await h.library.list()).items.map((i) => i.identity.slug).sort();
+    expect(slugs).toEqual(['acme-review', 'acme-review-2']);
   });
 
   it('nieznany root i nieznany token to Result z kodem, nie wyjatek', async () => {

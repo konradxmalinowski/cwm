@@ -177,7 +177,8 @@ Po cofnięciu pierwszego eksportu skilla kopia w `materialized/` zostaje w katal
 - Nazwa (slug) jest tylko ASCII. Nazwa z polskimi literami dostaje slug przybliżony, a oryginał
   trafia do aliasów.
 - Przy imporcie kandydat, którego slug różni się od istniejącego tylko wielkością liter, jest
-  pomijany jako konflikt, a kreator nie pozwala zmienić sluga, żeby go mimo to przyjąć (ADR 0017).
+  konfliktem. Kreator pozwala zaimportować go pod nowym slugiem (nazwa ze źródła trafia do
+  aliasów, ADR 0057), ale ponowny skan nie rozpoznaje, że taki element już wszedł pod inną nazwą.
 - Dla plików współdzielonych (blok w instrukcji, segment `config.toml`, klucz `hooks`) zmiana
   zrobiona w narzędziu jest wykrywana tylko po tym, czy plik istnieje, nie po jego treści.
 - Zmiana samej wartości sekretu jest niewidoczna w diffie, bo obie strony pokazują ten sam znacznik.

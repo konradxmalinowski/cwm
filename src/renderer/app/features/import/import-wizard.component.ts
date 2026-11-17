@@ -24,9 +24,12 @@ import {
   groupRootsByTool,
   hitLocation,
   isSelectable,
+  keepsForeignDeclaredName,
   pathLabel,
+  renameErrors,
   rootKindLabel,
   skipReasonLabel,
+  suggestRenames,
   toolLabel,
 } from './import-model';
 import { SecretConfirmDialogComponent } from './secret-confirm-dialog.component';
@@ -56,6 +59,7 @@ export class ImportWizardComponent {
   protected readonly skipReasonLabel = skipReasonLabel;
   protected readonly hitLocation = hitLocation;
   protected readonly isSelectable = isSelectable;
+  protected readonly keepsForeignDeclaredName = keepsForeignDeclaredName;
 
   protected readonly phase = signal<Phase>('locations');
   protected readonly detect = signal<DetectState>({ status: 'loading' });
@@ -67,6 +71,11 @@ export class ImportWizardComponent {
   protected readonly confirming = signal<CandidateDto | null>(null);
   protected readonly applyError = signal<string | null>(null);
   protected readonly result = signal<ImportApplyDto | null>(null);
+  /** Nowe nazwy kandydatow z konfliktem: podpowiedz ze skanu, potem to, co wpisze uzytkownik. */
+  protected readonly renames = signal<ReadonlyMap<string, string>>(new Map());
+  /** Nazwy faktycznie wyslane do zapisu, zeby wynik mogl je pokazac. */
+  protected readonly appliedRenames = signal<ReadonlyMap<string, string>>(new Map());
+  protected readonly renameBlocked = signal(false);
 
   private seq = 0;
 
@@ -108,6 +117,15 @@ export class ImportWizardComponent {
   );
 
   protected readonly selectedCount = computed(() => this.selected().size);
+
+  protected readonly renameProblems = computed(() =>
+    renameErrors(
+      this.candidates(),
+      this.selected(),
+      this.renames(),
+      this.scan()?.librarySlugs ?? [],
+    ),
+  );
 
   protected readonly overwriteCount = computed(
     () =>
@@ -247,6 +265,8 @@ export class ImportWizardComponent {
     this.confirmedSecrets.set(new Set());
     this.confirming.set(null);
     this.applyError.set(null);
+    this.renames.set(suggestRenames(result.value.candidates, result.value.librarySlugs));
+    this.renameBlocked.set(false);
     this.phase.set('preview');
   }
 
@@ -265,6 +285,19 @@ export class ImportWizardComponent {
 
   protected isSelected(candidate: CandidateDto): boolean {
     return this.selected().has(candidate.candidateId);
+  }
+
+  protected renameValue(candidate: CandidateDto): string {
+    return this.renames().get(candidate.candidateId) ?? '';
+  }
+
+  protected renameId(candidate: CandidateDto): string {
+    return `rename-${candidate.candidateId}`;
+  }
+
+  protected onRename(candidate: CandidateDto, value: string): void {
+    this.renames.set(new Map(this.renames()).set(candidate.candidateId, value));
+    this.renameBlocked.set(false);
   }
 
   protected duplicateTarget(candidate: CandidateDto): CandidateDto | null {
@@ -373,14 +406,29 @@ export class ImportWizardComponent {
     const replace = this.candidates()
       .filter((c) => c.status === 'changed' && this.selected().has(c.candidateId))
       .map((c) => c.candidateId);
+    const renames: Record<string, string> = {};
+    const invalid: string[] = [];
+    for (const c of this.candidates()) {
+      if (c.status !== 'conflict' || !this.selected().has(c.candidateId)) continue;
+      if (this.renameProblems().has(c.candidateId)) invalid.push(c.candidateId);
+      renames[c.candidateId] = this.renameValue(c).trim();
+    }
+    const firstInvalid = invalid[0];
+    if (firstInvalid !== undefined) {
+      this.renameBlocked.set(true);
+      document.getElementById(`rename-${firstInvalid}`)?.focus();
+      return;
+    }
     const seq = ++this.seq;
     this.applyError.set(null);
     this.phase.set('applying');
+    this.appliedRenames.set(new Map(Object.entries(renames)));
     const result = await this.api.apply({
       scanToken: scan.scanToken,
       candidateIds: ids,
       ...(confirmed.length > 0 ? { confirmedSecrets: confirmed } : {}),
       ...(replace.length > 0 ? { replaceChanged: replace } : {}),
+      ...(Object.keys(renames).length > 0 ? { renames } : {}),
     });
     if (seq !== this.seq) return;
     if (!result.ok) {
@@ -402,9 +450,19 @@ export class ImportWizardComponent {
     return this.byId().get(candidateId) ?? null;
   }
 
+  /** Nazwa, pod jaka element trafil do biblioteki, gdy przyszedl z konfliktu. */
+  protected renamedTo(candidateId: string): string | null {
+    const to = this.appliedRenames().get(candidateId);
+    // Pole z nazwa rowna oryginalowi nie jest przemianowaniem.
+    return to === undefined || to === this.byId().get(candidateId)?.slug ? null : to;
+  }
+
   protected restart(): void {
     this.seq++;
     this.scan.set(null);
+    this.renames.set(new Map());
+    this.appliedRenames.set(new Map());
+    this.renameBlocked.set(false);
     this.result.set(null);
     this.selected.set(new Set());
     this.confirmedSecrets.set(new Set());

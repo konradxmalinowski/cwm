@@ -240,7 +240,6 @@
                 <li
                   class="cand"
                   [class.cand--overwrite]="c.status === 'changed' && isSelected(c)"
-                  [class.cand--blocked]="c.status === 'conflict'"
                   data-testid="candidate"
                   [attr.data-status]="c.status"
                   [attr.data-slug]="c.slug"
@@ -253,7 +252,11 @@
                         [id]="pickId(c)"
                         [checked]="isSelected(c)"
                         [attr.aria-labelledby]="
-                          c.status === 'changed' ? pickId(c) + '-replace ' + titleId(c) : titleId(c)
+                          c.status === 'changed'
+                            ? pickId(c) + '-replace ' + titleId(c)
+                            : c.status === 'conflict'
+                              ? pickId(c) + '-rename ' + titleId(c)
+                              : titleId(c)
                         "
                         [attr.aria-describedby]="'cand-info-' + c.candidateId"
                         (change)="onPick(c, $event)"
@@ -271,6 +274,11 @@
                     @if (c.status === 'changed') {
                       <label class="cand__replace" [id]="pickId(c) + '-replace'" [for]="pickId(c)">
                         Zastąp wersję w bibliotece
+                      </label>
+                    }
+                    @if (c.status === 'conflict') {
+                      <label class="cand__replace" [id]="pickId(c) + '-rename'" [for]="pickId(c)">
+                        Importuj pod nową nazwą
                       </label>
                     }
                     <p class="cand__meta">
@@ -328,7 +336,10 @@
                             <span class="notice__label">Konflikt nazwy.</span>
                             Po zrównaniu wielkości liter ta nazwa i ten typ są już zajęte przez inny
                             element: z biblioteki albo z tego samego skanu. Na macOS i Windowsie oba
-                            trafiłyby do jednego pliku. Zmień nazwę w źródle i przeskanuj ponownie.
+                            trafiłyby do jednego pliku. Podaj nową nazwę i zaznacz element, żeby
+                            zaimportować go pod nią. Nazwa ze źródła zostanie zapisana w aliasach.
+                            Gdy zaznaczone są oba elementy, główny (już w bibliotece albo pierwszy w
+                            skanie) zachowuje oryginalną nazwę, a ten dostaje nową.
                             @if (c.existingItemId; as existing) {
                               <a [href]="itemHref(existing)">Zobacz kolidujący element</a>.
                             }
@@ -336,6 +347,50 @@
                         }
                       }
                     </div>
+
+                    @if (c.status === 'conflict') {
+                      <div class="field cand__rename">
+                        <label class="field__label" [for]="renameId(c)">Nowa nazwa (slug)</label>
+                        <input
+                          class="control mono"
+                          type="text"
+                          autocomplete="off"
+                          spellcheck="false"
+                          data-testid="import-rename"
+                          [id]="renameId(c)"
+                          [value]="renameValue(c)"
+                          [attr.aria-invalid]="renameProblems().has(c.candidateId) ? 'true' : null"
+                          [attr.aria-describedby]="
+                            renameProblems().has(c.candidateId)
+                              ? renameId(c) + '-error'
+                              : renameId(c) + '-hint'
+                          "
+                          (input)="onRename(c, $any($event.target).value)"
+                        />
+                        @if (renameProblems().get(c.candidateId); as problem) {
+                          <p
+                            class="field__error"
+                            [id]="renameId(c) + '-error'"
+                            data-testid="import-rename-error"
+                          >
+                            <strong>Błąd:</strong> {{ problem }}
+                          </p>
+                        } @else {
+                          <p class="field__hint" [id]="renameId(c) + '-hint'">
+                            Litery ASCII, cyfry i znaki - _ . Nazwa musi być wolna w bibliotece i w
+                            tym imporcie.
+                          </p>
+                        }
+                        @if (keepsForeignDeclaredName(c)) {
+                          <p class="field__hint" data-testid="import-rename-declared">
+                            <span class="notice__label">Uwaga.</span> Plik deklaruje nazwę
+                            <span class="mono">{{ c.declaredName }}</span>, która zostanie bez
+                            zmian. Eksport do narzędzi, które rozpoznają elementy po nazwie (Codex,
+                            Gemini CLI), może zgłosić konflikt.
+                          </p>
+                        }
+                      </div>
+                    }
 
                     @if (c.secrets.length > 0) {
                       <div class="cand__secret" data-testid="candidate-secret">
@@ -433,6 +488,14 @@
             potwierdzone osobno.
           </p>
         }
+        @if (renameBlocked()) {
+          <div class="notice" role="alert" data-testid="import-rename-blocked">
+            <p class="notice__text">
+              <span class="notice__label">Błąd.</span> Popraw nowe nazwy zaznaczonych elementów z
+              konfliktem. Pola z błędem są oznaczone.
+            </p>
+          </div>
+        }
         <div class="row-actions">
           <button
             type="button"
@@ -483,11 +546,16 @@
                       titleOf(entry.candidateId)
                     }}</a>
                     <span class="view__sub">
-                      {{
-                        entry.action === 'created'
-                          ? 'Dodano do biblioteki.'
-                          : 'Zaktualizowano, powstała nowa rewizja.'
-                      }}
+                      @if (renamedTo(entry.candidateId); as newName) {
+                        Dodano do biblioteki pod nową nazwą
+                        <span class="mono">{{ newName }}</span>. Nazwa ze źródła jest w aliasach.
+                      } @else {
+                        {{
+                          entry.action === 'created'
+                            ? 'Dodano do biblioteki.'
+                            : 'Zaktualizowano, powstała nowa rewizja.'
+                        }}
+                      }
                     </span>
                   </li>
                 }

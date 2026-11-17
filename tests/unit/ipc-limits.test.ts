@@ -39,6 +39,15 @@ describe('limity ladunkow IPC: limit przechodzi, limit + 1 nie', () => {
     expect(parseApplyRequest({ scanToken: token, candidateIds: ids(5001) }).ok).toBe(false);
     expect(parseApplyRequest({ scanToken: `${token}t`, candidateIds: [] }).ok).toBe(false);
   });
+
+  it('import:apply: renames tylko dla wybranych kandydatow, nazwa do 256 znakow', () => {
+    const base = { scanToken: 't', candidateIds: ['cand-1'] };
+    expect(parseApplyRequest({ ...base, renames: { 'cand-1': 'a'.repeat(256) } }).ok).toBe(true);
+    expect(parseApplyRequest({ ...base, renames: { 'cand-1': 'a'.repeat(257) } }).ok).toBe(false);
+    expect(parseApplyRequest({ ...base, renames: { 'cand-2': 'acme-b' } }).ok).toBe(false);
+    expect(parseApplyRequest({ ...base, renames: { 'cand-1': 5 } }).ok).toBe(false);
+    expect(parseApplyRequest({ ...base, renames: ['acme-b'] }).ok).toBe(false);
+  });
 });
 
 describe('podglad pliku w planie eksportu (MAX_PREVIEW_BYTES)', () => {

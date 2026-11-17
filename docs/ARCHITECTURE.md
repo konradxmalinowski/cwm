@@ -329,7 +329,7 @@ sequenceDiagram
   MN->>LB: list(): porownanie ze stanem biblioteki
   MN-->>RD: scanToken + kandydaci ze statusem + pominiete
   U->>RD: Odznacza, potwierdza sekrety, wybiera zamiany
-  RD->>MN: import:apply { scanToken, candidateIds, confirmedSecrets, replaceChanged }
+  RD->>MN: import:apply { scanToken, candidateIds, confirmedSecrets, replaceChanged, renames }
   MN->>LB: create albo update (pliki elementu + snapshot zrodla)
   MN-->>RD: imported / skipped z powodem / failed
   Note over FS: zrodlo nie jest modyfikowane ani raz
@@ -349,11 +349,16 @@ Każdy kandydat dostaje jeden z pięciu statusów:
 | `unchanged` | Jest w bibliotece z tą samą treścią (końce linii ignorowane, ADR 0016) | nie |
 | `changed` | Ten sam typ i slug, inna treść | tak, jeśli bez sekretów; zastąpienie wymaga wpisu w `replaceChanged` |
 | `duplicate` | Ten sam element w dwóch rootach jednego narzędzia albo alias; `duplicateOf` wskazuje kandydata, którego narzędzie faktycznie czyta (ADR 0024, 0026) | nie |
-| `conflict` | Kolizja `lower(slug)` + typ z elementem biblioteki albo z innym kandydatem tego skanu (ADR 0017) | nie |
+| `conflict` | Kolizja `lower(slug)` + typ z elementem biblioteki albo z innym kandydatem tego skanu (ADR 0017); do zaimportowania tylko pod nowym slugiem z `renames` (ADR 0057) | nie |
 
 `import:apply` działa wyłącznie na kandydatach z danego `scanToken` (ważny 30 minut, najwyżej
-osiem skanów naraz). `duplicate`, `unchanged` i `conflict` są pomijane nawet po jawnym wyborze;
-kandydat z trafieniem klasyfikatora sekretów wymaga wpisu w `confirmedSecrets`; drugi kandydat
+osiem skanów naraz). `duplicate` i `unchanged` są pomijane nawet po jawnym wyborze, a `conflict`
+bez wpisu w `renames` także. Wpis w `renames` (`candidateId` na slug) jest dozwolony tylko dla
+`conflict` (inaczej pominięcie `rename-not-allowed`); serwis waliduje nowy slug od nowa (reguły
+`validate.ts`, kolizja z biblioteką czytaną w chwili zapisu i z innymi kandydatami partii, także
+przemianowanymi), a błędna nazwa wraca jako `failed` z kodem `slug-invalid`, `slug-reserved` albo
+`slug-collision`. Nazwa ze źródła trafia do `identity.aliases`, a wpis historii niesie ją w notatce
+(ADR 0057). Kandydat z trafieniem klasyfikatora sekretów wymaga wpisu w `confirmedSecrets`; drugi kandydat
 z tym samym slugiem w jednym imporcie jest pomijany. Raport podaje powód każdego pominięcia
 (`ApplySkipReason`), a błąd jednego elementu nie przerywa reszty. Duplikat z innego narzędzia o tej
 samej treści nie tworzy drugiego elementu, tylko dołącza swój snapshot do głównego (ADR 0023).
@@ -744,8 +749,8 @@ Kanały z handlerem:
 | `library:delete-apply` | `{ token, acknowledgeUnrecoverable? }` | ostrzeżenia |
 | `library:repair` | `{ id, action }`, `adopt-disk` albo `restore-version` | element po naprawie |
 | `import:detect` | brak | rooty z `rootId`, etykietą, `exists`, `active` |
-| `import:scan` | `{ rootIds }` | `scanToken`, kandydaci ze statusem i trafieniami klasyfikatora sekretów, pominięte |
-| `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged? }` | zaimportowane, pominięte z powodem, błędy |
+| `import:scan` | `{ rootIds }` | `scanToken`, kandydaci ze statusem i trafieniami klasyfikatora sekretów, pominięte, `librarySlugs` (zajęte nazwy do walidacji nowego sluga) |
+| `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged?, renames? }` | zaimportowane, pominięte z powodem, błędy |
 | `export:plan` | `{ tool, itemIds }` | `planId`, `toolMissing`, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy, konflikty, sieroty, `applicable` |
 | `export:apply` | `{ planId, approved: true }` | raport per wpis, `backupId`, `verified`, `rolledBack` |
 | `export:zip-plan` | `{ tool, itemIds, confirmedItemIds? }` | jak `export:plan` (układ plików wybranego narzędzia, wpisy `create`) plus `zip`: `fileName`, `fileCount`, `sizeBytes` i `held` (elementy prywatne, z sekretem i projektowe z `confirmed`); archiwum jest budowane w main (ADR 0054) |

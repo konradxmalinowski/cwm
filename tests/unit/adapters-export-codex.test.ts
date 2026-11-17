@@ -124,6 +124,19 @@ describe('eksport Codeksa: skille i komendy', () => {
     expect(plan.entries).toEqual([]);
     expect(plan.conflicts[0]?.reason).toMatch(/wspolna/);
   });
+
+  it('element przemianowany przy imporcie i oryginal nie blokuja sie nawzajem (ADR 0057)', async () => {
+    const original = toLoaded(draft('skill', 'acme-case'));
+    const renamed = toLoaded(
+      draft('skill', 'acme-case-2', {
+        identity: { slug: 'acme-case-2', declaredName: 'acme-case-2', aliases: ['Acme-Case'] },
+      }),
+    );
+    const plan = await adapter.plan([original, renamed], ctx(target()));
+    expect(plan.conflicts).toEqual([]);
+    expect(plan.refusals).toEqual([]);
+    expect(plan.entries.length).toBeGreaterThan(0);
+  });
 });
 
 describe('eksport Codeksa: agent w dwoch miejscach', () => {

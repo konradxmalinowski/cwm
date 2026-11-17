@@ -35,7 +35,8 @@ export type CandidateStatus =
   | 'duplicate'
   /**
    * Kolizja `lower(slug)` z elementem biblioteki (ADR 0017) albo z innym kandydatem tego skanu,
-   * ktory ma pierwszenstwo (`duplicateOf`); glowny pozostaje do zaimportowania.
+   * ktory ma pierwszenstwo (`duplicateOf`); glowny pozostaje do zaimportowania. Konflikt da sie
+   * zaimportowac pod nowym slugiem (`ImportApplyRequest.renames`).
    */
   | 'conflict';
 
@@ -57,6 +58,8 @@ export interface CandidateDto {
   relPath: string;
   kind: ItemKindDto;
   slug: string;
+  /** Nazwa zadeklarowana w pliku; `null`, gdy zrodlo jej nie podaje (ADR 0026). */
+  declaredName: string | null;
   title: string;
   description: string;
   status: CandidateStatus;
@@ -78,11 +81,18 @@ export interface SkippedDto {
   message: string;
 }
 
+export interface LibrarySlugDto {
+  kind: ItemKindDto;
+  slug: string;
+}
+
 export interface ImportScanDto {
   /** Token skanu; `apply` dziala tylko na kandydatach z tego skanu. */
   scanToken: string;
   candidates: CandidateDto[];
   skipped: SkippedDto[];
+  /** Nazwy zajete w bibliotece w chwili skanu, do zywej walidacji nowego sluga (ADR 0017). */
+  librarySlugs: LibrarySlugDto[];
 }
 
 export interface ImportApplyRequest {
@@ -92,6 +102,11 @@ export interface ImportApplyRequest {
   confirmedSecrets?: string[];
   /** Dla `changed`: zastap istniejacy element (nowa rewizja) zamiast pominac. */
   replaceChanged?: string[];
+  /**
+   * Dla `conflict`: `candidateId` na nowy slug. Klucze musza nalezec do `candidateIds`. Main waliduje
+   * kazda nazwe od nowa i sprawdza kolizje pod blokada zapisu; oryginalna nazwa trafia do aliasow.
+   */
+  renames?: Record<string, string>;
 }
 
 export interface ImportedDto {

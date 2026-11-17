@@ -37,7 +37,7 @@ export const ITEM_FORMAT_VERSION = 1;
 
 // --- slug (ADR 0017, 0026) ---
 
-const SLUG_MAX_LENGTH = 64;
+export const SLUG_MAX_LENGTH = 64;
 const SLUG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /**
