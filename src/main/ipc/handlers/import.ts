@@ -64,6 +64,7 @@ function toScanDto(report: ScanReport): ImportScanDto {
     relPath: c.candidate.relPath,
     kind: c.candidate.kind,
     slug: c.candidate.draft.identity.slug,
+    declaredName: c.candidate.draft.identity.declaredName,
     title: c.candidate.draft.content.title,
     description: c.candidate.draft.content.description,
     status: c.status,

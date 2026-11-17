@@ -44,8 +44,13 @@ Kandydat ze statusem `conflict` można zaznaczyć w kreatorze i zaimportować po
    wspólną blokadą zapisu (ADR 0030), a ostatnie słowo ma kolejka `LibraryService` z własnym
    sprawdzeniem kolizji tuż przed zapisem, więc wyścig z innym zapisem kończy się błędem, nie
    nadpisaniem.
-4. **Tożsamość.** Nazwa ze źródła trafia do `identity.aliases`, a `declaredName` zostaje bez
-   zmian (ADR 0026), więc rozjechanie sluga i `declaredName` pokazuje się zwykłym ostrzeżeniem.
+4. **Tożsamość.** Nazwa ze źródła trafia do `identity.aliases`. `declaredName` pusty albo równy
+   starej nazwie (bez względu na wielkość liter) jest ustawiany na nowy slug: bez tego Codex
+   i Gemini CLI, które identyfikują elementy po nazwie (ADR 0026), widziałyby dwa elementy
+   o tej samej nazwie i eksport blokowałby także element już istniejący. Inny `declaredName`
+   zostaje bez zmian (ADR 0026), a kreator ostrzega przy polu nowej nazwy, że eksport do tych
+   narzędzi może zgłosić konflikt. Kreator mówi też, że gdy zaznaczone są oba elementy, główny
+   zachowuje oryginalną nazwę.
 5. **Historia.** Wpis `create` niesie notatkę `slug-z=<nazwa ze źródła>`, a Historia pokazuje
    "Utworzono element X (nazwa ze źródła: Y)".
 

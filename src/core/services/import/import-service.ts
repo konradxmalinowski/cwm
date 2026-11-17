@@ -187,6 +187,18 @@ export function sameContent(draft: ItemDraft, existing: LibraryItem): boolean {
   return true;
 }
 
+/** `declaredName` nie niesie osobnej informacji: brak albo ta sama nazwa co slug (wielkosc liter pomijana). */
+export function followsSlug(identity: {
+  readonly slug: string;
+  readonly declaredName: string | null;
+}): boolean {
+  return (
+    identity.declaredName === null ||
+    identity.declaredName === '' ||
+    identity.declaredName.toLowerCase() === identity.slug.toLowerCase()
+  );
+}
+
 function slugKey(kind: ItemKind, slug: string): string {
   return `${kind}\0${slug.toLowerCase()}`;
 }
@@ -621,8 +633,10 @@ export class ImportService {
           snapshots.push(snapshot);
       }
     }
-    // Przemianowanie: nazwa ze zrodla zostaje w aliasach, a `declaredName` bez zmian (ADR 0026),
-    // wiec rozjechanie nazw pokaze sie jako zwykle ostrzezenie.
+    // Przemianowanie: nazwa ze zrodla zostaje w aliasach. `declaredName` pusty albo rowny starej
+    // nazwie (bez wzgledu na wielkosc liter) idzie za nowym slugiem, inaczej eksport do narzedzi
+    // kluczujacych po nazwie (Codex, Gemini CLI) zobaczylby dwa elementy o tej samej nazwie
+    // (ADR 0057). Inny `declaredName` zostaje (ADR 0026), a kreator ostrzega.
     const renamed = newSlug !== undefined && newSlug !== draft.identity.slug;
     const identity =
       newSlug === undefined || !renamed
@@ -630,6 +644,7 @@ export class ImportService {
         : {
             ...draft.identity,
             slug: newSlug,
+            declaredName: followsSlug(draft.identity) ? newSlug : draft.identity.declaredName,
             aliases: draft.identity.aliases.includes(draft.identity.slug)
               ? draft.identity.aliases
               : [...draft.identity.aliases, draft.identity.slug],

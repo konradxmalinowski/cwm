@@ -337,7 +337,9 @@
                             Po zrównaniu wielkości liter ta nazwa i ten typ są już zajęte przez inny
                             element: z biblioteki albo z tego samego skanu. Na macOS i Windowsie oba
                             trafiłyby do jednego pliku. Podaj nową nazwę i zaznacz element, żeby
-                            zaimportować go pod nią. Nazwa ze źródła zostanie zapisana w aliasach.
+                            zaimportować go pod nią. Nazwa ze źródła zostanie zapisana w aliasach. Gdy zaznaczone są oba
+                            elementy, główny (już w bibliotece albo pierwszy w skanie) zachowuje
+                            oryginalną nazwę, a ten dostaje nową.
                             @if (c.existingItemId; as existing) {
                               <a [href]="itemHref(existing)">Zobacz kolidujący element</a>.
                             }
@@ -377,6 +379,14 @@
                           <p class="field__hint" [id]="renameId(c) + '-hint'">
                             Litery ASCII, cyfry i znaki - _ . Nazwa musi być wolna w bibliotece i w
                             tym imporcie.
+                          </p>
+                        }
+                        @if (keepsForeignDeclaredName(c)) {
+                          <p class="field__hint" data-testid="import-rename-declared">
+                            <span class="notice__label">Uwaga.</span> Plik deklaruje nazwę
+                            <span class="mono">{{ c.declaredName }}</span
+                            >, która zostanie bez zmian. Eksport do narzędzi, które rozpoznają
+                            elementy po nazwie (Codex, Gemini CLI), może zgłosić konflikt.
                           </p>
                         }
                       </div>

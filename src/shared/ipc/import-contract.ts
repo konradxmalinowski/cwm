@@ -58,6 +58,8 @@ export interface CandidateDto {
   relPath: string;
   kind: ItemKindDto;
   slug: string;
+  /** Nazwa zadeklarowana w pliku; `null`, gdy zrodlo jej nie podaje (ADR 0026). */
+  declaredName: string | null;
   title: string;
   description: string;
   status: CandidateStatus;

@@ -24,6 +24,7 @@ import {
   groupRootsByTool,
   hitLocation,
   isSelectable,
+  keepsForeignDeclaredName,
   pathLabel,
   renameErrors,
   rootKindLabel,
@@ -58,6 +59,7 @@ export class ImportWizardComponent {
   protected readonly skipReasonLabel = skipReasonLabel;
   protected readonly hitLocation = hitLocation;
   protected readonly isSelectable = isSelectable;
+  protected readonly keepsForeignDeclaredName = keepsForeignDeclaredName;
 
   protected readonly phase = signal<Phase>('locations');
   protected readonly detect = signal<DetectState>({ status: 'loading' });
@@ -450,7 +452,9 @@ export class ImportWizardComponent {
 
   /** Nazwa, pod jaka element trafil do biblioteki, gdy przyszedl z konfliktu. */
   protected renamedTo(candidateId: string): string | null {
-    return this.appliedRenames().get(candidateId) ?? null;
+    const to = this.appliedRenames().get(candidateId);
+    // Pole z nazwa rowna oryginalowi nie jest przemianowaniem.
+    return to === undefined || to === this.byId().get(candidateId)?.slug ? null : to;
   }
 
   protected restart(): void {

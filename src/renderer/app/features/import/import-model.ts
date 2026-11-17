@@ -207,3 +207,16 @@ export function hitLocation(hit: { file: string; line: number | null; rule: stri
   const line = hit.line === null ? '' : `, linia ${hit.line}`;
   return `${hit.file}${line}`;
 }
+
+/**
+ * Czy po przemianowaniu `declaredName` zostanie inny niz nowy slug. Wtedy narzedzia kluczujace po
+ * nazwie (Codex, Gemini CLI) moga zobaczyc kolizje przy eksporcie (ADR 0057). Gdy `declaredName`
+ * jest pusty albo rowny starej nazwie, aplikacja ustawia go na nowy slug i nie ma o czym ostrzegac.
+ */
+export function keepsForeignDeclaredName(candidate: {
+  readonly slug: string;
+  readonly declaredName: string | null;
+}): boolean {
+  const name = candidate.declaredName;
+  return name !== null && name !== '' && name.toLowerCase() !== candidate.slug.toLowerCase();
+}

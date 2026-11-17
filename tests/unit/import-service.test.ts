@@ -567,6 +567,8 @@ describe('ImportService.apply: nowy slug dla konfliktu (ADR 0017, addendum)', ()
     const items = (await h.library.list()).items;
     const renamed = items.find((i) => i.identity.slug === 'acme-case-2');
     expect(renamed?.identity.aliases).toEqual(['Acme-Case']);
+    // Brak `declaredName` w zrodle idzie za nowym slugiem (ADR 0057).
+    expect(renamed?.identity.declaredName).toBe('acme-case-2');
     expect(renamed?.content.body).toBe('tresc konfliktu\n');
     expect(items.map((i) => i.identity.slug).sort()).toEqual(['acme-case', 'acme-case-2']);
 
@@ -668,6 +670,33 @@ describe('ImportService.apply: nowy slug dla konfliktu (ADR 0017, addendum)', ()
       'acme-shared',
       'acme-shared-codex',
     ]);
+  });
+
+  it('declaredName rowny starej nazwie (bez wielkosci liter) idzie za slugiem, inny zostaje', async () => {
+    const same = candidate({ slug: 'Acme-Case', root: claude, body: 'a\n' });
+    const other = candidate({ slug: 'ACME-CASE', root: claude, body: 'b\n' });
+    const h = setup({
+      'r-claude': [
+        candidate({ slug: 'acme-case', root: claude }),
+        {
+          ...same,
+          draft: { ...same.draft, identity: { ...same.draft.identity, declaredName: 'ACME-case' } },
+        },
+        {
+          ...other,
+          draft: { ...other.draft, identity: { ...other.draft.identity, declaredName: 'Inna' } },
+        },
+      ],
+    });
+    const scan = await h.service.scan(['r-claude']);
+    await h.service.apply({
+      scanToken: scan.scanToken,
+      candidateIds: ['cand-1', 'cand-2', 'cand-3'],
+      renames: { 'cand-2': 'acme-case-2', 'cand-3': 'acme-case-3' },
+    });
+    const bySlug = new Map((await h.library.list()).items.map((i) => [i.identity.slug, i]));
+    expect(bySlug.get('acme-case-2')?.identity.declaredName).toBe('acme-case-2');
+    expect(bySlug.get('acme-case-3')?.identity.declaredName).toBe('Inna');
   });
 
   it('rename dla kandydata, ktory nie jest konfliktem, jest odrzucony', async () => {
