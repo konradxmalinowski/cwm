@@ -11,6 +11,8 @@ import type { RetentionLogRow } from '../../ports/retention';
 
 const DAY_MS = 86_400_000;
 const MIB = 1024 * 1024;
+/** Najnowsze grupy zostaja zawsze, niezaleznie od limitow wieku i rozmiaru (ADR 0056). */
+export const MIN_KEPT_GROUPS = 10;
 const WRITE_OPERATIONS: ReadonlySet<string> = new Set(['export', 'sync', 'rollback']);
 
 /** Wiersze jednej operacji, tak jak widzi je historia: wspolny `backup_id`, a bez niego pojedynczy wiersz. */
@@ -32,6 +34,8 @@ export interface LogGroup {
 export interface RetentionGroup extends LogGroup {
   /** Domkniecie `rootHashes` o obiekty, na ktore te wskazuja (assety, snapshoty, pliki z dysku). */
   readonly hashes: readonly Sha256[];
+  /** Korzen tej grupy nie dal sie odczytac, wiec `hashes` moze byc niepelne. */
+  readonly unreadable?: boolean;
 }
 
 export function groupLogRows(rows: readonly RetentionLogRow[]): LogGroup[] {
@@ -69,6 +73,8 @@ export interface RetentionPlanInput {
   readonly libraryHashes: readonly Sha256[];
   /** Obiekty obecne w store z rozmiarami w bajtach. */
   readonly objectSizes: ReadonlyMap<Sha256, number>;
+  /** Ile najnowszych grup jest nietykalnych; produkcja uzywa `MIN_KEPT_GROUPS`. */
+  readonly minKeepGroups: number;
 }
 
 export interface RetentionPlan {
@@ -82,6 +88,8 @@ export interface RetentionPlan {
   readonly bytesBefore: number;
   readonly bytesToFree: number;
   readonly sizeLimitUnmet: boolean;
+  /** Zegar jest przed najnowszym wpisem logu, wiec limit wieku zostal pominiety. */
+  readonly ageRuleSkipped: boolean;
 }
 
 export function planRetention(input: RetentionPlanInput): RetentionPlan {
@@ -98,6 +106,11 @@ export function planRetention(input: RetentionPlanInput): RetentionPlan {
       protectedKeys.add(g.key);
       break;
     }
+  }
+
+  // Podloga: najnowsze grupy zostaja bez wzgledu na limity.
+  for (const g of groups.slice(Math.max(0, groups.length - input.minKeepGroups))) {
+    protectedKeys.add(g.key);
   }
 
   const keyByBackup = new Map<string, string>();
@@ -137,7 +150,13 @@ export function planRetention(input: RetentionPlanInput): RetentionPlan {
   };
 
   let excess = settings.maxEntries === null ? 0 : Math.max(0, groups.length - settings.maxEntries);
-  const cutoff = settings.maxAgeDays === null ? null : input.nowMs - settings.maxAgeDays * DAY_MS;
+  // Zegar sprzed najnowszego wpisu to zegar nieprawdziwy: wiek niczego wtedy nie dowodzi.
+  const newestAt = Math.max(-Infinity, ...groups.map((g) => g.atMs ?? -Infinity));
+  const ageRuleSkipped = settings.maxAgeDays !== null && input.nowMs < newestAt;
+  const cutoff =
+    settings.maxAgeDays === null || ageRuleSkipped
+      ? null
+      : input.nowMs - settings.maxAgeDays * DAY_MS;
   for (const g of groups) {
     const expired = cutoff !== null && g.atMs !== null && g.atMs < cutoff;
     if (!expired && excess <= 0) continue;
@@ -175,5 +194,6 @@ export function planRetention(input: RetentionPlanInput): RetentionPlan {
     bytesBefore,
     bytesToFree,
     sizeLimitUnmet: limitBytes !== null && reachable > limitBytes,
+    ageRuleSkipped,
   };
 }

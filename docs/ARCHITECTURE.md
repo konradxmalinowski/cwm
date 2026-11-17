@@ -758,10 +758,10 @@ Kanały z handlerem:
 | `diagnostics:report` | brak | raport środowiska, nieznanych konstrukcji i stanu otwarcia indeksu |
 | `diagnostics:report-preview` | brak | `{ previewId, text, fileName, lineCount, logLineCount }`: pełna treść raportu po redakcji (ADR 0053) |
 | `diagnostics:report-save` | `{ previewId }` | `{ status: 'saved', fileName }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
-| `retention:get` | brak | `{ maxEntries, maxAgeDays, maxStoreMiB }`, każde pole liczbą albo `null` (bez limitu; ADR 0056) |
-| `retention:set` | `{ maxEntries, maxAgeDays, maxStoreMiB }` | zapisane ustawienia; zakresy sprawdza main, nieznane pola przepadają |
-| `retention:preview` | brak | suchy przebieg na zapisanych ustawieniach: `blocked`, liczby wpisów, obiektów i bajtów do usunięcia, `sizeLimitUnmet` |
-| `retention:apply` | `{ confirmed: true }` | te same liczby po wykonaniu, `objectsFailed` |
+| `retention:get` | brak | `{ maxEntries, maxAgeDays, maxStoreMiB, startupNotice }`, limity liczbą albo `null` (bez limitu), `startupNotice` to powód, dla którego czyszczenie przy starcie tej sesji nic nie zrobiło (ADR 0056) |
+| `retention:set` | `{ maxEntries, maxAgeDays, maxStoreMiB, confirmed? }` | zapisane ustawienia; zakresy sprawdza main, nieznane pola przepadają; włączenie albo zaostrzenie limitu bez `confirmed: true` to `confirmation-required` |
+| `retention:preview` | `{ settings? }` | suchy przebieg na podanych (albo zapisanych) limitach: `blocked`, liczby wpisów, obiektów i bajtów do usunięcia, `sizeLimitUnmet`, `ageRuleSkipped` i `previewToken` (jednorazowy, 5 minut) |
+| `retention:apply` | `{ confirmed: true, token }` | te same liczby po wykonaniu, `objectsFailed`; przerywa się (`plan-changed`), gdy przeliczony plan usuwa więcej niż podgląd |
 
 Każdy kanał z `IPC_CHANNELS` ma handler; rejestr przy starcie odmawia startu, gdy któregoś brakuje
 (`IMPLEMENTED_CHANNELS` to ta sama lista). Kanały `diff:compute`, `profiles:list`, `profiles:save`,
@@ -791,7 +791,8 @@ wyłącznie przez `confirmedItemIds`, a elementy projektowe nigdy.
 `retention:set` jest walidowany w main (trzy znane pola, liczby całkowite w zakresach), a `retention:apply` buduje wynik
 z jednego pola (`confirmed`). Podgląd i wykonanie liczą wszystko od nowa pod `OperationLock` w trybie wyłącznym
 (`tryEnterExclusive`, ta sama blokada co odbudowa indeksu): trwający zapis daje `busy` temu przebiegowi, a w trakcie
-przebiegu zapisy dostają `busy`. Kanały `retention:*` nie są w `WRITE_CHANNELS`, bo biorą blokadę same.
+przebiegu zapisy dostają `busy`. Kanały `retention:*` nie są w `WRITE_CHANNELS`, bo biorą blokadę same; za to każdy nowy kanał, który zapisuje obiekty
+albo wiersze logu, musi być w `WRITE_CHANNELS`, bo inaczej jego zapis w toku wyglądałby dla retencji na osierocone obiekty.
 
 `diagnostics:report-preview` i `diagnostics:report-save` (ADR 0053) składają raport do zgłoszenia błędu. Podgląd nie
 przyjmuje niczego; zapis przyjmuje tylko `previewId` (parser buduje wynik z jednego pola), a treść pochodzi z tego, co main

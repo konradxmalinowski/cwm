@@ -69,7 +69,24 @@ export function hasRetentionLimits(settings: RetentionSettings): boolean {
 }
 
 /** Dlaczego przebieg nie rusza niczego: nie da sie wykazac, ktore obiekty sa osiagalne. */
-export type RetentionBlockReason = 'library-unreadable' | 'object-unreadable';
+export type RetentionBlockReason =
+  /** Element biblioteki bez czytelnego `item.json`. */
+  | 'library-unreadable'
+  /** Brak katalogu `library/items`: biblioteka nie jest tym, czym byla, wiec nie wiadomo, co jest potrzebne. */
+  | 'library-missing'
+  /** Biblioteka pusta, a log i store niepuste: wyglada na utrate biblioteki, nie na jej brak. */
+  | 'library-empty'
+  /** Obiekt wskazywany przez wpis albo element jest uszkodzony, nieczytelny albo go brakuje. */
+  | 'object-unreadable'
+  /** Przebieg bez nadzoru usunalby ponad 90% wpisow. */
+  | 'mass-prune'
+  /** Przebieg bez nadzoru na pustym logu, a w store sa obiekty poza biblioteka. */
+  | 'empty-log'
+  /** Przeliczony plan usuwa wiecej niz pokazal podglad. */
+  | 'plan-changed'
+  /** Start na nowym, odbudowanym albo odlozonym do kwarantanny indeksie: log nie jest wiarygodny. */
+  | 'index-new'
+  | 'index-rebuilt';
 
 /** Wynik przebiegu: podgladu (`applied: false`) albo wykonanego czyszczenia. */
 export interface RetentionReport {
@@ -90,4 +107,6 @@ export interface RetentionReport {
   readonly objectsFailed: number;
   /** Wpisy w katalogu store, ktorych nie ruszamy (dowiazania, nie-pliki). */
   readonly objectsSkipped: number;
+  /** Zegar systemowy jest przed najnowszym wpisem logu, wiec limit wieku zostal pominiety. */
+  readonly ageRuleSkipped: boolean;
 }

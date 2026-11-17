@@ -12,8 +12,8 @@ const UNAVAILABLE = {
 } as const;
 
 /**
- * Kanaly `retention:*` (ADR 0056). Podglad i odczyt ustawien ignoruja ladunek; zapis ustawien
- * jest walidowany po stronie runnera, a wykonanie przyjmuje tylko potwierdzenie.
+ * Kanaly `retention:*` (ADR 0056). Ustawienia (zapis i opcjonalne ustawienia podgladu) sa walidowane
+ * po stronie runnera, a wykonanie przyjmuje tylko potwierdzenie i token z podgladu.
  */
 export function registerRetentionHandlers(registry: IpcRegistry, deps: RetentionHandlerDeps): void {
   registry.register('retention:get', () => deps.runner()?.getSettings() ?? UNAVAILABLE);
@@ -21,12 +21,15 @@ export function registerRetentionHandlers(registry: IpcRegistry, deps: Retention
     'retention:set',
     (payload) => deps.runner()?.setSettings(payload) ?? UNAVAILABLE,
   );
-  registry.register('retention:preview', () => deps.runner()?.preview() ?? UNAVAILABLE);
+  registry.register(
+    'retention:preview',
+    (payload) => deps.runner()?.preview(payload) ?? UNAVAILABLE,
+  );
   registry.register('retention:apply', (payload) => {
     const parsed = parseRetentionApplyRequest(payload);
     if (!parsed.ok) {
       return { ok: false, error: { code: 'invalid-request', message: parsed.message } };
     }
-    return deps.runner()?.apply(parsed.value.confirmed) ?? UNAVAILABLE;
+    return deps.runner()?.apply(parsed.value.confirmed, parsed.value.token) ?? UNAVAILABLE;
   });
 }

@@ -340,6 +340,7 @@ describe('planRetention: wybor wpisow i obiektow do usuniecia (ADR 0056)', () =>
     const plan = planRetention({
       settings: { ...NO_RETENTION_LIMITS, maxEntries: 2 },
       nowMs: NOW_MS,
+      minKeepGroups: 0,
       groups,
       libraryHashes: [],
       objectSizes: sizes,
@@ -361,6 +362,7 @@ describe('planRetention: wybor wpisow i obiektow do usuniecia (ADR 0056)', () =>
     const plan = planRetention({
       settings: { ...NO_RETENTION_LIMITS, maxAgeDays: 30 },
       nowMs: NOW_MS,
+      minKeepGroups: 0,
       groups,
       libraryHashes: [],
       objectSizes: new Map(),
@@ -374,6 +376,7 @@ describe('planRetention: wybor wpisow i obiektow do usuniecia (ADR 0056)', () =>
     const plan = planRetention({
       settings: NO_RETENTION_LIMITS,
       nowMs: NOW_MS,
+      minKeepGroups: 0,
       groups: groupsOf([logRow({ seq: 1 })]),
       libraryHashes: [inLibrary],
       objectSizes: new Map<Sha256, number>([
@@ -393,6 +396,7 @@ describe('planRetention: wybor wpisow i obiektow do usuniecia (ADR 0056)', () =>
     const plan = planRetention({
       settings: { ...NO_RETENTION_LIMITS, maxEntries: 1 },
       nowMs: NOW_MS,
+      minKeepGroups: 0,
       groups,
       libraryHashes: [],
       objectSizes: new Map(),
@@ -416,6 +420,7 @@ describe('planRetention: wybor wpisow i obiektow do usuniecia (ADR 0056)', () =>
     const plan = planRetention({
       settings: { ...NO_RETENTION_LIMITS, maxAgeDays: 30 },
       nowMs: NOW_MS,
+      minKeepGroups: 0,
       groups: groupsOf(rows),
       libraryHashes: [],
       objectSizes: new Map(),
@@ -433,7 +438,7 @@ describe('planRetention: wybor wpisow i obiektow do usuniecia (ADR 0056)', () =>
       'seq:3': [h3],
     });
     const sizes = new Map<Sha256, number>([h1, h2, h3, lib].map((h): [Sha256, number] => [h, MIB]));
-    const base = { nowMs: NOW_MS, groups, objectSizes: sizes };
+    const base = { nowMs: NOW_MS, groups, objectSizes: sizes, minKeepGroups: 0 };
 
     const trimmed = planRetention({
       ...base,
@@ -518,6 +523,9 @@ interface ServiceOptions {
   readonly settings?: Partial<RetentionSettings>;
   readonly libraryHashes?: readonly Sha256[];
   readonly libraryUnreadable?: number;
+  readonly libraryMissing?: boolean;
+  /** Domyslnie podloga jest wylaczona; `true` uzywa wartosci produkcyjnej. */
+  readonly productionFloor?: boolean;
   readonly failRemove?: Sha256;
   readonly manifests?: Readonly<Record<string, BackupManifestView>>;
 }
@@ -553,6 +561,7 @@ function retentionService(world: RetentionWorld, rows: RetentionLogRow[], o: Ser
         Promise.resolve({
           hashes: o.libraryHashes ?? [world.newRecord],
           unreadable: o.libraryUnreadable ?? 0,
+          rootMissing: o.libraryMissing ?? false,
         }),
     },
     settings: {
@@ -566,6 +575,7 @@ function retentionService(world: RetentionWorld, rows: RetentionLogRow[], o: Ser
       },
     }),
     clock: { now: () => new Date(NOW_MS) },
+    ...(o.productionFloor === true ? {} : { minKeepGroups: 0 }),
   });
   return { service, trace, log, audited };
 }
@@ -730,5 +740,178 @@ describe('RetentionService na prawdziwym content store (ADR 0056)', () => {
 
     expect(report.entriesRemoved).toBe(1);
     expect(await w.store.has(backupObject)).toBe(false);
+  });
+});
+
+describe('podloga, zegar i bezpieczniki przebiegu (ADR 0056)', () => {
+  it('plan: najnowsze grupy zostaja bez wzgledu na limit liczby wpisow', () => {
+    const rows = Array.from({ length: 12 }, (_, i) => logRow({ seq: i + 1 }));
+    const plan = planRetention({
+      settings: { ...NO_RETENTION_LIMITS, maxEntries: 1 },
+      nowMs: NOW_MS,
+      minKeepGroups: 10,
+      groups: groupsOf(rows),
+      libraryHashes: [],
+      objectSizes: new Map(),
+    });
+    expect(plan.pruneKeys).toEqual(['seq:1', 'seq:2']);
+  });
+
+  it('serwis uzywa podlogi 10 grup, gdy nie podano innej', async () => {
+    const w = await seedWorld();
+    const rows = Array.from({ length: 11 }, (_, i) =>
+      logRow({ seq: i + 1, at: '2026-01-01T00:00:00.000Z' }),
+    );
+    const { service, log } = retentionService(w, rows, {
+      settings: { maxAgeDays: 30 },
+      productionFloor: true,
+    });
+
+    const report = await service.run({ apply: true });
+
+    expect(report.entriesRemoved).toBe(1);
+    expect(log.seqs).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it('zegar sprzed najnowszego wpisu wylacza limit wieku', async () => {
+    const w = await seedWorld();
+    const future = logRow({ seq: 2, at: '2027-06-01T00:00:00.000Z', versionHashes: [w.newRecord] });
+    const { service, log } = retentionService(w, [oldRow(w), future], {
+      settings: { maxAgeDays: 30 },
+    });
+
+    const report = await service.run({ apply: true });
+
+    expect(report).toMatchObject({ ageRuleSkipped: true, entriesRemoved: 0 });
+    expect(log.seqs).toEqual([1, 2]);
+  });
+
+  it('przebieg bez nadzoru na pustym logu nie czysci store, a reczny przebieg tak', async () => {
+    const w = await seedWorld();
+    const { service } = retentionService(w, []);
+
+    const unattended = await service.run({ apply: true, unattended: true });
+    expect(unattended).toMatchObject({ applied: false, blocked: 'empty-log' });
+    expect(await w.store.has(w.orphan)).toBe(true);
+
+    const manual = await service.run({ apply: true });
+    expect(manual.blocked).toBeNull();
+    expect(await w.store.has(w.orphan)).toBe(false);
+  });
+
+  it('przebieg bez nadzoru odmawia usuniecia ponad 90% wpisow', async () => {
+    const w = await seedWorld();
+    const rows = [1, 2, 3].map((seq) => logRow({ seq, at: '2026-01-01T00:00:00.000Z' }));
+    const { service, log } = retentionService(w, rows, { settings: { maxAgeDays: 30 } });
+
+    const unattended = await service.run({ apply: true, unattended: true });
+    expect(unattended).toMatchObject({ applied: false, blocked: 'mass-prune' });
+    expect(log.seqs).toEqual([1, 2, 3]);
+
+    expect((await service.run({ apply: true })).entriesRemoved).toBe(3);
+  });
+
+  it('wykonanie z pulapem przerywa sie, gdy plan usuwa wiecej, niz pokazal podglad', async () => {
+    const w = await seedWorld();
+    const { service, trace } = retentionService(w, [oldRow(w), newRow(w)], {
+      settings: { maxAgeDays: 30 },
+    });
+
+    const aborted = await service.run({ apply: true, ceiling: { entries: 0, objects: 3 } });
+    expect(aborted).toMatchObject({ applied: false, blocked: 'plan-changed' });
+    expect(trace).toEqual([]);
+
+    const allowed = await service.run({ apply: true, ceiling: { entries: 1, objects: 3 } });
+    expect(allowed).toMatchObject({ applied: true, entriesRemoved: 1 });
+  });
+
+  it('podglad z innymi limitami niz zapisane liczy na podanych', async () => {
+    const w = await seedWorld();
+    const { service } = retentionService(w, [oldRow(w), newRow(w)]);
+
+    const report = await service.run({
+      apply: false,
+      settings: { ...NO_RETENTION_LIMITS, maxAgeDays: 30 },
+    });
+
+    expect(report.entriesRemoved).toBe(1);
+  });
+});
+
+describe('fail closed: brakujace i nieczytelne korzenie (ADR 0056)', () => {
+  it('brak katalogu kopii (ENOENT) nie blokuje, inny blad odczytu MANIFEST blokuje', async () => {
+    const w = await seedWorld();
+    const rows = [logRow({ seq: 1, operation: 'export', backupId: 'b1' }), newRow(w)];
+    const make = (error: Error) =>
+      new RetentionService({
+        log: new FakeRetentionLog(rows, []),
+        objects: w.store,
+        inventory: new FsObjectInventory(w.dir),
+        backups: {
+          readManifest: () => Promise.reject(error),
+          readFile: () => Promise.reject(new Error('nie uzywane')),
+        },
+        library: {
+          roots: () =>
+            Promise.resolve({ hashes: [w.newRecord], unreadable: 0, rootMissing: false }),
+        },
+        settings: {
+          load: () => Promise.resolve(NO_RETENTION_LIMITS),
+          save: () => Promise.resolve(),
+        },
+        audit: () => null,
+        clock: { now: () => new Date(NOW_MS) },
+        minKeepGroups: 0,
+      });
+
+    const missing = await make(Object.assign(new Error('brak'), { code: 'ENOENT' })).run({
+      apply: false,
+    });
+    expect(missing.blocked).toBeNull();
+
+    const denied = await make(Object.assign(new Error('brak praw'), { code: 'EACCES' })).run({
+      apply: false,
+    });
+    expect(denied.blocked).toBe('object-unreadable');
+    const broken = await make(new SyntaxError('zly JSON')).run({ apply: false });
+    expect(broken.blocked).toBe('object-unreadable');
+  });
+
+  it('korzen zachowanego wpisu, ktorego nie ma w store, blokuje; w przycietym wpisie nie', async () => {
+    const w = await seedWorld();
+    const ghost = hashOf('9');
+    const ghostRow = logRow({
+      seq: 1,
+      at: '2026-01-01T00:00:00.000Z',
+      versionHashes: [ghost],
+    });
+
+    const retained = retentionService(w, [ghostRow, newRow(w)]);
+    expect((await retained.service.run({ apply: true })).blocked).toBe('object-unreadable');
+    expect(await w.store.has(w.orphan)).toBe(true);
+
+    const pruned = retentionService(w, [ghostRow, newRow(w)], { settings: { maxAgeDays: 30 } });
+    const report = await pruned.service.run({ apply: true });
+    expect(report.blocked).toBeNull();
+    expect(report.entriesRemoved).toBe(1);
+  });
+
+  it('korzen elementu biblioteki, ktorego nie ma w store, blokuje przebieg', async () => {
+    const w = await seedWorld();
+    const { service } = retentionService(w, [newRow(w)], { libraryHashes: [hashOf('8')] });
+    expect((await service.run({ apply: true })).blocked).toBe('object-unreadable');
+  });
+
+  it('brak katalogu biblioteki i pusta biblioteka przy niepustym logu i store blokuja', async () => {
+    const w = await seedWorld();
+    const missing = retentionService(w, [newRow(w)], { libraryMissing: true });
+    expect((await missing.service.run({ apply: true })).blocked).toBe('library-missing');
+
+    const empty = retentionService(w, [newRow(w)], { libraryHashes: [] });
+    expect((await empty.service.run({ apply: true })).blocked).toBe('library-empty');
+    expect(await w.store.has(w.orphan)).toBe(true);
+
+    const noLog = retentionService(w, [], { libraryHashes: [] });
+    expect((await noLog.service.run({ apply: false })).blocked).toBeNull();
   });
 });

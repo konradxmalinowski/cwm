@@ -1,5 +1,9 @@
 import type { ItemId, Sha256 } from '../../model/item';
-import type { RetentionBlockReason, RetentionReport } from '../../model/retention';
+import type {
+  RetentionBlockReason,
+  RetentionReport,
+  RetentionSettings,
+} from '../../model/retention';
 import type { BackupReader } from '../../ports/backup-reader';
 import type { Clock } from '../../ports/clock';
 import type { ObjectStore } from '../../ports/object-store';
@@ -11,7 +15,12 @@ import type {
   RetentionSettingsStore,
 } from '../../ports/retention';
 import { childHashes } from './object-refs';
-import { groupLogRows, planRetention, type RetentionGroup } from './retention-plan';
+import {
+  MIN_KEPT_GROUPS,
+  groupLogRows,
+  planRetention,
+  type RetentionGroup,
+} from './retention-plan';
 
 /**
  * Przebieg retencji (ADR 0056): mark-and-sweep nad content store z suchym przebiegiem.
@@ -34,15 +43,39 @@ export interface RetentionServiceDeps {
   readonly audit: () => OperationLog | null;
   readonly clock: Clock;
   readonly onUnexpected?: (error: unknown) => void;
+  /** Szew testowy: produkcja zawsze uzywa `MIN_KEPT_GROUPS`. */
+  readonly minKeepGroups?: number;
+}
+
+export interface RetentionRunOptions {
+  readonly apply: boolean;
+  /** Limity zamiast zapisanych (podglad zmiany, ktora jeszcze nie jest zapisana). */
+  readonly settings?: RetentionSettings;
+  /** Przebieg bez udzialu uzytkownika (start aplikacji): ostrzejsze bezpieczniki. */
+  readonly unattended?: boolean;
+  /** Wykonanie przerywa sie, gdy przeliczony plan usuwa wiecej, niz pokazal podglad. */
+  readonly ceiling?: { readonly entries: number; readonly objects: number };
 }
 
 /** Wpis logu przyciecia nie dotyczy elementu; kolumna `item_id` jest obowiazkowa. */
 const RETENTION_ITEM_ID = 'retention' as ItemId;
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
+/** Przebieg bez nadzoru nie usuwa wiecej niz ta czesc wpisow. */
+const UNATTENDED_MAX_PRUNE_RATIO = 0.9;
 
-interface Resolution {
-  /** `true`, gdy ktorys korzen nie dal sie odczytac, wiec jego dzieci sa nieznane. */
-  unreadable: boolean;
+interface Closure {
+  readonly hashes: readonly Sha256[];
+  /** Ktorys korzen jest uszkodzony, nieczytelny albo go brakuje. */
+  readonly unreadable: boolean;
+}
+
+interface Children {
+  readonly hashes: readonly Sha256[];
+  readonly readable: boolean;
+}
+
+function isNotFound(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }
 
 export class RetentionService {
@@ -52,35 +85,64 @@ export class RetentionService {
    * Suchy przebieg (`apply: false`) liczy to samo co wykonanie, ale niczego nie zmienia.
    * Obiekty osierocone przez wczesniej przerwany przebieg sa liczone tak samo jak inne bez odwolan.
    */
-  async run(options: { readonly apply: boolean }): Promise<RetentionReport> {
-    const settings = await this.deps.settings.load();
+  async run(options: RetentionRunOptions): Promise<RetentionReport> {
+    const settings = options.settings ?? (await this.deps.settings.load());
     const rows = await this.deps.log.rows();
     const logGroups = groupLogRows(rows);
     const listing = await this.deps.inventory.list();
-    const resolution: Resolution = { unreadable: false };
-    const cache = new Map<Sha256, readonly Sha256[]>();
+    const cache = new Map<Sha256, Children>();
+    const blocked = (reason: RetentionBlockReason): RetentionReport =>
+      this.blocked(reason, logGroups.length, listing);
 
     const library = await this.deps.library.roots();
-    if (library.unreadable > 0) {
-      return this.blocked('library-unreadable', logGroups.length, listing);
+    if (library.rootMissing) return blocked('library-missing');
+    if (library.unreadable > 0) return blocked('library-unreadable');
+    if (library.hashes.length === 0 && logGroups.length > 0 && listing.objects.size > 0) {
+      return blocked('library-empty');
     }
-    const libraryHashes = await this.closure(library.hashes, cache, resolution);
+    const libraryClosure = await this.closure(library.hashes, cache);
+    if (libraryClosure.unreadable) return blocked('object-unreadable');
 
     const groups: RetentionGroup[] = [];
     for (const group of logGroups) {
-      const closed = await this.closure(group.rootHashes, cache, resolution);
-      const backup = group.backupId === null ? [] : await this.backupHashes(group.backupId);
-      groups.push({ ...group, hashes: [...new Set([...closed, ...backup])] });
+      const closed = await this.closure(group.rootHashes, cache);
+      const backup = group.backupId === null ? null : await this.backupHashes(group.backupId);
+      groups.push({
+        ...group,
+        hashes: [...new Set([...closed.hashes, ...(backup?.hashes ?? [])])],
+        unreadable: closed.unreadable || backup?.readable === false,
+      });
     }
-    if (resolution.unreadable) return this.blocked('object-unreadable', logGroups.length, listing);
 
     const plan = planRetention({
       settings,
       nowMs: this.deps.clock.now().getTime(),
       groups,
-      libraryHashes,
+      libraryHashes: libraryClosure.hashes,
       objectSizes: listing.objects,
+      minKeepGroups: this.deps.minKeepGroups ?? MIN_KEPT_GROUPS,
     });
+
+    // Nieczytelny korzen grupy, ktora i tak znika, nie jest przeszkoda; w zachowanej grupie tak,
+    // bo jej dzieci sa nieznane i mogly by zostac uznane za sieroty.
+    const pruned = new Set(plan.pruneKeys);
+    if (groups.some((g) => g.unreadable === true && !pruned.has(g.key))) {
+      return blocked('object-unreadable');
+    }
+    if (options.unattended === true) {
+      if (logGroups.length === 0 && plan.sweep.length > 0) return blocked('empty-log');
+      if (plan.pruneKeys.length > plan.entriesBefore * UNATTENDED_MAX_PRUNE_RATIO) {
+        return blocked('mass-prune');
+      }
+    }
+    const { ceiling } = options;
+    if (
+      options.apply &&
+      ceiling !== undefined &&
+      (plan.pruneKeys.length > ceiling.entries || plan.sweep.length > ceiling.objects)
+    ) {
+      return blocked('plan-changed');
+    }
 
     const base = {
       blocked: null,
@@ -89,6 +151,7 @@ export class RetentionService {
       bytesBefore: plan.bytesBefore,
       sizeLimitUnmet: plan.sizeLimitUnmet,
       objectsSkipped: listing.skipped,
+      ageRuleSkipped: plan.ageRuleSkipped,
     } as const;
 
     if (!options.apply) {
@@ -151,46 +214,53 @@ export class RetentionService {
       sizeLimitUnmet: false,
       objectsFailed: 0,
       objectsSkipped: listing.skipped,
+      ageRuleSkipped: false,
     };
   }
 
-  /** Korzenie i obiekty, na ktore te wskazuja. Nieczytelny korzen blokuje przebieg, bo jego dzieci sa nieznane. */
-  private async closure(
-    roots: readonly Sha256[],
-    cache: Map<Sha256, readonly Sha256[]>,
-    resolution: Resolution,
-  ): Promise<readonly Sha256[]> {
+  /** Korzenie i obiekty, na ktore te wskazuja. Nieczytelny albo brakujacy korzen jest zgloszony, bo jego dzieci sa nieznane. */
+  private async closure(roots: readonly Sha256[], cache: Map<Sha256, Children>): Promise<Closure> {
     const out = new Set<Sha256>();
+    let unreadable = false;
     for (const root of roots) {
       out.add(root);
       let children = cache.get(root);
       if (children === undefined) {
-        children = await this.childrenOf(root, resolution);
+        children = await this.childrenOf(root);
         cache.set(root, children);
       }
-      for (const child of children) out.add(child);
+      if (!children.readable) unreadable = true;
+      for (const child of children.hashes) out.add(child);
     }
-    return [...out];
+    return { hashes: [...out], unreadable };
   }
 
-  private async childrenOf(hash: Sha256, resolution: Resolution): Promise<readonly Sha256[]> {
+  private async childrenOf(hash: Sha256): Promise<Children> {
     try {
       const bytes = await this.deps.objects.get(hash);
-      return bytes === null ? [] : childHashes(bytes);
+      // Korzen z wiersza logu albo z biblioteki, ktorego nie ma w store, to historia z dziura:
+      // nie wiadomo, na co wskazywal.
+      return bytes === null
+        ? { hashes: [], readable: false }
+        : { hashes: childHashes(bytes), readable: true };
     } catch (error: unknown) {
-      resolution.unreadable = true;
       this.deps.onUnexpected?.(error);
-      return [];
+      return { hashes: [], readable: false };
     }
   }
 
-  /** Kopie z MANIFEST wpisu. Brak kopii na dysku nie blokuje: cofniecie takiego wpisu i tak by sie nie udalo. */
-  private async backupHashes(backupId: string): Promise<readonly Sha256[]> {
+  /**
+   * Kopie z MANIFEST wpisu. Brak katalogu kopii (ENOENT) nie blokuje: cofniecie takiego wpisu i tak
+   * by sie nie udalo. Kazdy inny blad (uprawnienia, uszkodzony MANIFEST) to kopia nieczytelna.
+   */
+  private async backupHashes(backupId: string): Promise<Children> {
     let manifest;
     try {
       manifest = await this.deps.backups.readManifest(backupId);
-    } catch {
-      return [];
+    } catch (error: unknown) {
+      if (isNotFound(error)) return { hashes: [], readable: true };
+      this.deps.onUnexpected?.(error);
+      return { hashes: [], readable: false };
     }
     const found: string[] = [];
     for (const entry of manifest.entries) {
@@ -199,7 +269,7 @@ export class RetentionService {
         for (const file of entry.before.files) found.push(file.sha256);
       }
     }
-    return found.filter((hash) => HASH_PATTERN.test(hash)) as Sha256[];
+    return { hashes: found.filter((hash) => HASH_PATTERN.test(hash)) as Sha256[], readable: true };
   }
 
   /** Awaria wpisu w logu nie cofa przyciecia: to ono juz sie stalo. */

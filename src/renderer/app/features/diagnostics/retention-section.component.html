@@ -4,7 +4,7 @@
     Historia trzyma pełne treści każdej wersji, więc content store tylko rośnie. Tu ustawisz, ile
     wpisów i jak długo zachować. Obiekt znika wyłącznie wtedy, gdy nie prowadzi do niego żaden
     zachowany wpis ani element biblioteki. Biblioteka i ostatnia operacja, którą da się cofnąć, są
-    zawsze chronione. Pole puste znaczy brak limitu.
+    zawsze chronione, tak samo jak 10 najnowszych wpisów. Pole puste znaczy brak limitu.
   </p>
 
   @let l = load();
@@ -51,8 +51,8 @@
         type="button"
         class="btn"
         data-testid="retention-save"
-        [disabled]="!dirty() || !parsed().ok || save().status === 'saving'"
-        (click)="saveSettings()"
+        [disabled]="!parsed().ok || save().status === 'saving' || run().status === 'applying'"
+        (click)="onSave()"
       >
         {{ save().status === 'saving' ? 'Zapisuję…' : 'Zapisz ustawienia' }}
       </button>
@@ -75,27 +75,34 @@
       </div>
     }
 
+    @if (startupNotice(); as notice) {
+      <div class="notice" role="note" data-testid="retention-startup-notice">
+        <p class="notice__text">
+          <span class="notice__label">Czyszczenie przy starcie nie zadziałało.</span>
+          {{ blockedText(notice) }}
+        </p>
+      </div>
+    }
+
     <h3 class="field__label" id="retention-clean">Wyczyść teraz</h3>
     @let r = run();
     @if (r.status === 'idle') {
       <p class="notice__text">
-        Podgląd pokazuje, ile wpisów i danych zniknie przy zapisanych ustawieniach, i niczego nie
+        Podgląd pokazuje, ile wpisów i danych zniknie przy limitach z formularza, i niczego nie
         zmienia. Bez limitów czyszczenie usuwa tylko obiekty, do których nic już nie prowadzi.
+        Zaostrzenie limitu zapiszesz dopiero po obejrzeniu podglądu.
       </p>
       <p class="row-actions">
         <button
           type="button"
           class="btn"
           data-testid="retention-preview"
-          [disabled]="dirty()"
-          (click)="openPreview()"
+          [disabled]="!parsed().ok"
+          (click)="openPreview('clean')"
         >
           Sprawdź, ile zwolni
         </button>
       </p>
-      @if (dirty()) {
-        <p class="hints">Zapisz poprawne ustawienia, żeby sprawdzić, ile zwolni.</p>
-      }
     } @else if (r.status === 'working') {
       <p role="status" data-testid="retention-working">Liczę, co można usunąć.</p>
     } @else if (r.status === 'preview' || r.status === 'applying') {
@@ -108,7 +115,7 @@
         </div>
         <p class="row-actions">
           <button type="button" class="btn" (click)="cancel()">Zamknij</button>
-          <button type="button" class="btn" (click)="openPreview()">Sprawdź ponownie</button>
+          <button type="button" class="btn" (click)="openPreview('clean')">Sprawdź ponownie</button>
         </p>
       } @else {
         <div data-testid="retention-plan">
@@ -126,6 +133,12 @@
               {{ formatBytes(p.bytesFreed) }} z {{ formatBytes(p.bytesBefore) }}
             </dd>
           </dl>
+          @if (p.ageRuleSkipped) {
+            <p class="notice__text" data-testid="retention-age-skipped">
+              Zegar systemowy jest przed najnowszym wpisem historii, więc limit wieku został
+              pominięty.
+            </p>
+          }
           @if (p.sizeLimitUnmet) {
             <p class="notice__text" data-testid="retention-limit-unmet">
               Limit rozmiaru nie zostanie osiągnięty: reszta jest potrzebna bibliotece albo
@@ -142,6 +155,8 @@
             <p class="notice__text" data-testid="retention-nothing">
               Nie ma nic do usunięcia przy tych ustawieniach.
             </p>
+          }
+          @if (!hasChanges(p) && !canSaveWithoutChanges()) {
             <p class="row-actions">
               <button type="button" class="btn" (click)="cancel()">Zamknij</button>
             </p>
@@ -165,9 +180,9 @@
                 class="btn btn--primary"
                 data-testid="retention-apply"
                 [disabled]="r.status !== 'preview' || !r.acknowledged"
-                (click)="apply()"
+                (click)="confirm()"
               >
-                {{ r.status === 'applying' ? 'Czyszczę…' : 'Wyczyść teraz' }}
+                {{ confirmLabel() }}
               </button>
               <button
                 type="button"

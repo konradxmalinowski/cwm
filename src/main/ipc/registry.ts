@@ -14,6 +14,11 @@ export type IpcHandler = (payload: unknown) => unknown;
 /**
  * Kanaly, ktore zapisuja (biblioteka, import, eksport, synchronizacja, cofniecie). Wchodza pod
  * wspolna blokade z reczna odbudowa indeksu (ADR 0030): w trakcie odbudowy odpowiadaja `busy`.
+ *
+ * Kazdy nowy kanal, ktory zapisuje obiekty do content store albo wiersze do logu operacji, musi
+ * byc na tej liscie. Przebieg retencji (ADR 0056) jest bezpieczny tylko dlatego, ze zadnego takiego
+ * zapisu nie ma w jego trakcie; kanal poza lista moglby wlozyc obiekt, zanim dopisze wiersz logu,
+ * i obiekt wygladalby na osierocony.
  */
 export const WRITE_CHANNELS: ReadonlySet<IpcChannel> = new Set<IpcChannel>([
   'library:save',

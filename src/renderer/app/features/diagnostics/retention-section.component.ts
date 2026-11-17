@@ -8,7 +8,10 @@ import {
 } from '@angular/core';
 
 import { hasRetentionLimits, RETENTION_BOUNDS } from '../../../../core/model/retention';
-import type { RetentionSettingsDto } from '../../../../shared/ipc/retention-contract';
+import type {
+  RetentionBlockedDto,
+  RetentionSettingsDto,
+} from '../../../../shared/ipc/retention-contract';
 import { RetentionApiService } from '../../core/ipc/retention-api.service';
 import { formatBytes } from '../../core/labels';
 import {
@@ -16,6 +19,7 @@ import {
   blockedText,
   formFromSettings,
   hasChanges,
+  isTightening,
   parseForm,
   sameSettings,
   type RetentionField,
@@ -72,6 +76,8 @@ export class RetentionSectionComponent implements OnInit {
   protected readonly save = signal<SaveState>({ status: 'idle' });
   protected readonly run = signal<RetentionRunState>({ status: 'idle' });
   protected readonly saved = signal<RetentionSettingsDto | null>(null);
+  /** Powod, dla ktorego czyszczenie przy starcie tej sesji niczego nie zrobilo. */
+  protected readonly startupNotice = signal<RetentionBlockedDto | null>(null);
   protected readonly form = signal<RetentionForm>({
     maxEntries: '',
     maxAgeDays: '',
@@ -93,6 +99,12 @@ export class RetentionSectionComponent implements OnInit {
     const saved = this.saved();
     return saved !== null && hasRetentionLimits(saved);
   });
+  /** Zapis wlacza albo zmniejsza limit: najpierw podglad i potwierdzenie. */
+  protected readonly tightening = computed(() => {
+    const result = this.parsed();
+    const saved = this.saved();
+    return result.ok && saved !== null && isTightening(saved, result.value);
+  });
 
   ngOnInit(): void {
     void this.reload();
@@ -105,9 +117,19 @@ export class RetentionSectionComponent implements OnInit {
       this.load.set({ status: 'error', message: result.error.message });
       return;
     }
-    this.saved.set(result.value);
-    this.form.set(formFromSettings(result.value));
+    this.startupNotice.set(result.value.startupNotice);
+    this.applySaved(result.value);
     this.load.set({ status: 'ready' });
+  }
+
+  private applySaved(settings: RetentionSettingsDto): void {
+    const plain = {
+      maxEntries: settings.maxEntries,
+      maxAgeDays: settings.maxAgeDays,
+      maxStoreMiB: settings.maxStoreMiB,
+    };
+    this.saved.set(plain);
+    this.form.set(formFromSettings(plain));
   }
 
   protected onInput(field: RetentionField, value: string): void {
@@ -116,29 +138,38 @@ export class RetentionSectionComponent implements OnInit {
     if (this.run().status !== 'idle') this.run.set({ status: 'idle' });
   }
 
-  protected async saveSettings(): Promise<void> {
-    const result = this.parsed();
-    if (!result.ok || this.save().status === 'saving') return;
-    this.save.set({ status: 'saving' });
-    const response = await this.api.setSettings(result.value);
-    if (!response.ok) {
-      this.save.set({ status: 'error', message: response.error.message });
+  /** Zaostrzenie limitu idzie przez podglad i potwierdzenie; poluzowanie zapisuje sie od razu. */
+  protected async onSave(): Promise<void> {
+    if (this.tightening()) {
+      await this.openPreview('save');
       return;
     }
-    this.saved.set(response.value);
-    this.form.set(formFromSettings(response.value));
-    this.save.set({ status: 'saved' });
-    this.run.set({ status: 'idle' });
+    await this.persist(false);
   }
 
-  protected async openPreview(): Promise<void> {
-    if (this.dirty()) return;
+  private async persist(confirmed: boolean): Promise<boolean> {
+    const result = this.parsed();
+    if (!result.ok || this.save().status === 'saving') return false;
+    this.save.set({ status: 'saving' });
+    const response = await this.api.setSettings(result.value, confirmed);
+    if (!response.ok) {
+      this.save.set({ status: 'error', message: response.error.message });
+      return false;
+    }
+    this.applySaved(response.value);
+    this.save.set({ status: 'saved' });
+    return true;
+  }
+
+  protected async openPreview(intent: 'save' | 'clean'): Promise<void> {
+    const result = this.parsed();
+    if (!result.ok) return;
     this.run.set({ status: 'working' });
-    const result = await this.api.preview();
+    const response = await this.api.preview(this.dirty() ? result.value : undefined);
     this.run.set(
-      result.ok
-        ? { status: 'preview', report: result.value, acknowledged: false }
-        : { status: 'error', step: 'preview', message: result.error.message },
+      response.ok
+        ? { status: 'preview', report: response.value, intent, acknowledged: false }
+        : { status: 'error', step: 'preview', message: response.error.message },
     );
   }
 
@@ -151,11 +182,43 @@ export class RetentionSectionComponent implements OnInit {
     this.run.set({ status: 'idle' });
   }
 
-  protected async apply(): Promise<void> {
+  /** Podglad przed zapisem zaostrzonego limitu nie ma nic do usuniecia, ale zapis nadal wymaga potwierdzenia. */
+  protected canSaveWithoutChanges(): boolean {
     const state = this.run();
-    if (state.status !== 'preview' || !state.acknowledged || !hasChanges(state.report)) return;
-    this.run.set({ status: 'applying', report: state.report });
-    const result = await this.api.apply();
+    return state.status === 'applying' || (state.status === 'preview' && state.intent === 'save');
+  }
+
+  protected confirmLabel(): string {
+    const state = this.run();
+    if (state.status === 'applying') return 'Pracuję…';
+    if (state.status === 'preview' && state.intent === 'save') return 'Zapisz ustawienia';
+    return this.dirty() ? 'Zapisz i wyczyść teraz' : 'Wyczyść teraz';
+  }
+
+  /** Zapisuje limity (z potwierdzeniem), a dla "Wyczyść teraz" wykonuje przebieg z tokenem podgladu. */
+  protected async confirm(): Promise<void> {
+    const state = this.run();
+    if (state.status !== 'preview' || !state.acknowledged) return;
+    const { report, intent } = state;
+    const token = report.previewToken;
+    if (intent === 'clean' && (!hasChanges(report) || token === null)) return;
+    this.run.set({ status: 'applying', report });
+    if (this.dirty() || intent === 'save') {
+      if (!(await this.persist(true))) {
+        const failed = this.save();
+        this.run.set({
+          status: 'error',
+          step: 'apply',
+          message: failed.status === 'error' ? failed.message : 'Nie zapisano ustawień.',
+        });
+        return;
+      }
+    }
+    if (intent === 'save' || token === null) {
+      this.run.set({ status: 'idle' });
+      return;
+    }
+    const result = await this.api.apply(token);
     this.run.set(
       result.ok
         ? { status: 'done', report: result.value }

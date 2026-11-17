@@ -46,6 +46,8 @@ export interface RetentionRoots {
   readonly hashes: readonly Sha256[];
   /** Elementy, ktorych wskaznika na rekord wersji nie da sie ustalic. */
   readonly unreadable: number;
+  /** Brak katalogu biblioteki (`library/items`): to nie to samo co pusta biblioteka. */
+  readonly rootMissing: boolean;
 }
 
 /** Korzenie osiagalnosci z biblioteki: rekordy wersji wskazywane przez `item.json` elementow. */

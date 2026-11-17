@@ -758,6 +758,10 @@ describe('retentionRoots (ADR 0056)', () => {
     const { item } = await h.service.create(draft());
     h.store.unreadableItemJson.set(item.id, new Error('EIO'));
 
-    expect(await h.service.retentionRoots()).toEqual({ hashes: [], unreadable: 1 });
+    expect(await h.service.retentionRoots()).toEqual({
+      hashes: [],
+      unreadable: 1,
+      rootMissing: false,
+    });
   });
 });

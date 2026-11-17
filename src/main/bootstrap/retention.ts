@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { systemClock } from '../../core/ports/clock';
@@ -12,7 +13,7 @@ import { FsObjectInventory } from '../../infra/store/object-inventory';
 import { FsObjectStore } from '../../infra/store/object-store';
 import { FsRetentionSettingsStore } from '../../infra/store/retention-settings';
 import { indexBackedOperationLog } from './library';
-import { objectsRoot } from './paths';
+import { libraryRoot, objectsRoot } from './paths';
 
 export interface RetentionBootstrapDeps {
   readonly userDataDir: string;
@@ -71,6 +72,11 @@ export function createRetentionService(
       roots: () => {
         const library = deps.library();
         if (library === null) return Promise.reject(new Error('biblioteka jest niedostepna'));
+        // Brak `library/items` to nie pusta biblioteka: start tworzy ten katalog, wiec jego brak
+        // znaczy, ze ktos go usunal, a wtedy nie wiadomo, co jest potrzebne.
+        if (!existsSync(join(libraryRoot(deps.userDataDir), 'items'))) {
+          return Promise.resolve({ hashes: [], unreadable: 0, rootMissing: true });
+        }
         return library.retentionRoots();
       },
     },

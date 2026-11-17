@@ -382,7 +382,7 @@ export class LibraryService {
           unreadable += 1;
         }
       }
-      return { hashes: [...hashes], unreadable };
+      return { hashes: [...hashes], unreadable, rootMissing: false };
     });
   }
 

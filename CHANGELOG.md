@@ -15,7 +15,7 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
   usuwany wyłącznie wtedy, gdy nie prowadzi do niego żaden zachowany wpis historii, kopia zapisu ani element biblioteki;
   wiek obiektu nie ma znaczenia. Biblioteka i ostatnia operacja, którą da się cofnąć, są zawsze chronione, a gdy aplikacja
   nie potrafi odczytać któregoś elementu albo obiektu, nic nie usuwa. Przycięcie wpisów jest nieodwracalne, bo log operacji nie
-  wraca z plików (ADR 0014). Przy włączonym limicie to samo czyszczenie wykonuje się przy starcie. Wynik trafia do Historii
+  wraca z plików (ADR 0014). 10 najnowszych wpisów zostaje zawsze. Włączenie albo zaostrzenie limitu wymaga obejrzenia podglądu i potwierdzenia. Przy włączonym limicie to samo czyszczenie wykonuje się przy starcie, ale nie na nowym, odbudowanym ani odłożonym do kwarantanny indeksie i nie wtedy, gdy usunęłoby ponad 90% wpisów; powód jest widoczny w Diagnostyce. Wynik trafia do Historii
   jako wpis "Przycięcie historii". Katalog `backups/` nie jest czyszczony.
 
 - Trzeci adapter: Gemini CLI (ADR 0055). Aplikacja wykrywa `~/.gemini` (z `GEMINI_CLI_HOME`), importuje stamtąd skille,

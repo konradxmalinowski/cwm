@@ -14,11 +14,37 @@ export interface RetentionSettingsDto {
   maxStoreMiB: number | null;
 }
 
+export type RetentionBlockedDto =
+  | 'library-unreadable'
+  | 'library-missing'
+  | 'library-empty'
+  | 'object-unreadable'
+  | 'mass-prune'
+  | 'empty-log'
+  | 'plan-changed'
+  | 'index-new'
+  | 'index-rebuilt';
+
+/** Ustawienia i powod, dla ktorego przebieg przy starcie tej sesji niczego nie zrobil (albo `null`). */
+export interface RetentionStateDto extends RetentionSettingsDto {
+  startupNotice: RetentionBlockedDto | null;
+}
+
+/** Zapis, ktory wlacza albo zaostrza limit, wymaga `confirmed: true` (po obejrzeniu podgladu). */
+export interface RetentionSetRequest extends RetentionSettingsDto {
+  confirmed?: boolean;
+}
+
+/** Bez `settings` podglad liczy na zapisanych ustawieniach. */
+export interface RetentionPreviewRequest {
+  settings?: RetentionSettingsDto;
+}
+
 export interface RetentionReportDto {
   /** `false` w podgladzie. */
   applied: boolean;
   /** Powod, dla ktorego main niczego nie ruszyl, bo nie potrafi wykazac osiagalnosci obiektow. */
-  blocked: 'library-unreadable' | 'object-unreadable' | null;
+  blocked: RetentionBlockedDto | null;
   entriesBefore: number;
   /** W podgladzie: ile wpisow zostanie usunietych. Po wykonaniu: ile usunieto. */
   entriesRemoved: number;
@@ -31,12 +57,18 @@ export interface RetentionReportDto {
   /** Pliki, ktorych nie udalo sie usunac; zostana posprzatane w nastepnym przebiegu. */
   objectsFailed: number;
   objectsSkipped: number;
+  /** Zegar jest przed najnowszym wpisem logu, wiec limit wieku zostal pominiety. */
+  ageRuleSkipped: boolean;
+  /** Tylko w podgladzie bez blokady: zezwolenie na wykonanie, wazne kilka minut, jednorazowe. */
+  previewToken: string | null;
 }
 
 export interface RetentionApplyRequest {
   /** Jawne potwierdzenie, ze wpisy i obiekty znikaja bez mozliwosci odzyskania. */
   confirmed: true;
+  /** Token z podgladu zapisanych ustawien; wykonanie przerywa sie, gdy plan urosl. */
+  token: string;
 }
 
-export type RetentionSettingsResult = Result<RetentionSettingsDto>;
+export type RetentionStateResult = Result<RetentionStateDto>;
 export type RetentionReportResult = Result<RetentionReportDto>;

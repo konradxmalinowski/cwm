@@ -39,6 +39,7 @@ import { IndexRebuildService } from './services/index-rebuild';
 import { RetentionRunner } from './services/retention-runner';
 import { OperationLock } from './services/write-lock';
 import { systemClock } from '../core/ports/clock';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 registerAppScheme();
@@ -343,6 +344,9 @@ function start(): void {
         .catch(logExportError);
     }
 
+    // Czy plik indeksu istnial przed startem: nowy indeks ma pusty log, a pusty log nie jest dowodem,
+    // ze obiekty w store sa zbedne (ADR 0056).
+    const indexExisted = existsSync(dbPath);
     const result = startIndex({
       openStore: () => SqliteIndexStore.open(dbPath, { home }),
       // Nazwa pliku w kwarantannie (kontrakt `quarantinedAs`), nie katalog.
@@ -374,7 +378,14 @@ function start(): void {
 
     // Po wypelnieniu indeksu i zwolnieniu blokady: przebieg retencji, tylko przy wlaczonych limitach.
     // Osobny lancuch, zeby raport diagnostyczny nie czekal na czyszczenie.
-    void startupSettled.then(() => retentionRunner?.runAtStartup()).catch(() => undefined);
+    const retentionSkip: 'index-new' | 'index-rebuilt' | null = !indexExisted
+      ? 'index-new'
+      : result.info.outcome !== 'ready' || result.info.quarantinedAs !== undefined
+        ? 'index-rebuilt'
+        : null;
+    void startupSettled
+      .then(() => retentionRunner?.runAtStartup(retentionSkip))
+      .catch(() => undefined);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
