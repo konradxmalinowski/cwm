@@ -770,6 +770,8 @@ Kanały z handlerem:
 | `retention:set` | `{ maxEntries, maxAgeDays, maxStoreMiB, confirmed? }` | zapisane ustawienia; zakresy sprawdza main, nieznane pola przepadają; włączenie albo zaostrzenie limitu bez `confirmed: true` to `confirmation-required` |
 | `retention:preview` | `{ settings? }` | suchy przebieg na podanych (albo zapisanych) limitach: `blocked`, liczby wpisów, obiektów i bajtów do usunięcia, `sizeLimitUnmet`, `ageRuleSkipped` i `previewToken` (jednorazowy, 5 minut) |
 | `retention:apply` | `{ confirmed: true, token }` | te same liczby po wykonaniu, `objectsFailed`; przerywa się (`plan-changed`), gdy przeliczony plan usuwa więcej niż podgląd |
+| `versioning:get` | brak | `{ enabled, includePrivate, available, unavailableMessage, repository, commits, lastCommitAt, lastCommitSubject, itemsIncluded, itemsExcludedPrivate, itemsExcludedSecrets, itemsExcludedGitEntry, itemsExcludedUnreadable, warning, consentNonce }`; bez ścieżek, `warning` to ostatnia awaria `git` w tej sesji, `consentNonce` to jednorazowy znacznik zgody (ADR 0060) |
+| `versioning:set` | `{ enabled, includePrivate, acknowledged?, nonce? }` | stan jak w `versioning:get`; oba pola ustawień logiczne; włączenie z elementami prywatnymi wymaga `acknowledged: true` i znacznika `nonce` z ostatniego odczytu (inaczej `consent-required` albo `consent-expired`); pierwsza synchronizacja przed zapisem ustawień, brak `git` to `git-unavailable` |
 | `projects:list` | brak | `{ projects }`: identyfikator, nazwa i `invalid` (powód niedostępności wpisu, który nie przeszedł polityki katalogu), bez katalogu (ADR 0059) |
 | `projects:add` | brak (ładunek ignorowany) | `{ status: 'added', project }` albo `{ status: 'cancelled' }`; katalog wybiera natywne okno w main i sprawdza `checkChosenProjectDir` |
 | `projects:rename` | `{ projectId, name }` | projekt po zmianie nazwy |
@@ -814,6 +816,12 @@ z jednego pola (`confirmed`). Podgląd i wykonanie liczą wszystko od nowa pod `
 (`tryEnterExclusive`, ta sama blokada co odbudowa indeksu): trwający zapis daje `busy` temu przebiegowi, a w trakcie
 przebiegu zapisy dostają `busy`. Kanały `retention:*` nie są w `WRITE_CHANNELS`, bo biorą blokadę same; za to każdy nowy kanał, który zapisuje obiekty
 albo wiersze logu, musi być w `WRITE_CHANNELS`, bo inaczej jego zapis w toku wyglądałby dla retencji na osierocone obiekty.
+
+`versioning:*` (ADR 0060) włączają opcjonalne wersjonowanie biblioteki w lokalnym Git. Żaden kanał nie przyjmuje ścieżki ani tekstu
+commita; ustawienia to dwa pola logiczne walidowane w main. Commit po operacji nie jest osobnym kanałem: `IpcRegistry` woła
+`afterWrite` po zakończeniu handlera kanału z `WRITE_CHANNELS`, a `LibraryGitRunner` zleca synchronizację w osobnej kolejce
+pod wspólną blokadą zapisu. Wynik kanału zapisującego jest już odesłany i żadna awaria `git` go nie zmienia. Kanały
+`versioning:*` nie są w `WRITE_CHANNELS`, bo nie zapisują do content store ani do logu operacji.
 
 `diagnostics:report-preview` i `diagnostics:report-save` (ADR 0053) składają raport do zgłoszenia błędu. Podgląd nie
 przyjmuje niczego; zapis przyjmuje tylko `previewId` (parser buduje wynik z jednego pola), a treść pochodzi z tego, co main
@@ -907,6 +915,9 @@ Niezaufane dane, bez wyjątku. Konkretnie:
   kliknięciu użytkownika i nigdy w tle. Pobranie idzie do `<userData>/git-import` (0700), jest weryfikowane
   względem skrótu commita, skanowane jak niezaufana treść i usuwane po skanie. Do rendera wraca adres bez
   danych logowania i commit, nigdy ścieżka ani wyjście procesu.
+- Proces `git` ma jeden kod uruchamiania (`infra/cwm/git-process.ts`): pobieranie z ADR 0048 i 0058 oraz lokalne
+  repozytorium biblioteki z ADR 0060. Lokalne repozytorium działa w tym samym czystym środowisku, ale z
+  `protocol.https.allow=never`, więc żadne jego polecenie nie dotyka sieci, a `git-fetch.ts` nie zyskał nowego importera.
 
 ### 8.3 Granica 3: zapis
 
@@ -1040,6 +1051,8 @@ v0.1.0 są przy pierwszym starcie kopiowane z dawnego katalogu, który zostaje n
   index.db                 indeks SQLite: schema_migrations, operation_log, sync_state, items, items_fts
   objects/<aa>/<sha256>    content-addressed store (wersje elementow, kopie zapisow); retencja i GC: ADR 0056
   retention.json           limity retencji (ADR 0056); brak pliku to brak limitow
+  library-git.json         ustawienia wersjonowania biblioteki w Git (ADR 0060); brak pliku to wylaczone
+  library-git/             magazyn obiektow lokalnego repozytorium biblioteki (GIT_DIR, drzewo robocze to library/); powstaje po wlaczeniu, wylaczenie go nie usuwa
   backups/<id>/            kopia przed zapisem do narzedzia: files/ plus MANIFEST (id to znacznik czasu i 3 bajty losowe)
   materialized/<tool>/...  wyrenderowane kopie elementow, do ktorych wskazuja dowiazania (ADR 0015)
   quarantine/              uszkodzony indeks odstawiony przed odbudowa (ADR 0029)
@@ -1096,7 +1109,9 @@ biblioteki z plików do indeksu nie ma, bo indeks jej nie trzyma.
 **Historia i rollback stoją na content store, nie na Gicie.** `objects/<sha256>` daje deduplikację,
 porównywanie wersji i przywracanie bez żadnego zewnętrznego narzędzia. Wymagania mówią wprost:
 "aplikacja nie może wymagać ręcznej obsługi Git do podstawowych operacji", a Git jako warstwa
-dodatkowa jest w backlogu (ADR 0019).
+dodatkowa jest opcjonalna i wyłączona domyślnie: lokalne repozytorium z `<userData>/library-git`, commit po każdej operacji
+zapisującej bibliotekę, bez wpływu na jej wynik (ADR 0060). Do historii trafiają tylko elementy publiczne; prywatne za
+jawną zgodą, a elementy z wykrytym sekretem nigdy.
 
 Store trzyma **pełne treści każdej wersji**, nie łańcuch różnic (ADR 0027). Adresowanie hashem
 daje deduplikację, więc koszt jest znikomy przy plikach tekstowych rzędu kilku kilobajtów,

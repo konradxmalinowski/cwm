@@ -136,6 +136,10 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
   po zapisie plik jest czytany z powrotem. Ten sam plan da się zapisać też jako archiwum ZIP
   w układzie wybranego narzędzia, z manifestem i sumami SHA-256; elementy prywatne i z możliwym
   sekretem trafiają do niego tylko za Twoją zgodą (ADR 0054).
+- **Wersjonowanie w Git (opcjonalne).** W Diagnostyce możesz włączyć lokalne repozytorium biblioteki: po każdej operacji,
+  która zmienia bibliotekę, powstaje commit (typ operacji i liczba elementów, autor `cwm`). Wymaga `git` w PATH, jest
+  domyślnie wyłączone i niczego nie wysyła. Do historii trafiają tylko elementy publiczne; prywatne dopiero po Twojej
+  zgodzie, a elementy z wykrytym sekretem nigdy (ADR 0060).
 - **Synchronizacja i historia.** Stan każdego elementu względem każdego narzędzia, plan zmian,
   zapis i cofnięcie zapisu z widoku Historia.
 - **Diagnostyka.** Raport środowiska, stan indeksu, ręczna odbudowa indeksu i eksport raportu do zgłoszenia

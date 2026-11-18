@@ -33,13 +33,17 @@ import { registerExportHandlers } from './ipc/handlers/export';
 import { registerSyncHandlers } from './ipc/handlers/sync';
 import { registerImportHandlers } from './ipc/handlers/import';
 import { registerRetentionHandlers } from './ipc/handlers/retention';
+import { registerVersioningHandlers } from './ipc/handlers/versioning';
+import { createLibraryGit } from './bootstrap/library-git';
 import { registerLibraryHandlers } from './ipc/handlers/library';
 import { registerProjectsHandlers } from './ipc/handlers/projects';
 import { startProjects, type ProjectsStartup } from './bootstrap/projects';
 import { loadRootSalt } from '../infra/platform/root-salt';
+import { abortRunningGit } from '../infra/cwm/git-process';
 import { IpcRegistry } from './ipc/registry';
 import { IndexRebuildService } from './services/index-rebuild';
 import { RetentionRunner } from './services/retention-runner';
+import { LibraryGitRunner } from './services/library-git-runner';
 import { OperationLock } from './services/write-lock';
 import { systemClock } from '../core/ports/clock';
 import { existsSync } from 'node:fs';
@@ -58,6 +62,7 @@ let zipExportService: ZipExportService | null = null;
 let syncService: SyncService | null = null;
 let historyService: HistoryService | null = null;
 let retentionRunner: RetentionRunner | null = null;
+let libraryGitRunner: LibraryGitRunner | null = null;
 let projectsStartup: ProjectsStartup | null = null;
 
 /** Projekt, do ktorego nalezy root (ADR 0059); kontrola zakresu w main na gotowym planie. */
@@ -183,6 +188,8 @@ function start(): void {
   app.on('before-quit', () => {
     // Trwajace pobieranie z repozytorium Git nie ma przezyc aplikacji (ADR 0058).
     importService?.abortGit();
+    // Polecenia `git` lokalnego repozytorium biblioteki nie zaleza od importu (ADR 0060).
+    abortRunningGit();
     const store = indexState.store;
     indexState = { store: null, info: indexState.info };
     closeIndexOnQuit(store);
@@ -205,7 +212,13 @@ function start(): void {
     const dbPath = databaseFile(userData);
     const home = homedir();
 
-    const registry = new IpcRegistry(ipcMain, { lock: writeLock });
+    const registry = new IpcRegistry(ipcMain, {
+      lock: writeLock,
+      // Commit w lokalnym repozytorium Git po operacji biblioteki (ADR 0060); awaria gita nie wplywa na wynik.
+      afterWrite: (channel) => {
+        libraryGitRunner?.afterWrite(channel);
+      },
+    });
     const rebuild = new IndexRebuildService({
       runtime: {
         current: () => indexState,
@@ -329,6 +342,24 @@ function start(): void {
       },
     });
     registerRetentionHandlers(registry, { runner: () => retentionRunner });
+    // Wersjonowanie biblioteki w Git (ADR 0060): opcjonalne, domyslnie wylaczone, nigdy nie warunkuje zapisu.
+    libraryGitRunner = new LibraryGitRunner({
+      ...createLibraryGit(userData),
+      lock: writeLock,
+      logUnexpected: (error) => {
+        log().error(
+          '[cwm] nieoczekiwany blad wersjonowania biblioteki:',
+          error instanceof Error ? error.name : 'nieznany',
+        );
+      },
+      logInfo: (message) => {
+        log().info(message);
+      },
+      logWarn: (message) => {
+        log().warn(message);
+      },
+    });
+    registerVersioningHandlers(registry, { runner: () => libraryGitRunner });
     registry.assertImplementedRegistered();
 
     // Okno powstaje PRZED otwarciem indeksu (ADR 0029 punkt 3). Odmowa startu
@@ -340,6 +371,8 @@ function start(): void {
     // a log operacji czyta indeks leniwie, dopiero przy zapisie.
     const library = startLibrary(userData, () => indexState.store);
     libraryService = library.service;
+    // Zmiany, ktore poprzednio nie trafily do historii Git (awaria gita, zamkniecie w trakcie), nadrabia sie przy starcie.
+    if (library.service !== null) libraryGitRunner?.catchUp();
     if (library.failure !== undefined)
       log().error('[cwm] biblioteka niedostepna:', library.failure);
     // Jedna obietnica soli dla rootow globalnych i projektowych: dwa rownolegle odczyty przy pierwszym

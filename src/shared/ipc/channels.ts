@@ -36,6 +36,8 @@ export const IPC_CHANNELS = [
   'retention:set',
   'retention:preview',
   'retention:apply',
+  'versioning:get',
+  'versioning:set',
   'projects:list',
   'projects:add',
   'projects:rename',

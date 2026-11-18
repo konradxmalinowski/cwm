@@ -42,6 +42,11 @@ export const BUSY_RESULT = {
 
 export interface IpcRegistryOptions {
   readonly lock?: OperationLock;
+  /**
+   * Wolane po zakonczonym handlerze kanalu z `WRITE_CHANNELS`, po zwolnieniu blokady (ADR 0060).
+   * Nie jest awaitowane i nie moze zmienic wyniku operacji: wyjatek jest polykany.
+   */
+  readonly afterWrite?: (channel: IpcChannel, result: unknown) => void;
 }
 
 export class IpcRegistry {
@@ -62,7 +67,7 @@ export class IpcRegistry {
       throw new Error(`odmowa rejestracji: kanal "${channel}" jest juz zarejestrowany`);
     }
     this.registered.add(channel);
-    const { lock } = this.options;
+    const { lock, afterWrite } = this.options;
     if (lock === undefined || !WRITE_CHANNELS.has(channel)) {
       this.target.handle(channel, (_event: unknown, payload: unknown) => handler(payload));
       return;
@@ -70,11 +75,18 @@ export class IpcRegistry {
     this.target.handle(channel, async (_event: unknown, payload: unknown) => {
       const release = lock.tryEnterWrite();
       if (release === null) return BUSY_RESULT;
+      let result: unknown;
       try {
-        return await handler(payload);
+        result = await handler(payload);
       } finally {
         release();
       }
+      try {
+        afterWrite?.(channel, result);
+      } catch {
+        // Warstwa opcjonalna (Git) nie psuje operacji, ktora sie udala.
+      }
+      return result;
     });
   }
 

@@ -131,18 +131,20 @@ const FS_MODULE_NAMES = ['fs', 'node:fs', 'fs/promises', 'node:fs/promises'];
 
 /**
  * Pliki, ktore wolno uruchamiac procesy (SEC-16): silnik (`cwm start`), pomocnik `git check-ignore`
- * i pobieranie pluginow z git (`cwm plugin add git|fetch|update`, ADR 0048). Reszta `src/` nie
+ * i pobieranie pluginow z git (`cwm plugin add git|fetch|update`, ADR 0048) wraz ze wspolnym procesem `git` (ADR 0060). Reszta `src/` nie
  * importuje `child_process`, tez przez `require` i `import()`.
  */
 const EXEC_ALLOWED = [
   'src/infra/cwm/engine-process.ts',
   'src/infra/cwm/gitignore.ts',
   'src/infra/cwm/git-fetch.ts',
+  // Wspolny proces `git` dla pobierania i dla lokalnego repozytorium biblioteki (ADR 0060).
+  'src/infra/cwm/git-process.ts',
 ];
 const SRC_WRITE_ALLOWED = FS_WRITE_ALLOWED.filter((entry) => entry.startsWith('src/'));
 const EXEC_PATTERN_CHILD = '^(node:)?child_process$';
 const EXEC_PROCESS_MESSAGE =
-  'node:child_process tylko w engine-process.ts, gitignore.ts i git-fetch.ts (SEC-16, eslint.config.mjs).';
+  'node:child_process tylko w engine-process.ts, gitignore.ts, git-fetch.ts i git-process.ts (SEC-16, eslint.config.mjs).';
 const EXEC_PATHS = PROCESS_MODULES.map((name) => ({ name, message: EXEC_PROCESS_MESSAGE }));
 /**
  * Dynamiczne ladowanie modulu z nielitertalnym argumentem (szablon, zmienna, konkatenacja) omija

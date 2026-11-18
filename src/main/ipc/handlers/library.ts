@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { ItemDraft, LibraryItem, LoadedItem } from '../../../core/model/item';
 import { LibraryError, LibraryValidationError } from '../../../core/model/library-errors';
 import type { LibraryWarning } from '../../../core/model/library-errors';
+import { rescanFindings } from '../../../core/services/library/secret-rescan';
 import { STORE_FAILURE_TEXT } from '../../../core/ports/store-failure';
 import type {
   DeletePlan,
@@ -176,15 +177,13 @@ export function toItemDraft(dto: ItemDraftDto, previous: LoadedItem | null): Ite
     identity: { slug: dto.slug, declaredName, aliases: before?.identity.aliases ?? [] },
     content: { title: dto.title, description: dto.description, descriptionOrigin, body: dto.body },
     ...(before === null ? {} : { attributes: before.attributes }),
-    ...(scope === undefined
-      ? {}
-      : {
-          classification: {
-            scope,
-            secretFindings: before?.classification.secretFindings ?? [],
-            ...(projectId === undefined ? {} : { projectId }),
-          },
-        }),
+    // Zawsze jawna klasyfikacja: brak zakresu przy tworzeniu to `private` (jak domyslnie w serwisie), a wykrycia
+    // sekretow liczy sie od nowa z tresci po edycji (ADR 0060), nie kopiuje z poprzedniej wersji.
+    classification: {
+      scope: scope ?? 'private',
+      secretFindings: rescanFindings(dto, previous),
+      ...(projectId === undefined ? {} : { projectId }),
+    },
   };
 }
 

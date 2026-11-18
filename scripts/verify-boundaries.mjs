@@ -304,6 +304,18 @@ const cases = [
     expect: 'no-restricted-syntax',
   },
   {
+    label: 'infra/library/ importuje git-fetch (lokalne repozytorium nie siega do sieci)',
+    file: `src/infra/library/${PROBE}`,
+    code: "import { fetchGitSource } from '../cwm/git-fetch';\n\nexport const probe = fetchGitSource;\n",
+    expect: 'import-x/no-restricted-paths',
+  },
+  {
+    label: 'infra/library/ importuje node:child_process (proces tylko przez git-process.ts)',
+    file: `src/infra/library/${PROBE}`,
+    code: "import { spawn } from 'node:child_process';\n\nexport const probe = spawn;\n",
+    expect: 'no-restricted-imports',
+  },
+  {
     label: 'main/ importuje git-fetch',
     file: `src/main/${PROBE}`,
     code: "import { fetchGitSource } from '../infra/cwm/git-fetch';\n\nexport const probe = fetchGitSource;\n",
@@ -351,6 +363,7 @@ const allowedExecFiles = [
   'src/infra/cwm/engine-process.ts',
   'src/infra/cwm/gitignore.ts',
   'src/infra/cwm/git-fetch.ts',
+  'src/infra/cwm/git-process.ts',
   // Jedyni importerzy git-fetch.ts: musza przechodzic lint, inaczej wyjatek bylby martwy.
   'src/cli/commands/plugin.ts',
   'src/infra/git-import/git-import-source.ts',

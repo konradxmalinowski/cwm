@@ -188,3 +188,9 @@ Po cofnięciu pierwszego eksportu skilla kopia w `materialized/` zostaje w katal
   10 MiB razem) dotyczą całego repozytorium. Z repozytorium nie wchodzą instrukcje globalne ani hooki,
   submoduły nie są pobierane. Wymaga programu `git` w PATH; na Windowsie funkcja kończy się komunikatem
   o jego braku. Anulowanie skanu odrzuca wynik, ale pobieranie dokańcza się w tle.
+- Wersjonowanie biblioteki w Git (ADR 0060) jest opcjonalne, domyślnie wyłączone i tylko lokalne: bez zdalnego adresu i bez
+  wysyłania. Do historii wchodzą elementy publiczne; prywatne i projektowe tylko po zgodzie, a elementy z wykrytym sekretem
+  nigdy. Historia nie jest przepisywana, więc wycofanie zgody albo późniejsze wykrycie sekretu nie usuwa wersji, która już
+  trafiła do commita; usunięcie historii to usunięcie katalogu `library-git` w katalogu danych aplikacji. Wymaga `git` 2.26
+  lub nowszego w PATH; na Windowsie funkcja jest niedostępna. Zmiany zrobione, gdy aplikacja była zamknięta, trafiają do
+  historii przy następnym starcie albo następnej operacji.

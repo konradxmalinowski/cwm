@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { IpcRegistry, type IpcHandleTarget } from '../../src/main/ipc/registry';
+import { OperationLock } from '../../src/main/services/write-lock';
 import { IMPLEMENTED_CHANNELS, IPC_CHANNELS, type IpcChannel } from '../../src/shared/ipc/channels';
 
 function fakeTarget(): IpcHandleTarget & { channels: string[] } {
@@ -81,5 +82,69 @@ describe('kanaly recznej odbudowy indeksu (ADR 0030)', () => {
     expect(() => registry.assertImplementedRegistered()).toThrow(/diagnostics:rebuild-index-apply/);
     registry.register(REBUILD[1], () => null);
     expect(() => registry.assertImplementedRegistered()).not.toThrow();
+  });
+});
+
+describe('afterWrite po kanale zapisujacym (ADR 0060)', () => {
+  function build(afterWrite: (channel: IpcChannel, result: unknown) => void) {
+    const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
+    const lock = new OperationLock();
+    const registry = new IpcRegistry(
+      {
+        handle(channel, listener) {
+          handlers.set(channel, listener);
+        },
+      },
+      { lock, afterWrite },
+    );
+    return { registry, handlers, lock };
+  }
+
+  it('wola hak z wynikiem handlera, dopiero po zwolnieniu blokady', async () => {
+    let writersDuringHook: boolean | null = null;
+    const ctx = build(() => {
+      // Odbudowa jest mozliwa tylko wtedy, gdy zaden zapis nie trwa.
+      const release = ctx.lock.tryEnterExclusive();
+      writersDuringHook = release !== null;
+      release?.();
+    });
+    ctx.registry.register('library:save', () => ({ ok: true }));
+    const result = await ctx.handlers.get('library:save')?.({}, {});
+    expect(result).toEqual({ ok: true });
+    expect(writersDuringHook).toBe(true);
+  });
+
+  it('nie wola haka dla kanalu odczytu ani gdy blokada jest zajeta', async () => {
+    const hook = vi.fn();
+    const ctx = build(hook);
+    ctx.registry.register('library:list', () => ({ ok: true }));
+    ctx.registry.register('library:save', () => ({ ok: true }));
+    await ctx.handlers.get('library:list')?.({}, {});
+    const release = ctx.lock.tryEnterExclusive();
+    const busy = await ctx.handlers.get('library:save')?.({}, {});
+    release?.();
+    expect(busy).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(hook).not.toHaveBeenCalled();
+  });
+
+  it('wyjatek z haka nie zmienia wyniku operacji', async () => {
+    const ctx = build(() => {
+      throw new Error('git padl');
+    });
+    ctx.registry.register('import:apply', () => ({ ok: true, value: 7 }));
+    await expect(ctx.handlers.get('import:apply')?.({}, {})).resolves.toEqual({
+      ok: true,
+      value: 7,
+    });
+  });
+
+  it('kanaly versioning nie sa kanalami zapisu: biora blokade same i nie wolaja haka', async () => {
+    const hook = vi.fn();
+    const ctx = build(hook);
+    ctx.registry.register('versioning:set', () => ({ ok: true }));
+    await ctx.handlers.get('versioning:set')?.({}, {});
+    expect(hook).not.toHaveBeenCalled();
+    expect(IPC_CHANNELS).toContain('versioning:get');
+    expect(IPC_CHANNELS).toContain('versioning:set');
   });
 });
