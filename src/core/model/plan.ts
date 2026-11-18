@@ -31,7 +31,7 @@ export type EditScope =
   | 'marker-block'
   /** Tylko segmenty rejestracyjne agentow w `config.toml` (ADR 0011). */
   | 'toml-segment'
-  /** Tylko klucz `hooks` w pliku ustawien JSON; reszta pliku semantycznie bez zmian. */
+  /** Tylko klucz `hooks` albo `mcpServers` w pliku JSON; reszta pliku semantycznie bez zmian. */
   | 'json-key';
 
 export type MaterializationMode = 'symlink' | 'junction' | 'copy';
@@ -94,8 +94,13 @@ export interface PlanRefusal {
 /**
  * Decyzje uzytkownika dla konfliktu instrukcji globalnej bez znacznikow (ADR 0025, regula 3):
  * zamiana fragmentu zaimportowanego z pliku na blok aplikacji albo dopisanie bloku na koncu.
+ * Dla serwera MCP o zajetej nazwie: jawne zastapienie (ADR 0061).
  */
-export type ConflictResolution = 'replace-fragment' | 'append-block';
+export type ConflictResolution =
+  | 'replace-fragment'
+  | 'append-block'
+  /** Zastapienie istniejacego serwera MCP o tej samej nazwie (ADR 0061); tylko jawnie, po podgladzie roznic. */
+  | 'replace-server';
 
 export interface PlanConflictOption {
   readonly id: ConflictResolution;

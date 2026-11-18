@@ -128,12 +128,12 @@
         @if (projectTarget() !== null) {
           <div class="export-tool" data-testid="export-project-target">
             <p class="view__sub">
-              Pliki trafią do <span class="mono">.claude/</span> i
-              <span class="mono">CLAUDE.md</span> w repozytorium projektu, więc Git zobaczy je jako
-              zmiany. Aplikacja nie zmienia <span class="mono">.gitignore</span> i niczego nie
-              commituje. Do projektu zawsze idzie kopia plików, bez dowiązań, a przed zapisem
-              powstaje kopia zapasowa jak przy każdym eksporcie. Elementy innych projektów są
-              odmawiane.
+              Pliki trafią do <span class="mono">.claude/</span>,
+              <span class="mono">CLAUDE.md</span> i <span class="mono">.mcp.json</span> w
+              repozytorium projektu, więc Git zobaczy je jako zmiany. Aplikacja nie zmienia
+              <span class="mono">.gitignore</span> i niczego nie commituje. Do projektu zawsze idzie
+              kopia plików, bez dowiązań, a przed zapisem powstaje kopia zapasowa jak przy każdym
+              eksporcie. Elementy innych projektów są odmawiane.
             </p>
             <label class="check">
               <input
@@ -556,6 +556,71 @@
               }
             </div>
           } @else {
+            @if (p.mcp; as mcp) {
+              <section
+                class="section"
+                aria-labelledby="export-mcp-heading"
+                data-testid="export-mcp"
+              >
+                <h2 class="section__title" id="export-mcp-heading">
+                  Serwery MCP w tym planie
+                  <span class="group__count">{{ mcp.servers.length }}</span>
+                </h2>
+                <p class="view__sub">
+                  Narzędzie uruchomi te serwery przy starcie sesji. Wartości zmiennych
+                  środowiskowych nie są kopiowane: plik dostaje tylko odniesienia, a serwer weźmie
+                  wartości ze środowiska. Sprawdź polecenia i adresy, zanim zapiszesz.
+                </p>
+                <ul class="cands">
+                  @for (server of mcp.servers; track server.itemId) {
+                    <li class="cand" data-testid="export-mcp-server" [attr.data-name]="server.name">
+                      <div class="cand__body">
+                        <p class="cand__title">{{ server.name }}</p>
+                        <p class="cand__meta">
+                          <span>{{ server.transport }}</span>
+                          @if (server.transport === 'stdio') {
+                            <span>uruchamia program</span>
+                          } @else {
+                            <span>łączy się z adresem</span>
+                          }
+                        </p>
+                        <p class="cand__desc mono">{{ server.launch }}</p>
+                        @if (server.env.length > 0) {
+                          <p class="cand__desc">
+                            Zmienne ze środowiska:
+                            <span class="mono">{{ server.env.join(', ') }}</span>
+                          </p>
+                        }
+                      </div>
+                    </li>
+                  }
+                </ul>
+                <label class="check">
+                  <input
+                    type="checkbox"
+                    id="export-mcp-ack"
+                    data-testid="export-mcp-ack"
+                    [checked]="mcpAck()"
+                    [attr.aria-invalid]="mcpAckError() ? 'true' : null"
+                    [attr.aria-describedby]="
+                      mcpAckError()
+                        ? 'export-mcp-ack-hint export-mcp-ack-error'
+                        : 'export-mcp-ack-hint'
+                    "
+                    (change)="onMcpAck($any($event.target).checked)"
+                  />
+                  <span>Sprawdziłem polecenia i adresy serwerów MCP i chcę je zapisać</span>
+                </label>
+                <p class="field__hint" id="export-mcp-ack-hint">
+                  Potwierdzenie dotyczy tylko tego planu. Nowy plan wymaga nowego potwierdzenia.
+                </p>
+                @if (mcpAckError()) {
+                  <p class="field__error" role="alert" id="export-mcp-ack-error">
+                    Zaznacz potwierdzenie serwerów MCP, żeby zapisać plan.
+                  </p>
+                }
+              </section>
+            }
             <div class="import-total" data-testid="export-total">
               <p class="import-total__count">
                 <span class="import-total__num" [class.import-total__num--zero]="c.changes === 0">{{

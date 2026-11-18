@@ -26,6 +26,10 @@ import {
   type BuiltZip,
   type ZipFileInput,
 } from './zip-archive';
+import { isMcpServerItem } from '../mcp/mcp-server';
+
+const ZIP_MCP_REFUSAL =
+  'Serwer MCP nie trafia do archiwum ZIP. Wyeksportuj go jawnie do narzędzia, z podglądem i potwierdzeniem (ADR 0061).';
 
 /**
  * Eksport do archiwum ZIP (ADR 0054). Plan powstaje tym samym eksporterem co zapis do narzedzia,
@@ -311,6 +315,7 @@ export class ZipExportService {
 
     const reasons = new Map<string, ZipHoldReason>();
     for (const l of loaded) {
+      if (isMcpServerItem(l.item)) continue;
       const reason = holdReason(l, tool);
       if (reason !== null) reasons.set(l.item.id, reason);
     }
@@ -330,8 +335,18 @@ export class ZipExportService {
     let drafted: WritePlan;
     let entries: WritePlanEntry[];
     const probedAt = now.toISOString();
+    // Serwer MCP nie trafia do archiwum (ADR 0061): eksport MCP jest tylko jawnym zapisem do narzedzia.
+    const mcpRefusals = loaded
+      .filter((l) => isMcpServerItem(l.item))
+      .map((l) => ({
+        itemId: l.item.id,
+        kind: l.item.kind,
+        slug: l.item.identity.slug,
+        reason: ZIP_MCP_REFUSAL,
+      }));
     for (;;) {
       included = loaded.filter((l) => {
+        if (isMcpServerItem(l.item)) return false;
         const reason = reasons.get(l.item.id);
         return reason === undefined || (reason !== 'project' && confirmed.has(l.item.id));
       });
@@ -415,7 +430,13 @@ export class ZipExportService {
 
     const fileName = `cwm-export-${tool}-${utcStamp(now)}.zip`;
     const applicable = drafted.applicable && inputs.length > 0;
-    const plan: WritePlan = { ...drafted, planId, entries, applicable };
+    const plan: WritePlan = {
+      ...drafted,
+      planId,
+      entries,
+      refusals: [...mcpRefusals, ...drafted.refusals],
+      applicable,
+    };
     const report: ExportPlanReport = {
       planId,
       tool,

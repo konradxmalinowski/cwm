@@ -55,7 +55,11 @@ export function parsePlanRequest(payload: unknown): Parsed<ExportPlanRequest> {
       if (typeof relPath !== 'string' || relPath.length === 0 || relPath.length > MAX_ID) {
         return fail('resolutions');
       }
-      if (resolution !== 'replace-fragment' && resolution !== 'append-block') {
+      if (
+        resolution !== 'replace-fragment' &&
+        resolution !== 'append-block' &&
+        resolution !== 'replace-server'
+      ) {
         return fail('resolutions');
       }
       resolutions.push({ itemId, relPath, resolution });
@@ -81,7 +85,12 @@ export function parseExportApplyRequest(payload: unknown): Parsed<ExportApplyReq
     return fail('planId');
   }
   if (approved !== true) return fail('approved');
-  return { ok: true, value: { planId, approved } };
+  const confirmation = payload['mcpConfirmation'];
+  if (confirmation === undefined) return { ok: true, value: { planId, approved } };
+  if (typeof confirmation !== 'string' || !/^[0-9a-f]{16,128}$/.test(confirmation)) {
+    return fail('mcpConfirmation');
+  }
+  return { ok: true, value: { planId, approved, mcpConfirmation: confirmation } };
 }
 
 /**
@@ -111,5 +120,7 @@ export function parseZipPlanRequest(payload: unknown): Parsed<ExportZipPlanReque
 
 export function parseZipSaveRequest(payload: unknown): Parsed<ExportZipSaveRequest> {
   const parsed = parseExportApplyRequest(payload);
-  return parsed.ok ? { ok: true, value: parsed.value } : parsed;
+  return parsed.ok
+    ? { ok: true, value: { planId: parsed.value.planId, approved: parsed.value.approved } }
+    : parsed;
 }

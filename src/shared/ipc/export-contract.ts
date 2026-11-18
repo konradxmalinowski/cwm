@@ -8,8 +8,11 @@ import type { ToolIdDto } from './import-contract';
 export type CompatibilityLevelDto = 'full' | 'partial' | 'lossy' | 'unsupported';
 export type MaterializationModeDto = 'symlink' | 'junction' | 'copy';
 
-/** Decyzja dla konfliktu instrukcji globalnej bez znacznikow (ADR 0025, regula 3). */
-export type ConflictResolutionDto = 'replace-fragment' | 'append-block';
+/**
+ * Decyzja dla konfliktu instrukcji globalnej bez znacznikow (ADR 0025, regula 3) albo dla serwera MCP
+ * o zajetej nazwie (`replace-server`, ADR 0061; tylko eksport, nie synchronizacja).
+ */
+export type ConflictResolutionDto = 'replace-fragment' | 'append-block' | 'replace-server';
 
 export interface ExportPlanRequest {
   tool: ToolIdDto;
@@ -62,6 +65,18 @@ export interface PlanEntryDto {
   warnings: string[];
 }
 
+/** Serwer MCP, ktory plan zapisze: polecenie albo adres i nazwy zmiennych, nigdy wartosci (ADR 0061). */
+export interface McpServerPreviewDto {
+  itemId: string;
+  name: string;
+  transport: 'stdio' | 'http' | 'sse';
+  /** Polecenie z argumentami (stdio) albo adres (http, sse), w calosci. */
+  launch: string;
+  /** Zmienne, ktore serwer wezmie ze srodowiska uzytkownika. */
+  env: string[];
+  warnings: string[];
+}
+
 export interface ExportPlanDto {
   planId: string;
   tool: ToolIdDto;
@@ -82,12 +97,19 @@ export interface ExportPlanDto {
   /** Tylko raport: aplikacja nigdy sama nie usuwa plikow w narzedziu (decyzja 2026-11-03). */
   orphans: { rootLabel: string; relPath: string; reason: string }[];
   applicable: boolean;
+  /**
+   * Plan zapisuje serwery MCP (ADR 0061). `confirmation` to jednorazowy znacznik tego planu: zapis bez
+   * niego (`export:apply` z `mcpConfirmation`) konczy sie bledem `mcp-confirmation-required`.
+   */
+  mcp?: { confirmation: string; servers: McpServerPreviewDto[] };
 }
 
 export interface ExportApplyRequest {
   planId: string;
   /** Jawne zatwierdzenie tego planu przez uzytkownika. */
   approved: true;
+  /** Znacznik `mcp.confirmation` z planu: uzytkownik potwierdzil podglad serwerow MCP (ADR 0061). */
+  mcpConfirmation?: string;
 }
 
 export interface ExportApplyDto {

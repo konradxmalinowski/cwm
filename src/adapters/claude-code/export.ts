@@ -25,6 +25,8 @@ import {
   verdict,
   worst,
 } from '../shared/export/verdicts';
+import { mcpCapabilities, planClaudeMcp } from '../shared/export/mcp-export';
+import { isMcpServerItem } from '../../core/services/mcp/mcp-server';
 import { MODEL_DEPTH, mapAgentAttributes } from './agent-attributes';
 
 const TOOL = 'claude-code' as const;
@@ -68,6 +70,8 @@ export function claudeCapabilities(item: LibraryItem): CompatibilityVerdict {
       ]);
     case 'hook':
       return verdict('full');
+    case 'tool-setting':
+      return isMcpServerItem(item) ? mcpCapabilities(item, TOOL) : unsupportedKind(item);
     default:
       return unsupportedKind(item);
   }
@@ -125,6 +129,7 @@ export async function planClaude(
   const b = new PlanBuilder(TOOL);
   const instructions: LoadedItem[] = [];
   const hooks: LoadedItem[] = [];
+  const mcp: LoadedItem[] = [];
   const listings = new Map<string, RootListing>();
   const listingFor = async (root: Parameters<typeof listRoot>[1]): Promise<RootListing> => {
     const cached = listings.get(root.rootId);
@@ -216,6 +221,9 @@ export async function planClaude(
       case 'hook':
         hooks.push(loaded);
         break;
+      case 'tool-setting':
+        mcp.push(loaded);
+        break;
       default:
         break;
     }
@@ -233,5 +241,6 @@ export async function planClaude(
     { tool: TOOL, kind: 'hooks', fileName: 'settings.json', knownEvents: null },
     hooks,
   );
+  await planClaudeMcp(b, ctx, mcp);
   return b.build();
 }

@@ -292,6 +292,97 @@ describe('eksport Codeksa: hooki i serwery MCP', () => {
     expect(plan.entries).toEqual([]);
     expect(plan.refusals[0]?.reason).toMatch(/MCP/);
   });
+
+  const server = (name: string, value: object): LoadedItem =>
+    toLoaded(
+      draft('tool-setting', `mcp-${name}`, {
+        attributes: {
+          toolSetting: { tool: 'claude-code', key: `mcpServers.${name}`, value: value as never },
+        },
+      }),
+    );
+  const stdio = {
+    transport: 'stdio',
+    command: 'acme-mcp',
+    args: ['--serve'],
+    url: null,
+    env: [
+      { name: 'ACME_TOKEN', ref: 'ACME_TOKEN' },
+      { name: 'ACME_URL', ref: 'ACME_BASE' },
+    ],
+    headers: [],
+  };
+
+  it('MCP: segment [mcp_servers.<nazwa>] z env_vars, reszta config.toml bajt w bajt', async () => {
+    const config = '# komentarz\nmodel = "acme"\n\n[features]\nx = true\n';
+    const plan = await adapter.plan([server('acme', stdio)], ctx(target(config)));
+    expect(plan.refusals).toEqual([]);
+    const cfg = entryFor(plan, id('agent-registry'), 'config.toml')!;
+    expect([cfg.action, cfg.scope]).toEqual(['modify', 'toml-segment']);
+    expect(text(cfg.content).startsWith(config)).toBe(true);
+    const tree = parse(text(cfg.content)) as Record<string, unknown>;
+    expect(tree['mcp_servers']).toEqual({
+      acme: { command: 'acme-mcp', args: ['--serve'], env_vars: ['ACME_TOKEN'] },
+    });
+    expect(tree['model']).toBe('acme');
+    // ACME_URL bierze wartosc z innej zmiennej, czego Codex nie wyrazi: pominieta z ostrzezeniem.
+    expect(cfg.warnings.join(' ')).toMatch(/ACME_URL.*pominięta/);
+
+    const reader = target(config);
+    reader.apply(plan);
+    const again = await adapter.plan([server('acme', stdio)], ctx(reader));
+    expect(entryFor(again, id('agent-registry'), 'config.toml')?.action).toBe('unchanged');
+  });
+
+  it('MCP i agent w jednym planie: jeden wpis config.toml z obiema zmianami', async () => {
+    const agent = toLoaded(draft('agent', 'acme-a'));
+    const plan = await adapter.plan([agent, server('acme', stdio)], ctx(target()));
+    const configs = plan.entries.filter((e) => e.relPath === 'config.toml');
+    expect(configs).toHaveLength(1);
+    expect(configs[0]!.itemIds).toHaveLength(2);
+    const tree = parse(text(configs[0]!.content)) as Record<string, Record<string, unknown>>;
+    expect(Object.keys(tree['agents'] ?? {})).toEqual(['acme-a']);
+    expect(Object.keys(tree['mcp_servers'] ?? {})).toEqual(['acme']);
+  });
+
+  it('MCP: bez config.toml w celu (projekt) odmowa, bo Codex nie ma MCP w projekcie', async () => {
+    const plan = await adapter.plan([server('acme', stdio)], {
+      ...ctx(target()),
+      roots: roots.filter((r) => r.kind !== 'agent-registry'),
+    });
+    expect(plan.entries).toEqual([]);
+    expect(plan.refusals[0]?.reason).toMatch(/wyłącznie w globalnym config.toml/);
+  });
+
+  it('MCP: sse odmowione, istniejacy serwer zastepowany tylko po decyzji, podtabela env blokuje', async () => {
+    const sse = server('stream', {
+      ...stdio,
+      transport: 'sse',
+      command: null,
+      url: 'https://mcp.acme.test/sse',
+    });
+    const refused = await adapter.plan([sse], ctx(target()));
+    expect(refused.refusals[0]?.reason).toMatch(/sse/);
+
+    const existing = 'model = "acme"\n\n[mcp_servers.acme]\ncommand = "old-mcp"\n';
+    const item = server('acme', stdio);
+    const conflict = await adapter.plan([item], ctx(target(existing)));
+    expect(conflict.entries).toEqual([]);
+    expect(conflict.conflicts[0]?.options?.map((o) => o.id)).toEqual(['replace-server']);
+    const decisions = [
+      { itemId: item.item.id, relPath: 'config.toml', resolution: 'replace-server' as const },
+    ];
+    const replaced = await adapter.plan([item], { ...ctx(target(existing)), decisions });
+    const cfg = entryFor(replaced, id('agent-registry'), 'config.toml')!;
+    expect(text(cfg.content)).toBe(
+      'model = "acme"\n\n[mcp_servers.acme]\ncommand = "acme-mcp"\nargs = ["--serve"]\nenv_vars = ["ACME_TOKEN"]\n',
+    );
+
+    const nested = `${existing}\n[mcp_servers.acme.env]\nACME_TOKEN = "x"\n`;
+    const blocked = await adapter.plan([item], { ...ctx(target(nested)), decisions });
+    expect(blocked.entries).toEqual([]);
+    expect(blocked.refusals[0]?.reason).toMatch(/podtabele/);
+  });
 });
 
 /** Regresja z testu property-based: dopisane pola agenta Codeksa sa w werdykcie. */

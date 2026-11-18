@@ -27,6 +27,7 @@ const ROOT_KIND_LABEL: Readonly<Record<string, string>> = {
   'global-instructions': 'Instrukcje globalne',
   hooks: 'Hooki',
   'agent-registry': 'Rejestr agentów',
+  mcp: 'Serwery MCP',
 };
 
 export function rootKindLabel(kind: string): string {

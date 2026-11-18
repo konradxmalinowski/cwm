@@ -274,6 +274,94 @@ describe('kanaly export:*', () => {
     );
   });
 
+  it('serwer MCP: zapis tylko z jednorazowym znacznikiem z planu, egzekwowanym w main (ADR 0061)', async () => {
+    const h = await exportHarness();
+    const mcp = await h.library.create(
+      draft({
+        kind: 'tool-setting',
+        slug: 'mcp-acme',
+        body: '',
+        attributes: {
+          toolSetting: {
+            tool: 'claude-code',
+            key: 'mcpServers.acme',
+            value: {
+              transport: 'stdio',
+              command: 'acme-mcp',
+              args: ['--serve'],
+              url: null,
+              env: [{ name: 'ACME_TOKEN', ref: 'ACME_TOKEN' }],
+              headers: [],
+            },
+          },
+        },
+      }),
+    );
+    const { call } = wire(h.service);
+    const plan = async (): Promise<ExportPlanDto> => {
+      const r = await call<ExportPlanDto>('export:plan', {
+        tool: 'claude-code',
+        itemIds: [h.itemId, mcp.item.id],
+      });
+      if (!r.ok) throw new Error('plan nie powiodl sie');
+      return r.value;
+    };
+
+    const first = await plan();
+    expect(first.mcp?.confirmation).toMatch(/^[0-9a-f]{48}$/);
+    expect(first.mcp?.servers).toEqual([
+      expect.objectContaining({
+        itemId: mcp.item.id,
+        name: 'acme',
+        transport: 'stdio',
+        launch: 'acme-mcp --serve',
+        env: ['ACME_TOKEN'],
+      }),
+    ]);
+    // Bez znacznika: odmowa w main, nic nie trafia do bramki, a plan jest zuzyty.
+    expect(await call('export:apply', { planId: first.planId, approved: true })).toMatchObject({
+      ok: false,
+      error: { code: 'mcp-confirmation-required' },
+    });
+    expect(
+      await call('export:apply', {
+        planId: first.planId,
+        approved: true,
+        mcpConfirmation: first.mcp?.confirmation,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'unknown-plan' } });
+
+    const second = await plan();
+    expect(second.mcp?.confirmation).not.toBe(first.mcp?.confirmation);
+    expect(
+      await call('export:apply', {
+        planId: second.planId,
+        approved: true,
+        mcpConfirmation: first.mcp?.confirmation,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'mcp-confirmation-required' } });
+    expect(
+      await call('export:apply', { planId: second.planId, approved: true, mcpConfirmation: 'x' }),
+    ).toMatchObject({ ok: false, error: { code: 'invalid-request' } });
+    expect(h.gate.applies).toHaveLength(0);
+
+    const third = await plan();
+    const applied = await call<ExportApplyDto>('export:apply', {
+      planId: third.planId,
+      approved: true,
+      mcpConfirmation: third.mcp?.confirmation,
+    });
+    expect(applied.ok).toBe(true);
+    expect(h.gate.applies).toHaveLength(1);
+
+    // Plan bez serwera MCP nie ma pola mcp i nie potrzebuje znacznika.
+    const plain = await call<ExportPlanDto>('export:plan', {
+      tool: 'claude-code',
+      itemIds: [h.itemId],
+    });
+    expect(plain.ok && plain.value.mcp).toBe(undefined);
+  });
+
   it('blad nieoczekiwany jest logowany, a klient dostaje ogolny komunikat', async () => {
     const h = await exportHarness();
     h.exporter.plan = () => Promise.reject(new Error('/Users/ktos/.claude/tajne'));

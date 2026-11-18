@@ -110,6 +110,7 @@ const KIND_LABEL: Readonly<Record<RootKind, string>> = {
   'global-instructions': 'instrukcji globalnej',
   hooks: 'hooków',
   'agent-registry': 'rejestru agentów (config.toml)',
+  mcp: 'serwerów MCP',
 };
 
 /**

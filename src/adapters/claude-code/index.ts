@@ -9,7 +9,9 @@ import type {
   ToolAdapter,
   ToolExporter,
 } from '../../core/ports/tool-adapter';
+import { mcpFileName } from '../shared/export/mcp-export';
 import { addHookCandidates, isRecord } from '../shared/hooks';
+import { scanClaudeMcp } from '../shared/mcp-scan';
 import { scanInstructionFile } from '../shared/instructions';
 import { scanMarkdownDirectory } from '../shared/markdown-dir';
 import { ScanContext, unsupportedRootKind } from '../shared/scan-context';
@@ -30,6 +32,7 @@ export class ClaudeCodeAdapter implements ToolAdapter, ToolExporter {
     'commands',
     'global-instructions',
     'hooks',
+    'mcp',
   ];
 
   capabilities(item: LibraryItem): CompatibilityVerdict {
@@ -67,6 +70,9 @@ export class ClaudeCodeAdapter implements ToolAdapter, ToolExporter {
         break;
       case 'hooks':
         await scanHooks(ctx);
+        break;
+      case 'mcp':
+        await scanClaudeMcp(ctx, mcpFileName(root));
         break;
       default:
         return unsupportedRootKind(this.id, root, NAME);

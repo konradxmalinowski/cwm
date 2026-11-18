@@ -146,17 +146,29 @@ describe('Codex: agenci i rejestr', () => {
     expect(done[0]).toEqual(reg);
   });
 
-  it('config.toml: z pliku nic poza sekcjami agentow nie trafia do wyniku (sekrety)', async () => {
+  it('config.toml: z pliku nic poza agentami i opisem serwerow MCP nie trafia do wyniku (sekrety)', async () => {
     const a = new CodexAdapter();
     const out = [
       await scanRoot(a, 'agents', agentsDir),
       await scanRoot(a, 'agent-registry', config),
     ];
+    // Serwer MCP jest elementem (ADR 0061): nazwa, polecenie i nazwy zmiennych tak, wartosci nie.
+    const mcp = out[1]!.candidates.find((c) => c.kind === 'tool-setting');
+    expect(mcp?.draft.attributes?.toolSetting).toEqual({
+      tool: 'codex',
+      key: 'mcp_servers.acme-server',
+      value: {
+        transport: 'stdio',
+        command: 'acme-mcp',
+        args: ['--serve', '--port', '0'],
+        url: null,
+        env: [{ name: 'ACME_TOKEN', ref: 'ACME_TOKEN' }],
+        headers: [],
+      },
+    });
     const dump = JSON.stringify(plain(out));
     for (const forbidden of [
       'acme-fake-token',
-      'ACME_TOKEN',
-      'acme-server',
       'trusted',
       'acme-model',
       'not-a-table',

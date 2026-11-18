@@ -15,7 +15,15 @@ import type { SourceReader } from './source-reader';
 
 /** Rodzaj roota, ktory warstwa lokalizacji wykrywa dla danego narzedzia. */
 export type RootKind =
-  'skills' | 'agents' | 'commands' | 'rules' | 'global-instructions' | 'hooks' | 'agent-registry';
+  | 'skills'
+  | 'agents'
+  | 'commands'
+  | 'rules'
+  | 'global-instructions'
+  | 'hooks'
+  | 'agent-registry'
+  /** Plik z serwerami MCP Claude Code: `~/.claude.json` albo `.mcp.json` projektu (ADR 0061). */
+  | 'mcp';
 
 export interface DetectedRoot {
   readonly rootId: RootId;

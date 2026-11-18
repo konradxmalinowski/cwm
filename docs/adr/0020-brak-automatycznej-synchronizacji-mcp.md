@@ -1,6 +1,7 @@
 # ADR 0020: Brak automatycznej synchronizacji serwerów MCP
 
-Status: zaakceptowane
+Status: częściowo zastąpione przez ADR 0061 (import i jawny eksport serwerów MCP). Zakaz synchronizacji i MCP w
+profilach obowiązuje dalej.
 Data: 2026-10-20
 
 ## Kontekst
