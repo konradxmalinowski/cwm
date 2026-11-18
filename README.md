@@ -129,7 +129,8 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
   domowego, systemowego i dowiązań). Z projektu import czyta `.claude/skills`, `.claude/agents`,
   `.claude/commands` i `CLAUDE.md` w korzeniu, a zaimportowane elementy są przypięte do projektu:
   eksport zapisze je tylko do niego, nigdy do `~/.claude` ani do innego projektu. Element globalny
-  trafia do projektu tylko po zaznaczeniu „Dołącz elementy globalne” (ADR 0059).
+  trafia do projektu tylko po zaznaczeniu „Dołącz elementy globalne”, a prywatny albo z możliwym sekretem
+  nigdy. Usunięcie projektu z listy odpina jego elementy po potwierdzeniu (ADR 0059).
 - **Eksport.** Do Claude Code i Codeksa, z planem zapisu, podglądem różnic bez sekretów,
   ostrzeżeniami o utracie zgodności i potwierdzeniem. Przed zapisem powstaje kopia w `backups/`,
   po zapisie plik jest czytany z powrotem. Ten sam plan da się zapisać też jako archiwum ZIP

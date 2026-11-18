@@ -28,6 +28,8 @@ export const WRITE_CHANNELS: ReadonlySet<IpcChannel> = new Set<IpcChannel>([
   'export:apply',
   'sync:apply',
   'history:rollback',
+  // Usuniecie projektu odpina jego elementy w bibliotece (ADR 0059).
+  'projects:remove',
 ]);
 
 export const BUSY_RESULT = {

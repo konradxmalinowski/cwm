@@ -1,6 +1,8 @@
 import { basename } from 'node:path';
 
+import type { ItemDraft, LibraryItem } from '../../core/model/item';
 import { PROJECT_NAME_MAX, projectNameProblem } from '../../core/model/project';
+import type { LibraryService } from '../../core/services/library/library-service';
 import type { ProjectDirCheck } from '../../infra/projects/project-dir';
 import {
   ProjectRegistryError,
@@ -12,6 +14,7 @@ import type {
   ProjectDto,
   ProjectsAddDto,
   ProjectsListDto,
+  ProjectsRemoveDto,
 } from '../../shared/ipc/projects-contract';
 
 /**
@@ -20,7 +23,12 @@ import type {
  * identyfikator i nazwe, nigdy sciezki.
  */
 export interface ProjectsServiceDeps {
-  readonly registry: Pick<FsProjectRegistry, 'ready' | 'list' | 'add' | 'rename' | 'remove'>;
+  readonly registry: Pick<
+    FsProjectRegistry,
+    'ready' | 'list' | 'get' | 'invalidReason' | 'add' | 'rename' | 'remove'
+  >;
+  /** Biblioteka do odpiecia elementow przy usuwaniu projektu (ADR 0059); `null`, gdy niedostepna. */
+  readonly library: () => Pick<LibraryService, 'list' | 'update'> | null;
   /** Natywne okno wyboru katalogu; `null`, gdy uzytkownik je zamknal bez wyboru. */
   readonly pickDirectory: () => Promise<string | null>;
   readonly check: (chosen: string) => Promise<ProjectDirCheck>;
@@ -38,9 +46,26 @@ function err(code: string, message: string): Result<never> {
   return { ok: false, error: { code, message } };
 }
 
-export function toProjectDto(record: Pick<ProjectRecord, 'id' | 'name'>): ProjectDto {
-  return { projectId: record.id, name: record.name };
+export function toProjectDto(
+  record: Pick<ProjectRecord, 'id' | 'name'>,
+  invalidReason: string | null = null,
+): ProjectDto {
+  return { projectId: record.id, name: record.name, invalid: invalidReason };
 }
+
+/** Szkic odpiecia: ten sam element, zakres prywatny (najwezszy) i bez `projectId`; pliki pomocnicze i zrodlo zostaja. */
+function unpinnedDraft(item: LibraryItem): ItemDraft {
+  return {
+    kind: item.kind,
+    identity: item.identity,
+    content: item.content,
+    attributes: item.attributes,
+    classification: { scope: 'private', secretFindings: item.classification.secretFindings },
+  };
+}
+
+const LIBRARY_UNAVAILABLE =
+  'Biblioteka jest niedostępna, więc nie da się odpiąć elementów projektu. Projekt zostaje na liście.';
 
 /** Nazwa domyslna z ostatniego elementu sciezki; sama sciezka nie wychodzi z main. */
 export function defaultProjectName(dir: string): string {
@@ -56,7 +81,13 @@ export class ProjectsService {
 
   async list(): Promise<Result<ProjectsListDto>> {
     await this.deps.registry.ready();
-    return ok({ projects: this.deps.registry.list().map(toProjectDto) });
+    return ok({ projects: this.dtos() });
+  }
+
+  private dtos(): ProjectDto[] {
+    return this.deps.registry
+      .list()
+      .map((p) => toProjectDto(p, this.deps.registry.invalidReason(p.id)));
   }
 
   async add(): Promise<Result<ProjectsAddDto>> {
@@ -86,10 +117,38 @@ export class ProjectsService {
     }
   }
 
-  async remove(projectId: string): Promise<Result<ProjectsListDto>> {
+  /**
+   * Usuniecie z listy odpina elementy projektu do zakresu prywatnego, zeby nie zostaly przypiete do
+   * identyfikatora, ktorego juz nie ma (ADR 0059). Bez `confirmed` zwraca liczbe przypietych elementow
+   * do potwierdzenia; z `confirmed` odpina je i dopiero potem usuwa wpis. Blad odpiecia zostawia projekt.
+   */
+  async remove(projectId: string, confirmed: boolean): Promise<Result<ProjectsRemoveDto>> {
     try {
+      await this.deps.registry.ready();
+      if (this.deps.registry.get(projectId) === null) {
+        return err('unknown-project', 'Nie ma takiego projektu. Odśwież listę projektów.');
+      }
+      const library = this.deps.library();
+      if (library === null) return err('library-unavailable', LIBRARY_UNAVAILABLE);
+      const pinned = (await library.list()).items.filter(
+        (item) => item.classification.projectId === projectId,
+      );
+      if (!confirmed) return ok({ status: 'confirm', pinned: pinned.length });
+      let unpinned = 0;
+      for (const item of pinned) {
+        try {
+          await library.update(item.id, unpinnedDraft(item), { note: `odpieto=${projectId}` });
+          unpinned++;
+        } catch (error: unknown) {
+          this.deps.logUnexpected(error);
+          return err(
+            'unpin-failed',
+            `Odpięto ${unpinned} z ${pinned.length} elementów, a następny się nie udał. Projekt zostaje na liście; spróbuj jeszcze raz.`,
+          );
+        }
+      }
       await this.deps.registry.remove(projectId);
-      return ok({ projects: this.deps.registry.list().map(toProjectDto) });
+      return ok({ status: 'removed', unpinned, projects: this.dtos() });
     } catch (error: unknown) {
       return this.mapError(error);
     }

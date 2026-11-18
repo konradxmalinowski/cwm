@@ -49,8 +49,15 @@ export function createWriteGate(
   deps: ExportBootstrapDeps,
   linkMode: Pick<LinkCapabilityDetector, 'capability'>,
 ): WriteGate {
+  const { projects } = deps;
   return new FsWriteGate({
     resolveRoot: resolvePath,
+    ...(projects === undefined
+      ? {}
+      : {
+          boundaryOf: (rootId: string) => projects.boundaryOf(rootId),
+          rootIntact: (rootId: string) => projects.rootIntact(rootId),
+        }),
     userDataDir: deps.userDataDir,
     objects: new FsObjectStore(objectsRoot(deps.userDataDir)),
     linkMode,
@@ -91,7 +98,7 @@ export async function startExport(
     catalog.resolvePath(rootId) ?? projects?.resolvePath(rootId) ?? null;
   const linkMode = new LinkCapabilityDetector(deps.userDataDir);
   const gate = createWriteGate(resolvePath, deps, linkMode);
-  const reader = new FsSourceReader(resolvePath);
+  const reader = new FsSourceReader(resolvePath, (rootId) => projects?.boundaryOf(rootId) ?? null);
   const state = indexBackedSyncState(deps.indexStore);
   const adapters = createAdapters();
   const exporters = createExporters(adapters);

@@ -33,7 +33,11 @@ interface Located {
  * Komunikaty bledow niosa sciezke wzgledna roota, nigdy bezwzgledna (ARCHITECTURE 7.2, regula 4).
  */
 export class FsSourceReader implements SourceReader {
-  constructor(private readonly resolveRoot: RootResolver) {}
+  constructor(
+    private readonly resolveRoot: RootResolver,
+    /** Katalog projektu jako druga granica dla rootow projektowych (ADR 0059); `null` dla globalnych. */
+    private readonly boundaryOf: (root: RootId) => string | null = () => null,
+  ) {}
 
   async list(root: RootId, relPath: string): Promise<readonly SourceEntry[]> {
     return this.guard(relPath, async () => {
@@ -145,6 +149,13 @@ export class FsSourceReader implements SourceReader {
     }
     // Sam root moze byc dowiazaniem (dotfiles), wiec go rozwiazujemy; wszystko pod nim nie.
     const rootReal = await realpath(rootPath);
+    const boundary = this.boundaryOf(root);
+    if (
+      boundary !== null &&
+      !isPathInside(rootReal, await realpath(boundary), { allowSame: true })
+    ) {
+      throw outside(relPath);
+    }
     const info = await stat(rootReal);
     const full = path.join(rootReal, ...segments);
     if (!isPathInside(full, rootReal, { allowSame: true })) {

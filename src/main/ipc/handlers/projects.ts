@@ -32,11 +32,20 @@ function fail<T>(field?: string): Parsed<T> {
   };
 }
 
-export function parseProjectId(payload: unknown): Parsed<ProjectsRemoveRequest> {
+export function parseProjectId(payload: unknown): Parsed<{ projectId: string }> {
   if (!isRecord(payload)) return fail();
   const { projectId } = payload;
   if (!isProjectId(projectId)) return fail('projectId');
   return { ok: true, value: { projectId } };
+}
+
+export function parseRemoveRequest(payload: unknown): Parsed<ProjectsRemoveRequest> {
+  const base = parseProjectId(payload);
+  if (!base.ok) return base;
+  const confirmed = isRecord(payload) ? payload['confirmed'] : undefined;
+  if (confirmed === undefined) return base;
+  if (confirmed !== true) return fail('confirmed');
+  return { ok: true, value: { projectId: base.value.projectId, confirmed } };
 }
 
 export function parseRenameRequest(payload: unknown): Parsed<ProjectsRenameRequest> {
@@ -87,6 +96,8 @@ export function registerProjectsHandlers(registry: IpcRegistry, deps: ProjectsHa
   );
   registry.register(
     'projects:remove',
-    guarded(parseProjectId, (service, request) => service.remove(request.projectId)),
+    guarded(parseRemoveRequest, (service, request) =>
+      service.remove(request.projectId, request.confirmed === true),
+    ),
   );
 }

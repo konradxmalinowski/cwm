@@ -5,6 +5,7 @@ import type {
   ProjectDto,
   ProjectsAddDto,
   ProjectsListDto,
+  ProjectsRemoveDto,
   ProjectsRemoveRequest,
   ProjectsRenameRequest,
 } from '../../../../shared/ipc/projects-contract';
@@ -26,7 +27,8 @@ export class ProjectsApiService {
     return callBridge((bridge) => bridge.projects.rename(request));
   }
 
-  remove(request: ProjectsRemoveRequest): Promise<Result<ProjectsListDto>> {
+  /** Bez `confirmed` zwraca liczbe przypietych elementow; z `confirmed` odpina je i usuwa projekt. */
+  remove(request: ProjectsRemoveRequest): Promise<Result<ProjectsRemoveDto>> {
     return callBridge((bridge) => bridge.projects.remove(request));
   }
 }

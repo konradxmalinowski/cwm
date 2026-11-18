@@ -21,6 +21,8 @@ import { PROJECT_CANDIDATES, type ProjectCandidateSpec } from './locations';
 
 const INVALID_MESSAGE =
   'Katalog projektu zniknął, został przeniesiony albo stał się dowiązaniem symbolicznym. Usuń projekt z listy i dodaj go ponownie.';
+const UNREADABLE_MESSAGE =
+  'Nie udało się odczytać katalogu projektu (brak uprawnień albo błąd dysku). Sprawdź katalog i spróbuj ponownie.';
 const UNKNOWN_MESSAGE = 'Nie ma takiego projektu. Odśwież listę projektów.';
 
 interface Hit {
@@ -33,8 +35,10 @@ export class FsProjectCatalog implements ProjectRootCatalog {
   private readonly saltReady: Promise<void>;
 
   constructor(
-    private readonly registry: Pick<FsProjectRegistry, 'ready' | 'list' | 'get'>,
+    private readonly registry: Pick<FsProjectRegistry, 'ready' | 'list' | 'get' | 'invalidReason'>,
     salt: Promise<Uint8Array>,
+    /** Polityka katalogu z okna wyboru, uruchamiana od nowa przy kazdym `roots()`. */
+    private readonly check: (dir: string) => Promise<string | null> = () => Promise.resolve(null),
   ) {
     this.saltReady = salt.then((value) => {
       this.salt = value;
@@ -45,12 +49,19 @@ export class FsProjectCatalog implements ProjectRootCatalog {
     await Promise.all([this.saltReady, this.registry.ready()]);
     const project = this.registry.get(projectId);
     if (project === null) return { ok: false, code: 'unknown-project', message: UNKNOWN_MESSAGE };
+    const listed = this.registry.invalidReason(project.id);
+    if (listed !== null) return { ok: false, code: 'project-invalid', message: listed };
     if (!(await storedProjectDirIntact(project.dir))) {
       return { ok: false, code: 'project-invalid', message: INVALID_MESSAGE };
     }
+    const policy = await this.check(project.dir);
+    if (policy !== null) return { ok: false, code: 'project-invalid', message: policy };
     const roots: DetectedRoot[] = [];
     for (const spec of PROJECT_CANDIDATES) {
       const state = await probeSegments(project.dir, spec.segments);
+      if (state === 'error') {
+        return { ok: false, code: 'project-invalid', message: UNREADABLE_MESSAGE };
+      }
       // Dowiazanie w sciezce roota prowadziloby zapis i odczyt poza repozytorium: root znika z listy.
       if (state === 'linked') continue;
       const exists = state === spec.entry;
@@ -74,6 +85,17 @@ export class FsProjectCatalog implements ProjectRootCatalog {
     return path.join(hit.project.dir, ...hit.spec.segments);
   }
 
+  /** Katalog projektu jako druga granica dla bramki zapisu i czytnika; `null` dla rootow globalnych. */
+  boundaryOf(rootId: RootId): string | null {
+    return this.find(rootId)?.project.dir ?? null;
+  }
+
+  /** Kontrola tuz przed kazdym zapisem; rooty spoza rejestru projektow nie sa tu oceniane. */
+  rootIntact(rootId: RootId): boolean {
+    const hit = this.find(rootId);
+    return hit === null || projectRootIntactSync(hit.project.dir, hit.spec.segments);
+  }
+
   ownerOf(rootId: RootId): { readonly projectId: string; readonly label: string } | null {
     const hit = this.find(rootId);
     return hit === null
@@ -84,6 +106,7 @@ export class FsProjectCatalog implements ProjectRootCatalog {
   private find(rootId: RootId): Hit | null {
     if (this.salt === null || !rootId.startsWith('root-')) return null;
     for (const project of this.registry.list()) {
+      if (this.registry.invalidReason(project.id) !== null) continue;
       for (const spec of PROJECT_CANDIDATES) {
         if (this.idFor(project, spec) === rootId) return { project, spec };
       }

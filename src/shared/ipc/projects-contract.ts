@@ -7,6 +7,11 @@ import type { Result } from './library-contract';
 export interface ProjectDto {
   projectId: string;
   name: string;
+  /**
+   * Powod, dla ktorego wpis z rejestru nie przeszedl polityki katalogu przy wczytaniu (np. recznie
+   * zmieniony plik). Taki projekt mozna tylko usunac; `null` dla projektu waznego.
+   */
+  invalid: string | null;
 }
 
 export interface ProjectsListDto {
@@ -21,11 +26,20 @@ export interface ProjectsRenameRequest {
   name: string;
 }
 
+/**
+ * Bez `confirmed` main zwraca liczbe elementow przypietych do projektu; z `confirmed: true` odpina je
+ * do zakresu prywatnego i usuwa projekt z listy (ADR 0059).
+ */
 export interface ProjectsRemoveRequest {
   projectId: string;
+  confirmed?: true;
 }
+
+export type ProjectsRemoveDto =
+  | { status: 'confirm'; pinned: number }
+  | { status: 'removed'; unpinned: number; projects: ProjectDto[] };
 
 export type ProjectsListResult = Result<ProjectsListDto>;
 export type ProjectsAddResult = Result<ProjectsAddDto>;
 export type ProjectsRenameResult = Result<ProjectDto>;
-export type ProjectsRemoveResult = Result<ProjectsListDto>;
+export type ProjectsRemoveResult = Result<ProjectsRemoveDto>;

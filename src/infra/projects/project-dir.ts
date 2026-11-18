@@ -104,21 +104,80 @@ async function realOrSelf(value: string): Promise<string> {
   }
 }
 
+/** Katalogi z kluczami i danymi logowania w katalogu domowym: projekt nie moze w nich lezec ani ich zawierac. */
+export const SENSITIVE_HOME_DIRS = ['.ssh', '.aws', '.gnupg', '.config', '.kube'] as const;
+
+/** Punkty montowania dyskow zewnetrznych i sieciowych: projekt pod nimi jest odrzucany. */
+const POSIX_MOUNT_TREES = ['/Volumes', '/mnt', '/media'];
+
+function unc(value: string): boolean {
+  return /^[\\/]{2}/.test(value);
+}
+
+/**
+ * Polityka katalogu projektu (ADR 0059) na sciezce juz po `realpath`. Wspolna dla okna wyboru,
+ * wczytania rejestru i kazdego uzycia projektu, wiec recznie zmieniony `projects.json` nie omija
+ * zadnej z regul. Zwraca powod po polsku, bez sciezki, albo `null`.
+ */
+export async function projectDirPolicyProblem(
+  dir: string,
+  ctx: ProjectDirContext,
+): Promise<string | null> {
+  const { platform } = ctx;
+  const p = api(platform);
+  if (dir.includes('\0') || !p.isAbsolute(dir))
+    return 'Ścieżka katalogu projektu jest niepoprawna.';
+  if (platform === 'win32' && unc(dir)) return 'Katalog sieciowy (UNC) nie może być projektem.';
+  if (p.dirname(dir) === dir) return 'Katalog główny dysku nie może być projektem.';
+  if (dir.split(/[\\/]/).some((segment) => segment.toLowerCase() === '.git')) {
+    return 'Katalog wewnętrzny repozytorium Git (.git) nie może być projektem. Wskaż katalog roboczy repozytorium.';
+  }
+  const home = await realOrSelf(ctx.home);
+  if (key(dir, platform) === key(home, platform)) {
+    return 'Katalog domowy nie może być projektem. Wskaż katalog repozytorium.';
+  }
+  if (inside(home, dir, platform)) {
+    return 'Katalog, w którym leży katalog domowy, nie może być projektem.';
+  }
+  if (platform !== 'win32' && POSIX_MOUNT_TREES.some((m) => inside(dir, m, platform))) {
+    return 'Katalog leży na dysku zewnętrznym albo zamontowanym (/Volumes, /mnt, /media). Projekty są obsługiwane tylko na dysku, na którym jest katalog domowy.';
+  }
+  const system = systemDirectories(platform, ctx.env ?? {});
+  if (
+    system.exact.some((d) => key(d, platform) === key(dir, platform)) ||
+    system.trees.some((d) => inside(dir, d, platform))
+  ) {
+    return 'Katalog systemowy nie może być projektem.';
+  }
+  for (const name of SENSITIVE_HOME_DIRS) {
+    const guarded = await realOrSelf(p.join(home, name));
+    if (inside(dir, guarded, platform) || inside(guarded, dir, platform)) {
+      return 'Katalog z kluczami albo danymi logowania (np. .ssh, .aws, .config) nie może być projektem.';
+    }
+  }
+  for (const raw of ctx.protectedDirs) {
+    const guarded = await realOrSelf(raw);
+    if (inside(dir, guarded, platform) || inside(guarded, dir, platform)) {
+      return 'Katalog pokrywa się z konfiguracją narzędzia albo z danymi aplikacji, więc nie może być projektem.';
+    }
+  }
+  return null;
+}
+
 /**
  * Sprawdza katalog z okna wyboru. Zwraca `realpath` do zapisania w rejestrze albo powod odmowy po
  * polsku, bez sciezki. Sam wybrany katalog nie moze byc dowiazaniem; dowiazania wyzej w sciezce
- * (np. `/var` na macOS) sa rozwiazywane i zapisywany jest katalog docelowy.
+ * (np. `/var` na macOS) sa rozwiazywane, a polityka sprawdza katalog docelowy.
  */
 export async function checkChosenProjectDir(
   chosen: string,
   ctx: ProjectDirContext,
 ): Promise<ProjectDirCheck> {
   const { platform } = ctx;
-  const p = api(platform);
-  if (chosen.includes('\0') || !p.isAbsolute(chosen)) {
+  if (chosen.includes('\0') || !api(platform).isAbsolute(chosen)) {
     return { ok: false, message: 'Okno wyboru zwróciło niepoprawną ścieżkę katalogu.' };
   }
-  if (platform === 'win32' && /^[\\/]{2}/.test(chosen)) {
+  if (platform === 'win32' && unc(chosen)) {
     return { ok: false, message: 'Katalog sieciowy (UNC) nie może być projektem.' };
   }
   try {
@@ -138,49 +197,17 @@ export async function checkChosenProjectDir(
     }
     return { ok: false, message: 'Nie udało się odczytać wybranego katalogu.' };
   }
-
   const dir = await realOrSelf(chosen);
-  if (p.dirname(dir) === dir) {
-    return { ok: false, message: 'Katalog główny dysku nie może być projektem.' };
-  }
-  const home = await realOrSelf(ctx.home);
-  if (key(dir, platform) === key(home, platform)) {
-    return {
-      ok: false,
-      message: 'Katalog domowy nie może być projektem. Wskaż katalog repozytorium.',
-    };
-  }
-  if (inside(home, dir, platform)) {
-    return {
-      ok: false,
-      message: 'Katalog, w którym leży katalog domowy, nie może być projektem.',
-    };
-  }
-  const system = systemDirectories(platform, ctx.env ?? {});
-  if (
-    system.exact.some((d) => key(d, platform) === key(dir, platform)) ||
-    system.trees.some((d) => inside(dir, d, platform))
-  ) {
-    return { ok: false, message: 'Katalog systemowy nie może być projektem.' };
-  }
-  for (const raw of ctx.protectedDirs) {
-    const guarded = await realOrSelf(raw);
-    if (inside(dir, guarded, platform) || inside(guarded, dir, platform)) {
-      return {
-        ok: false,
-        message:
-          'Katalog pokrywa się z konfiguracją narzędzia albo z danymi aplikacji, więc nie może być projektem.',
-      };
-    }
-  }
-  return { ok: true, dir };
+  const problem = await projectDirPolicyProblem(dir, ctx);
+  return problem === null ? { ok: true, dir } : { ok: false, message: problem };
 }
 
 /**
  * Stan sciezki `dir/segments` bez podazania za dowiazaniami. `linked`: ktorys element (takze
  * koncowy) jest dowiazaniem symbolicznym, wiec root nie jest uzywany.
  */
-export type SegmentState = 'directory' | 'file' | 'missing' | 'linked';
+/** `error`: inny blad odczytu niz brak wpisu; projekt jest wtedy traktowany jako niewazny. */
+export type SegmentState = 'directory' | 'file' | 'missing' | 'linked' | 'error';
 
 export async function probeSegments(
   dir: string,
@@ -195,7 +222,7 @@ export async function probeSegments(
     } catch (error: unknown) {
       const code = errnoCode(error);
       if (code === 'ENOENT' || code === 'ENOTDIR') return 'missing';
-      throw error;
+      return 'error';
     }
     if (info.isSymbolicLink()) return 'linked';
     if (i === segments.length - 1) {

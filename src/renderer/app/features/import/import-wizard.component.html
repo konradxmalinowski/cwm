@@ -235,15 +235,69 @@
                   <span class="root__main">
                     <span class="root__label">{{ p.name }}</span>
                   </span>
+                  @if (p.invalid !== null) {
+                    <p class="root__note" data-testid="import-project-invalid">
+                      <span class="root__state">Niedostępny.</span> {{ p.invalid }} Taki projekt
+                      można tylko usunąć z listy.
+                    </p>
+                  }
+                  @if (projectRemoving(); as removing) {
+                    @if (removing.projectId === p.projectId) {
+                      <div class="notice" data-testid="import-project-remove-confirm">
+                        <p class="notice__text">
+                          @if (removing.pinned === 0) {
+                            Żaden element biblioteki nie jest przypięty do „{{ p.name }}”.
+                          } @else {
+                            <span class="notice__label">Uwaga.</span> Do „{{ p.name }}”
+                            {{
+                              plural(
+                                removing.pinned,
+                                'jest przypięty',
+                                'są przypięte',
+                                'jest przypiętych'
+                              )
+                            }}
+                            {{ removing.pinned }}
+                            {{ plural(removing.pinned, 'element', 'elementy', 'elementów') }}. Po
+                            usunięciu projektu z listy zostaną odpięte i dostaną zakres prywatny.
+                          }
+                          Pliki w katalogu projektu zostaną bez zmian.
+                        </p>
+                        <p class="row-actions">
+                          <button
+                            type="button"
+                            class="btn btn--small btn--primary"
+                            data-testid="import-project-remove-confirm-button"
+                            [id]="projectRemoveConfirmId(p)"
+                            (click)="confirmRemoveProject(p)"
+                          >
+                            Usuń z listy
+                            @if (removing.pinned > 0) {
+                              i odepnij {{ removing.pinned }}
+                            }
+                          </button>
+                          <button
+                            type="button"
+                            class="btn btn--small"
+                            (click)="cancelRemoveProject(p)"
+                          >
+                            Anuluj
+                          </button>
+                        </p>
+                      </div>
+                    }
+                  }
                   <div class="row-actions">
-                    <button
-                      type="button"
-                      class="btn btn--small"
-                      data-testid="import-project-scan"
-                      (click)="startProjectScan(p)"
-                    >
-                      Przeskanuj<span class="sr-only"> projekt {{ p.name }}</span>
-                    </button>
+                    @if (p.invalid === null) {
+                      <button
+                        type="button"
+                        class="btn btn--small"
+                        data-testid="import-project-scan"
+                        (click)="startProjectScan(p)"
+                      >
+                        Przeskanuj<span class="sr-only"> projekt {{ p.name }}</span>
+                      </button>
+                    }
                     <button
                       type="button"
                       class="btn btn--small"
@@ -257,6 +311,7 @@
                       type="button"
                       class="btn btn--small"
                       data-testid="import-project-remove"
+                      [id]="projectRemoveButtonId(p)"
                       (click)="removeProject(p)"
                     >
                       Usuń z listy<span class="sr-only"> projekt {{ p.name }}</span>

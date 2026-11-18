@@ -349,6 +349,7 @@ function start(): void {
       userData,
       home,
       rootSalt,
+      library: () => libraryService,
       logUnexpected: (error) => {
         log().error(
           '[cwm] nieoczekiwany blad listy projektow:',

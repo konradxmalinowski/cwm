@@ -12,7 +12,13 @@ import type {
 } from '../../ports/tool-adapter';
 import type { LinkCapability, WriteGate } from '../../ports/write-gate';
 import type { LibraryService } from '../library/library-service';
-import { GLOBAL_TARGET, boundProject, scopeRefusal, type ExportTarget } from './project-scope';
+import {
+  GLOBAL_TARGET,
+  boundProject,
+  restrictedFromRepository,
+  scopeRefusal,
+  type ExportTarget,
+} from './project-scope';
 
 /**
  * Serwis eksportu (ARCHITECTURE 3.5). Plan zyje tylko w main pod `planId`: `apply` bierze go z
@@ -98,6 +104,8 @@ export interface PlannedItem {
   readonly contentHash: Sha256;
   /** Projekt, do ktorego element jest przypiety; `null` dla elementu globalnego (ADR 0059). */
   readonly projectId: string | null;
+  /** Prywatny albo z trafieniem sekretow: nie trafia do repozytorium jako element globalny (ADR 0059). */
+  readonly restricted: boolean;
 }
 
 /** Cel planu: katalog globalny narzedzia albo projekt z rejestru (ADR 0059). */
@@ -175,8 +183,16 @@ export class ExportService {
     target: ExportTarget = GLOBAL_TARGET,
   ): Promise<ExportPlanReport> {
     const report = await this.preview(tool, itemIds, decisions, target);
-    if (!report.toolMissing) this.remember(report);
+    this.retain(report);
     return report;
+  }
+
+  /**
+   * Zapamietuje plan z `preview` pod jego `planId`, zeby `apply` mogl go uzyc. Kanal `export:plan`
+   * wola to dopiero po kontroli zakresu w main (ADR 0059): plan odrzucony tam nie istnieje w serwisie.
+   */
+  retain(report: ExportPlanReport): void {
+    if (!report.toolMissing) this.remember(report);
   }
 
   /** Jak `plan`, ale plan nie jest zapamietany: do odczytu stanu (sieroty, status) bez wypierania planow. */
@@ -208,6 +224,7 @@ export class ExportService {
       revision: item.version.revision,
       contentHash: item.version.contentHash,
       projectId: boundProject(item),
+      restricted: restrictedFromRepository(item),
     }));
 
     const destination = await this.destination(tool, target);

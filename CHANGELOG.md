@@ -15,7 +15,11 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
   usuwaniem z listy. Import z projektu czyta `.claude/skills`, `.claude/agents`, `.claude/commands` i `CLAUDE.md` w
   korzeniu repozytorium, a zaimportowane elementy są przypięte do projektu. W kreatorze eksportu każdy projekt jest
   celem: element projektu trafia tylko do swojego repozytorium, nigdy do `~/.claude` ani do innego projektu, a element
-  globalny tylko po zaznaczeniu "Dołącz elementy globalne". Zapis do projektu ma ten sam plan, podgląd, kopię zapasową i
+  globalny tylko po zaznaczeniu "Dołącz elementy globalne" (element prywatny albo z możliwym sekretem nie trafia do
+  repozytorium nigdy). Usunięcie projektu z listy najpierw pokazuje, ile elementów jest do niego przypiętych, i po
+  potwierdzeniu odpina je do zakresu prywatnego. Katalog projektu nie może leżeć w `.git`, w `~/.ssh`, `~/.aws`,
+  `~/.gnupg`, `~/.config`, `~/.kube` ani na dysku zamontowanym pod `/Volumes`, `/mnt` lub `/media`; te reguły działają
+  też przy każdym wczytaniu listy projektów. Zapis do projektu ma ten sam plan, podgląd, kopię zapasową i
   cofnięcie z Historii, ale zawsze kopiuje pliki zamiast tworzyć dowiązania i nie zmienia `.gitignore`. Zakres
   sprawdzają dwa niezależne miejsca: planowanie i proces główny na gotowym planie. Synchronizacja i archiwum ZIP pomijają
   elementy projektu. Renderer nigdy nie dostaje ścieżki projektu; nowe kanały IPC to `projects:list`, `projects:add`,

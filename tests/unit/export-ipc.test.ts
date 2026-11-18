@@ -350,9 +350,16 @@ describe('export:plan z celem projektu (ADR 0059)', () => {
     } as const;
     // Element globalny w planie projektu bez jawnej zgody.
     expect(planScopeViolation(projectReport, (id) => owners[id] ?? null)).not.toBeNull();
+    const withGlobal = { ...projectReport.target, includeGlobal: true };
+    // Domyslny element harnessu jest prywatny: zgoda na globalne go nie obejmuje.
+    expect(report.items[0]?.restricted).toBe(true);
+    expect(
+      planScopeViolation({ ...projectReport, target: withGlobal }, (id) => owners[id] ?? null),
+    ).not.toBeNull();
+    const open = report.items.map((i) => ({ ...i, restricted: false }));
     expect(
       planScopeViolation(
-        { ...projectReport, target: { ...projectReport.target, includeGlobal: true } },
+        { ...projectReport, target: withGlobal, items: open },
         (id) => owners[id] ?? null,
       ),
     ).toBeNull();

@@ -28,6 +28,7 @@ export function startImport(
   // Czytnik zna rooty globalne i projektowe; rooty projektu sprawdzaja katalog przy kazdym odczycie (ADR 0059).
   const reader = new FsSourceReader(
     (rootId) => catalog.resolvePath(rootId) ?? projects?.resolvePath(rootId) ?? null,
+    (rootId) => projects?.boundaryOf(rootId) ?? null,
   );
   const git = new FsGitSourceProvider({
     workDir: join(userDataDir, GIT_IMPORT_DIR_NAME),

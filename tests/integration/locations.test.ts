@@ -6,7 +6,10 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { PlatformEnv } from '../../src/infra/platform/env';
 import { FsLocationCatalog, type PathProbe } from '../../src/infra/platform/locations';
 import { FsProjectCatalog } from '../../src/infra/platform/project-locations';
-import { checkChosenProjectDir } from '../../src/infra/projects/project-dir';
+import {
+  checkChosenProjectDir,
+  projectDirPolicyProblem,
+} from '../../src/infra/projects/project-dir';
 import { FsProjectRegistry } from '../../src/infra/projects/project-registry';
 import { createTempTree, removeTempTrees } from '../harness/isolation';
 
@@ -250,6 +253,36 @@ describe('katalog projektu z okna wyboru (ADR 0059)', () => {
     }
   });
 
+  it('odrzuca .git, katalogi z kluczami, katalog narzedzia i dyski zamontowane', async () => {
+    const base = createTempTree('acme-proj-');
+    const home = join(base, 'home');
+    const repo = join(home, 'code', 'acme-app');
+    for (const d of [
+      join(repo, '.git', 'hooks'),
+      join(home, '.ssh', 'acme'),
+      join(home, '.claude'),
+    ]) {
+      dir(d);
+    }
+    const c = ctx(home, [join(home, '.claude')]);
+    for (const chosen of [
+      join(repo, '.git'),
+      join(repo, '.git', 'hooks'),
+      join(home, '.ssh'),
+      join(home, '.ssh', 'acme'),
+      join(home, '.claude'),
+    ]) {
+      expect((await checkChosenProjectDir(chosen, c)).ok, chosen).toBe(false);
+    }
+    expect((await checkChosenProjectDir(repo, c)).ok).toBe(true);
+    // Katalog, ktory zawiera .ssh (rodzic katalogu domowego jest odrzucany i tak), oraz sciezki montowania.
+    if (process.platform !== 'win32') {
+      for (const mounted of ['/mnt/acme', '/media/acme/repo', '/Volumes/acme/repo']) {
+        expect(await projectDirPolicyProblem(mounted, c), mounted).toContain('zamontowanym');
+      }
+    }
+  });
+
   it('wybrany katalog bedacy dowiazaniem jest odrzucony', async () => {
     const base = createTempTree('acme-proj-');
     const repo = join(base, 'repo');
@@ -281,6 +314,41 @@ describe('rejestr i rooty projektu (ADR 0059)', () => {
       catalog: new FsProjectCatalog(registry, SALT_PROMISE),
     };
   }
+
+  it('wpis z recznie zmienionego pliku przechodzi polityke od nowa i bez niej jest niewazny', async () => {
+    const t = await project();
+    const home = createTempTree('acme-home-');
+    const bad = { id: 'proj-00000000000000ff', name: 'podmieniony', dir: home, addedAt: 'T' };
+    const raw = JSON.parse(readFileSync(t.file, 'utf8')) as { projects: unknown[] };
+    writeFileSync(t.file, JSON.stringify({ ...raw, projects: [...raw.projects, bad] }));
+    const policy = (d: string) =>
+      projectDirPolicyProblem(d, { platform: process.platform, home, protectedDirs: [] });
+    const reloaded = new FsProjectRegistry(t.file, { check: policy });
+    await reloaded.ready();
+    expect(reloaded.list().map((p) => p.id)).toEqual([t.added.id, bad.id]);
+    expect(reloaded.invalidReason(t.added.id)).toBeNull();
+    expect(reloaded.invalidReason(bad.id)).toContain('domowy');
+    const catalog = new FsProjectCatalog(reloaded, SALT_PROMISE, policy);
+    expect(await catalog.roots(bad.id)).toMatchObject({ ok: false, code: 'project-invalid' });
+    expect((await catalog.roots(t.added.id)).ok).toBe(true);
+    // Polityka przy kazdym uzyciu: ten sam projekt odrzucony, gdy regula zacznie go obejmowac.
+    const strict = new FsProjectCatalog(reloaded, SALT_PROMISE, () =>
+      Promise.resolve('Katalog systemowy nie może być projektem.'),
+    );
+    expect(await strict.roots(t.added.id)).toMatchObject({ ok: false, code: 'project-invalid' });
+  });
+
+  it('nazwy bez duplikatow: kolizja przy dodaniu dostaje nazwe katalogu nadrzednego, zmiana nazwy jest odrzucona', async () => {
+    const t = await project();
+    const parent = createTempTree('acme-parent-');
+    const second = join(parent, 'acme-app');
+    dir(second);
+    const added = await t.registry.add(realpathSync.native(second), 'acme-app');
+    expect(added.name).toMatch(/^acme-app \(acme-parent-.+\)$/);
+    await expect(t.registry.rename(added.id, 'ACME-APP')).rejects.toMatchObject({
+      code: 'name-taken',
+    });
+  });
 
   it('rejestr zapisuje, zmienia nazwe, usuwa i odmawia duplikatu; plik nie zna innych pol', async () => {
     const t = await project();

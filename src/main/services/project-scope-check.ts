@@ -16,12 +16,15 @@ export const SCOPE_VIOLATION_MESSAGE =
 export function planScopeViolation(report: ExportPlanReport, ownerOf: RootOwner): string | null {
   const destination = report.target.kind === 'project' ? report.target.projectId : null;
   const includeGlobal = report.target.kind === 'project' && report.target.includeGlobal;
-  const bound = new Map(report.items.map((i) => [i.itemId as string, i.projectId]));
+  const bound = new Map(report.items.map((i) => [i.itemId as string, i]));
   for (const entry of report.plan.entries) {
     if (ownerOf(entry.rootId) !== destination) return SCOPE_VIOLATION_MESSAGE;
     for (const id of entry.itemIds) {
-      const project = bound.get(id);
-      if (project === undefined || !scopeAllows(project, destination, includeGlobal)) {
+      const item = bound.get(id);
+      if (
+        item === undefined ||
+        !scopeAllows(item.projectId, destination, includeGlobal, item.restricted)
+      ) {
         return SCOPE_VIOLATION_MESSAGE;
       }
     }

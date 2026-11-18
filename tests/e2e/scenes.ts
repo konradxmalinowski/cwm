@@ -175,7 +175,7 @@ async function firstUndo(page: Page): Promise<Locator> {
   return entry.locator('[data-testid="history-undo"]');
 }
 
-const SCENE_PROJECT = { projectId: 'proj-00000000000000aa', name: 'acme-app' };
+const SCENE_PROJECT = { projectId: 'proj-00000000000000aa', name: 'acme-app', invalid: null };
 
 /** Rejestr projektow z jednym projektem, bez dysku i bez okna wyboru (ADR 0059). */
 async function mockProjects(c: SceneContext): Promise<void> {
@@ -798,6 +798,46 @@ export const SCENES: readonly Scene[] = [
       await expect(t(page, 'import-project-name')).toHaveValue('acme-app');
       await expect(t(page, 'import-project-name')).toBeFocused();
       await expect(t(page, 'import-project-rename-save')).toBeEnabled();
+    },
+  },
+  {
+    id: 'import/projekt-usuniecie',
+    view: 'Import',
+    world: 'seeded',
+    reach: async (c) => {
+      await c.mock('projects:list', {
+        kind: 'reply',
+        result: {
+          ok: true,
+          value: {
+            projects: [
+              SCENE_PROJECT,
+              {
+                projectId: 'proj-00000000000000bb',
+                name: 'acme-old',
+                invalid: 'Katalog domowy nie może być projektem. Wskaż katalog repozytorium.',
+              },
+            ],
+          },
+        },
+      });
+      // Pierwszy krok usuniecia: main podaje liczbe przypietych elementow do potwierdzenia.
+      await c.mock('projects:remove', {
+        kind: 'reply',
+        result: { ok: true, value: { status: 'confirm', pinned: 3 } },
+      });
+      await c.go('#/import');
+      await t(c.page, 'import-project-remove').first().waitFor();
+      await t(c.page, 'import-project-remove').first().click();
+      await t(c.page, 'import-project-remove-confirm').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(t(page, 'import-project-remove-confirm')).toContainText('3 elementy');
+      await expect(t(page, 'import-project-remove-confirm')).toContainText('zakres prywatny');
+      await expect(t(page, 'import-project-remove-confirm-button')).toBeFocused();
+      await expect(t(page, 'import-project-invalid')).toContainText('Katalog domowy');
+      // Projekt niewazny nie ma przycisku skanu, tylko zmiane nazwy i usuniecie.
+      await expect(t(page, 'import-project-scan')).toHaveCount(1);
     },
   },
   {

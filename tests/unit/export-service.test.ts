@@ -139,7 +139,27 @@ describe('ExportService: zakres projektu (ADR 0059)', () => {
         classification: { scope: 'project', secretFindings: [], projectId: PROJECT_B },
       }),
     );
-    return { ...h, projects, applied, boundId: bound.item.id, otherId: other.item.id };
+    const pub = await h.library.create(
+      draft({ slug: 'acme-public', classification: { scope: 'public', secretFindings: [] } }),
+    );
+    const secret = await h.library.create(
+      draft({
+        slug: 'acme-secret',
+        classification: {
+          scope: 'public',
+          secretFindings: [{ rule: 'acme-token', relPath: 'SKILL.md', line: 1 }],
+        },
+      }),
+    );
+    return {
+      ...h,
+      projects,
+      applied,
+      boundId: bound.item.id,
+      otherId: other.item.id,
+      publicId: pub.item.id,
+      secretId: secret.item.id,
+    };
   }
 
   it('katalog globalny odmawia elementu projektu, zanim zobaczy go eksporter', async () => {
@@ -170,12 +190,36 @@ describe('ExportService: zakres projektu (ADR 0059)', () => {
     expect(h.exporter.seen[0]?.map((l) => l.item.id)).toEqual([h.boundId]);
     expect(report.plan.refusals.map((r) => r.itemId).sort()).toEqual([h.itemId, h.otherId].sort());
 
-    const withGlobal = await h.service.plan('claude-code', [h.itemId, h.boundId], [], {
+    const withGlobal = await h.service.plan('claude-code', [h.publicId, h.boundId], [], {
       ...target,
       includeGlobal: true,
     });
     expect(withGlobal.plan.refusals).toEqual([]);
-    expect(h.exporter.seen[1]?.map((l) => l.item.id)).toEqual([h.itemId, h.boundId]);
+    expect(h.exporter.seen[1]?.map((l) => l.item.id)).toEqual([h.publicId, h.boundId]);
+  });
+
+  it('element prywatny i z sekretem nie trafia do repozytorium nawet z includeGlobal', async () => {
+    const h = await scoped();
+    // `h.itemId` ma domyslny zakres prywatny.
+    const report = await h.service.plan('claude-code', [h.itemId, h.secretId, h.publicId], [], {
+      kind: 'project',
+      projectId: PROJECT_A,
+      includeGlobal: true,
+    });
+    expect(h.exporter.seen[0]?.map((l) => l.item.id)).toEqual([h.publicId]);
+    const reasons = new Map(report.plan.refusals.map((r) => [r.itemId as string, r.reason]));
+    expect(reasons.get(h.itemId)).toContain('prywatny');
+    expect(reasons.get(h.secretId)).toContain('sekretem');
+    expect(report.items.find((i) => i.itemId === h.secretId)?.restricted).toBe(true);
+    expect(report.items.find((i) => i.itemId === h.publicId)?.restricted).toBe(false);
+  });
+
+  it('preview nie zapamietuje planu, retain tak: zapis dopiero po kontroli w main', async () => {
+    const h = await scoped();
+    const report = await h.service.preview('claude-code', [h.publicId]);
+    expect(await code(h.service.apply(report.planId, true))).toBe('unknown-plan');
+    h.service.retain(report);
+    expect((await h.service.apply(report.planId, true)).verified).toBe(true);
   });
 
   it('zapis do projektu nie zostawia stanu synchronizacji, zapis globalny tak', async () => {
@@ -634,8 +678,18 @@ describe('ZipExportService', () => {
     const created = await h.library.create(
       draft({ slug: 'acme-proj', classification: { scope: 'project', secretFindings: [] } }),
     );
-    const plan = await h.zip.plan('claude-code', [created.item.id], [created.item.id]);
-    expect(plan.held).toMatchObject([{ reason: 'project', confirmed: false }]);
+    const pinned = await h.library.create(
+      draft({
+        slug: 'acme-pinned',
+        classification: { scope: 'project', secretFindings: [], projectId: PROJECT_A },
+      }),
+    );
+    const ids = [created.item.id, pinned.item.id];
+    const plan = await h.zip.plan('claude-code', ids, ids);
+    expect(plan.held).toMatchObject([
+      { reason: 'project', confirmed: false },
+      { reason: 'project', confirmed: false },
+    ]);
     expect(plan.report.plan.entries).toEqual([]);
     expect(plan.report.plan.applicable).toBe(false);
   });

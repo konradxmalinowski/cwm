@@ -311,7 +311,8 @@ export class ExportWizardComponent {
   /** Lista projektow do celu eksportu; blad listy nie blokuje eksportu do narzedzi. */
   private async loadProjects(): Promise<void> {
     const result = await this.projectsApi.list();
-    if (result.ok) this.projectList.set(result.value.projects);
+    // Projekt, ktory nie przeszedl polityki katalogu, nie jest celem eksportu (ADR 0059).
+    if (result.ok) this.projectList.set(result.value.projects.filter((p) => p.invalid === null));
   }
 
   private zipSentence(plan: ExportZipPlanDto): string {

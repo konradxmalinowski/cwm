@@ -228,7 +228,7 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
   registry.register(
     'export:plan',
     guarded(parsePlanRequest, async (service, request) => {
-      const report = await service.plan(
+      const report = await service.preview(
         request.tool,
         request.itemIds,
         (request.resolutions ?? []).map((r) => ({
@@ -244,9 +244,10 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
               includeGlobal: request.includeGlobal === true,
             },
       );
-      // Plan odrzucony tutaj zostaje w serwisie bez `planId` po stronie renderera, wiec nie da sie go zapisac.
+      // Serwis zapamietuje plan dopiero po tej kontroli: odrzucony plan nie ma `planId` do zapisu.
       const violation = planScopeViolation(report, rootOwner);
       if (violation !== null) return err('scope-violation', violation);
+      service.retain(report);
       return ok(toPlanDto(report));
     }),
   );

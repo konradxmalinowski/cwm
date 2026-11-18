@@ -1,6 +1,12 @@
 import { randomBytes } from 'node:crypto';
+import { basename, dirname } from 'node:path';
 
-import { isProjectId, projectNameProblem, type ProjectId } from '../../core/model/project';
+import {
+  PROJECT_NAME_MAX,
+  isProjectId,
+  projectNameProblem,
+  type ProjectId,
+} from '../../core/model/project';
 import { writeFileAtomic } from '../fs/atomic';
 import { readBounded } from '../fs/bounded-read';
 import { errnoCode } from '../fs/store-error';
@@ -23,7 +29,12 @@ const MAX_FILE_BYTES = 256 * 1024;
 const FORMAT = 'cwm-projects';
 
 export type ProjectRegistryErrorCode =
-  'unknown-project' | 'project-exists' | 'too-many-projects' | 'invalid-name' | 'registry-failed';
+  | 'unknown-project'
+  | 'project-exists'
+  | 'too-many-projects'
+  | 'invalid-name'
+  | 'name-taken'
+  | 'registry-failed';
 
 export class ProjectRegistryError extends Error {
   constructor(
@@ -41,6 +52,12 @@ export interface ProjectRegistryOptions {
   /** Porownanie katalogow; na Windowsie i macOS bez wielkosci liter. */
   readonly platform?: NodeJS.Platform;
   readonly onUnexpected?: (error: unknown) => void;
+  /**
+   * Polityka katalogu (`projectDirPolicyProblem`), uruchamiana dla kazdego wpisu przy wczytaniu.
+   * Wpis, ktory jej nie przechodzi (np. recznie zmieniony plik), zostaje na liscie jako niewazny:
+   * nie da sie go uzyc, mozna go tylko usunac.
+   */
+  readonly check?: (dir: string) => Promise<string | null>;
 }
 
 function defaultId(): ProjectId {
@@ -71,6 +88,8 @@ function parseRecords(text: string): ProjectRecord[] {
 
 export class FsProjectRegistry {
   private records: readonly ProjectRecord[] = [];
+  /** Powod, dla ktorego wpis nie przeszedl polityki przy wczytaniu. */
+  private readonly invalid = new Map<string, string>();
   private loading: Promise<void> | null = null;
   /** Zapisy jeden po drugim: dwa rownolegle dodania nie moga nadpisac sie nawzajem. */
   private queue: Promise<unknown> = Promise.resolve();
@@ -94,6 +113,11 @@ export class FsProjectRegistry {
     return this.records.find((p) => p.id === id) ?? null;
   }
 
+  /** `null` dla wpisu waznego; powod odmowy dla wpisu, ktory nie przeszedl polityki przy wczytaniu. */
+  invalidReason(id: string): string | null {
+    return this.invalid.get(id) ?? null;
+  }
+
   add(dir: string, name: string): Promise<ProjectRecord> {
     return this.serial(async () => {
       const problem = projectNameProblem(name);
@@ -113,7 +137,7 @@ export class FsProjectRegistry {
       }
       const record: ProjectRecord = {
         id: (this.options.newId ?? defaultId)(),
-        name: name.trim(),
+        name: this.uniqueName(name.trim(), dir),
         dir,
         addedAt: (this.options.now?.() ?? new Date()).toISOString(),
       };
@@ -127,7 +151,14 @@ export class FsProjectRegistry {
       const problem = projectNameProblem(name);
       if (problem !== null) throw new ProjectRegistryError('invalid-name', problem);
       const current = this.require(id);
-      const renamed: ProjectRecord = { ...current, name: name.trim() };
+      const wanted = name.trim();
+      if (this.records.some((p) => p.id !== id && p.name.toLowerCase() === wanted.toLowerCase())) {
+        throw new ProjectRegistryError(
+          'name-taken',
+          `Projekt o nazwie „${wanted}” jest już na liście. Wybierz inną nazwę.`,
+        );
+      }
+      const renamed: ProjectRecord = { ...current, name: wanted };
       await this.persist(this.records.map((p) => (p.id === id ? renamed : p)));
       return renamed;
     });
@@ -137,6 +168,7 @@ export class FsProjectRegistry {
     return this.serial(async () => {
       this.require(id);
       await this.persist(this.records.filter((p) => p.id !== id));
+      this.invalid.delete(id);
     });
   }
 
@@ -149,6 +181,23 @@ export class FsProjectRegistry {
       );
     }
     return found;
+  }
+
+  /**
+   * Nazwa bez duplikatu na liscie (wielkosc liter pomijana): przy kolizji dostaje w nawiasie nazwe
+   * katalogu nadrzednego, a gdy i ta jest zajeta, kolejny numer.
+   */
+  private uniqueName(name: string, dir: string): string {
+    const taken = new Set(this.records.map((p) => p.name.toLowerCase()));
+    const fit = (value: string): string => value.slice(0, PROJECT_NAME_MAX);
+    if (!taken.has(name.toLowerCase())) return name;
+    const parent = basename(dirname(dir));
+    const base = parent === '' ? name : fit(`${name} (${parent})`);
+    if (!taken.has(base.toLowerCase())) return base;
+    for (let n = 2; ; n++) {
+      const numbered = fit(`${base} ${n}`);
+      if (!taken.has(numbered.toLowerCase())) return numbered;
+    }
   }
 
   private sameDir(a: string, b: string): boolean {
@@ -188,6 +237,12 @@ export class FsProjectRegistry {
       this.records = parseRecords(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
     } catch (error: unknown) {
       if (errnoCode(error) !== 'ENOENT') this.options.onUnexpected?.(error);
+    }
+    const check = this.options.check;
+    if (check === undefined) return;
+    for (const record of this.records) {
+      const problem = await check(record.dir).catch(() => 'Nie udało się sprawdzić katalogu.');
+      if (problem !== null) this.invalid.set(record.id, problem);
     }
   }
 }

@@ -770,10 +770,10 @@ Kanały z handlerem:
 | `retention:set` | `{ maxEntries, maxAgeDays, maxStoreMiB, confirmed? }` | zapisane ustawienia; zakresy sprawdza main, nieznane pola przepadają; włączenie albo zaostrzenie limitu bez `confirmed: true` to `confirmation-required` |
 | `retention:preview` | `{ settings? }` | suchy przebieg na podanych (albo zapisanych) limitach: `blocked`, liczby wpisów, obiektów i bajtów do usunięcia, `sizeLimitUnmet`, `ageRuleSkipped` i `previewToken` (jednorazowy, 5 minut) |
 | `retention:apply` | `{ confirmed: true, token }` | te same liczby po wykonaniu, `objectsFailed`; przerywa się (`plan-changed`), gdy przeliczony plan usuwa więcej niż podgląd |
-| `projects:list` | brak | `{ projects }`: identyfikator i nazwa, bez katalogu (ADR 0059) |
+| `projects:list` | brak | `{ projects }`: identyfikator, nazwa i `invalid` (powód niedostępności wpisu, który nie przeszedł polityki katalogu), bez katalogu (ADR 0059) |
 | `projects:add` | brak (ładunek ignorowany) | `{ status: 'added', project }` albo `{ status: 'cancelled' }`; katalog wybiera natywne okno w main i sprawdza `checkChosenProjectDir` |
 | `projects:rename` | `{ projectId, name }` | projekt po zmianie nazwy |
-| `projects:remove` | `{ projectId }` | lista po usunięciu; pliki w repozytorium i elementy biblioteki zostają |
+| `projects:remove` | `{ projectId, confirmed? }` | bez `confirmed`: `{ status: 'confirm', pinned }`; z `confirmed: true`: elementy projektu odpięte do zakresu prywatnego, potem `{ status: 'removed', unpinned, projects }`; pliki w repozytorium zostają; kanał pod `OperationLock` |
 
 Każdy kanał z `IPC_CHANNELS` ma handler; rejestr przy starcie odmawia startu, gdy któregoś brakuje
 (`IMPLEMENTED_CHANNELS` to ta sama lista). Kanały `diff:compute`, `profiles:list`, `profiles:save`,
@@ -801,9 +801,12 @@ wyłącznie przez `confirmedItemIds`, a elementy projektowe nigdy.
 
 `projects:*` i `import:scan-project` (ADR 0059) nie przyjmują ścieżki. `projects:add` ignoruje ładunek i otwiera
 `dialog.showOpenDialog` w main; wynik przechodzi `checkChosenProjectDir` (bez katalogu domowego i jego rodziców,
-katalogów systemowych, konfiguracji narzędzi, danych aplikacji i dowiązań) i trafia do `userData/projects.json` jako
-`realpath`. Rooty projektu rozwiązuje `FsProjectCatalog`, który przy każdym użyciu sprawdza katalog od nowa, a zakres
-elementu sprawdzają dwa miejsca: planowanie w core i kontrola gotowego planu w main (`scope-violation`).
+katalogów systemowych i zamontowanych, `.git`, katalogów z kluczami, konfiguracji narzędzi, danych aplikacji i
+dowiązań) i trafia do `userData/projects.json` jako `realpath`. Ta sama polityka działa przy wczytaniu rejestru i przy
+każdym użyciu projektu. Rooty projektu rozwiązuje `FsProjectCatalog`; katalog projektu jest drugą granicą zawierania w
+`WriteGate` i w czytniku źródła, a bramka sprawdza go jeszcze raz tuż przed każdym zapisem. Zakres elementu sprawdzają
+dwa miejsca: planowanie w core i kontrola gotowego planu w main (`scope-violation`), a `export:plan` zapamiętuje plan
+dopiero po tej kontroli.
 
 `retention:*` (ADR 0056) przycinają historię i czyszczą content store. Żaden kanał nie przyjmuje ścieżki ani hashy:
 `retention:set` jest walidowany w main (trzy znane pola, liczby całkowite w zakresach), a `retention:apply` buduje wynik

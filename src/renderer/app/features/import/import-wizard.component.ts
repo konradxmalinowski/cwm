@@ -113,6 +113,8 @@ export class ImportWizardComponent {
   protected readonly projectsNote = signal<string | null>(null);
   protected readonly projectsBusy = signal(false);
   protected readonly projectRenaming = signal<string | null>(null);
+  /** Potwierdzenie usuniecia: projekt i liczba elementow, ktore zostana odpiete (ADR 0059). */
+  protected readonly projectRemoving = signal<{ projectId: string; pinned: number } | null>(null);
   protected readonly projectNameDraft = signal('');
   protected readonly projectNameError = signal<string | null>(null);
   protected readonly projectSource = computed(() => this.scan()?.project ?? null);
@@ -329,7 +331,10 @@ export class ImportWizardComponent {
     setTimeout(() => document.getElementById(this.projectRenameButtonId(project))?.focus(), 0);
   }
 
-  /** Usuwa projekt tylko z listy aplikacji; pliki w katalogu projektu zostaja bez zmian. */
+  /**
+   * Pierwszy krok usuniecia: main podaje liczbe elementow przypietych do projektu, a uzytkownik
+   * potwierdza, ze zostana odpiete. Pliki w katalogu projektu zostaja bez zmian.
+   */
   protected async removeProject(project: ProjectDto): Promise<void> {
     this.projectsError.set(null);
     this.projectsNote.set(null);
@@ -338,11 +343,46 @@ export class ImportWizardComponent {
       this.projectsError.set(result.error.message);
       return;
     }
+    if (result.value.status === 'confirm') {
+      this.projectRemoving.set({ projectId: project.projectId, pinned: result.value.pinned });
+      setTimeout(() => document.getElementById(this.projectRemoveConfirmId(project))?.focus(), 0);
+    }
+  }
+
+  protected async confirmRemoveProject(project: ProjectDto): Promise<void> {
+    const result = await this.projectsApi.remove({
+      projectId: project.projectId,
+      confirmed: true,
+    });
+    this.projectRemoving.set(null);
+    if (!result.ok) {
+      this.projectsError.set(result.error.message);
+      return;
+    }
+    if (result.value.status !== 'removed') return;
+    const n = result.value.unpinned;
     this.projects.set({ status: 'ready', projects: result.value.projects });
     this.projectsNote.set(
-      `Usunięto „${project.name}” z listy projektów. Pliki w katalogu projektu zostały bez zmian.`,
+      `Usunięto „${project.name}” z listy projektów. ` +
+        (n === 0
+          ? 'Żaden element nie był do niego przypięty.'
+          : `Odpięto ${n} ${plural(n, 'element', 'elementy', 'elementów')}; mają teraz zakres prywatny.`) +
+        ' Pliki w katalogu projektu zostały bez zmian.',
     );
     setTimeout(() => document.getElementById('project-add')?.focus(), 0);
+  }
+
+  protected cancelRemoveProject(project: ProjectDto): void {
+    this.projectRemoving.set(null);
+    setTimeout(() => document.getElementById(this.projectRemoveButtonId(project))?.focus(), 0);
+  }
+
+  protected projectRemoveButtonId(project: ProjectDto): string {
+    return `project-remove-${project.projectId}`;
+  }
+
+  protected projectRemoveConfirmId(project: ProjectDto): string {
+    return `project-remove-confirm-${project.projectId}`;
   }
 
   protected projectNameId(project: ProjectDto): string {
