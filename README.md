@@ -124,7 +124,7 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
   instrukcje globalne i hooki. Podgląd wykrywa duplikaty i różnice, a elementy z potencjalnym
   sekretem są domyślnie odznaczone. Źródło nie jest modyfikowane. Skille, agentów i komendy można
   też pobrać z publicznego repozytorium Git (adres https i opcjonalny ref); aplikacja zapisuje
-  adres i commit, z którego pochodzi element, i niczego z repozytorium nie uruchamia (ADR 0058).
+  adres i commit, z którego pochodzi element, i niczego z repozytorium nie uruchamia przy imporcie; hooki, serwery MCP i tryb uprawnień są usuwane z elementów, a nic nie jest zaznaczone z góry (ADR 0058).
 - **Eksport.** Do Claude Code i Codeksa, z planem zapisu, podglądem różnic bez sekretów,
   ostrzeżeniami o utracie zgodności i potwierdzeniem. Przed zapisem powstaje kopia w `backups/`,
   po zapisie plik jest czytany z powrotem. Ten sam plan da się zapisać też jako archiwum ZIP

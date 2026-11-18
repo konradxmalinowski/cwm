@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process';
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -231,7 +232,12 @@ describe('import z repozytorium Git przez prawdziwe adaptery i czytnik (ADR 0058
     expect(existsSync(join(work, 'sources'))).toBe(false);
     if (posix) expect(statSync(work).mode & 0o777).toBe(0o700);
 
-    const chosen = report.candidates.filter((c) => c.selectedByDefault).map((c) => c.candidateId);
+    // Z cudzego repozytorium nic nie jest zaznaczone z gory: wybor jest swiadomy.
+    expect(report.candidates.some((c) => c.selectedByDefault)).toBe(false);
+    const chosen = report.candidates
+      .filter((c) => c.status === 'new' && c.secrets.length === 0)
+      .map((c) => c.candidateId);
+    expect(chosen.length).toBeGreaterThan(5);
     const applied = await service.apply({ scanToken: report.scanToken, candidateIds: chosen });
     expect(applied.failed).toEqual([]);
     const items = (await lib.service.list()).items;
@@ -397,6 +403,151 @@ describe('import z repozytorium Git przez prawdziwe adaptery i czytnik (ADR 0058
     expect(readdirSync(work)).toEqual([]);
     await expect(provider.purge()).resolves.toBeUndefined();
   });
+
+  it('open czeka na sprzatanie z chwili startu, a katalog roboczy dostaje 0700', async () => {
+    const work = join(createTempTree('acme-gitimport-'), 'git-import');
+    const stale = join(work, 'sources', 'git', 'acme', COMMIT);
+    mkdirSync(stale, { recursive: true });
+    chmodSync(work, 0o755);
+    let staleWhenFetching: boolean | null = null;
+    const provider = new FsGitSourceProvider({
+      workDir: work,
+      fetch: (input) => {
+        staleWhenFetching = existsSync(stale);
+        const dir = join(input.layout.sourcesDir, 'git', 'acme', 'nowy');
+        mkdirSync(dir, { recursive: true });
+        return Promise.resolve({
+          ok: true,
+          commit: COMMIT,
+          dir,
+          treeSha256: 'x',
+          files: 1,
+          submodules: [],
+          reused: false,
+        });
+      },
+    });
+    provider.purgeAtStart();
+    const opened = await provider.open({ url: URL, ref: null });
+    expect(opened.ok).toBe(true);
+    expect(staleWhenFetching).toBe(false);
+    if (posix) expect(statSync(work).mode & 0o777).toBe(0o700);
+    if (opened.ok) await opened.source.release();
+    // Zwykly purge tez poprawia uprawnienia katalogu, ktory ktos poszerzyl.
+    if (posix) {
+      chmodSync(work, 0o755);
+      await provider.purge();
+      expect(statSync(work).mode & 0o777).toBe(0o700);
+    }
+  });
+
+  it('http i adresy bez publicznego https sa odrzucane, chyba ze test jawnie dopusci petle zwrotna', async () => {
+    const { fetch, calls } = fakeFetch(() => undefined);
+    const { provider, service } = gitImporter(fetch);
+    const loopback = 'http://127.0.0.1:8080/acme/skills.git';
+    expect(await provider.open({ url: loopback, ref: null })).toMatchObject({
+      ok: false,
+      code: 'rejected',
+    });
+    await expect(service.scanGit({ url: loopback, ref: null })).rejects.toMatchObject({
+      code: 'git-rejected',
+    });
+    await expect(
+      service.scanGit({ url: 'https://127.0.0.1/acme/skills.git', ref: null }),
+    ).rejects.toMatchObject({ code: 'git-rejected' });
+    expect(calls).toEqual([]);
+
+    const work = join(createTempTree('acme-gitimport-'), 'git-import');
+    const open = new FsGitSourceProvider({
+      workDir: work,
+      allowLoopbackHttpForTests: true,
+      fetch: fakeFetch(() => undefined).fetch,
+    });
+    expect((await open.open({ url: loopback, ref: null })).ok).toBe(true);
+  });
+
+  it('agent z hookami, serwerami MCP i trybem uprawnien: pola usuniete, ostrzezenie, nic nie jest zaznaczone', async () => {
+    const risky = [
+      '---',
+      'name: acme-risky',
+      'description: Acme risky',
+      'permissionMode: bypassPermissions',
+      'tools: Bash, Read',
+      'hooks:',
+      '  PreToolUse:',
+      '    - matcher: Bash',
+      '      hooks:',
+      '        - type: command',
+      '          command: echo ACME-HOOK',
+      'mcpServers:',
+      '  acme:',
+      '    command: acme-server',
+      'model: sonnet',
+      '---',
+      'Tresc agenta.',
+      '',
+    ].join('\n');
+    const nested =
+      '---\nname: acme-nested\ndescription: Acme\nmetadata: {hooks: {a: 1}}\n---\nTresc.\n';
+    const { fetch } = fakeFetch((copy) => {
+      mkdirSync(join(copy, '.claude', 'agents'), { recursive: true });
+      writeFileSync(join(copy, '.claude', 'agents', 'acme-risky.md'), risky);
+      writeFileSync(join(copy, '.claude', 'agents', 'acme-nested.md'), nested);
+      writeFileSync(
+        join(copy, '.claude', 'agents', 'acme-plain.md'),
+        '---\nname: acme-plain\ndescription: Acme plain\n---\nTresc.\n',
+      );
+      mkdirSync(join(copy, '.codex', 'agents'), { recursive: true });
+      writeFileSync(
+        join(copy, '.codex', 'agents', 'acme-toml.toml'),
+        'name = "acme-toml"\ndescription = "Acme"\ndeveloper_instructions = "x"\n\n[mcp_servers.acme]\ncommand = "acme-server"\n',
+      );
+      writeFileSync(
+        join(copy, '.codex', 'agents', 'acme-readonly.toml'),
+        'name = "acme-readonly"\ndescription = "Acme"\nsandbox_mode = "read-only"\ndeveloper_instructions = "x"\n',
+      );
+    });
+    const { service, lib } = gitImporter(fetch);
+    const report = await service.scanGit({ url: URL, ref: null });
+    const slugs = report.candidates.map((c) => c.candidate.draft.identity.slug).sort();
+    expect(slugs).toEqual(['acme-plain', 'acme-readonly', 'acme-risky']);
+    expect(report.candidates.some((c) => c.selectedByDefault)).toBe(false);
+    const skipped = report.skipped.map((k) => `${k.reason}|${k.message}`).join('\n');
+    expect(skipped).toContain('mcp_servers');
+    expect(skipped).toContain('nie potrafi bezpiecznie usunąć');
+
+    const found = report.candidates.find((c) => c.candidate.draft.identity.slug === 'acme-risky');
+    expect(found?.dropped).toEqual(['permissionMode', 'hooks', 'mcpServers']);
+    expect(found?.candidate.warnings.map((w) => w.code)).toEqual(
+      expect.arrayContaining(['git-executable-fields-dropped', 'git-tools-declared']),
+    );
+    const snapshot = found?.candidate.draft.source?.snapshots[0];
+    const text = new TextDecoder().decode(snapshot?.files[0]?.bytes);
+    for (const gone of [
+      'hooks',
+      'mcpServers',
+      'permissionMode',
+      'bypassPermissions',
+      'ACME-HOOK',
+    ]) {
+      expect(text, gone).not.toContain(gone);
+    }
+    expect(text).toContain('tools: Bash, Read');
+    expect(text).toContain('model: sonnet');
+    expect(text).toContain('Tresc agenta.');
+    const paths = (snapshot?.unmappedKeys ?? []).map((k) => k.path);
+    expect(paths).toContain('frontmatter.tools');
+    expect(paths).not.toContain('frontmatter.hooks');
+
+    const applied = await service.apply({
+      scanToken: report.scanToken,
+      candidateIds: [found?.candidateId ?? ''],
+    });
+    expect(applied.imported).toHaveLength(1);
+    expect(lib.log.records.at(-1)?.note).toBe(
+      `git=${URL}@${COMMIT} usunieto=permissionMode,hooks,mcpServers`,
+    );
+  });
 });
 
 /**
@@ -543,7 +694,7 @@ describe.skipIf(process.platform === 'win32')(
         try {
           const url = `http://127.0.0.1:${port}/acme-skills.git`;
           const workDir = join(base, 'userdata', 'git-import');
-          const provider = new FsGitSourceProvider({ workDir });
+          const provider = new FsGitSourceProvider({ workDir, allowLoopbackHttpForTests: true });
           const lib = createHarness();
           const catalog = new FsLocationCatalog(
             { platform: process.platform, homeDir: createTempTree('acme-gitrepo-home-'), env: {} },
@@ -554,6 +705,7 @@ describe.skipIf(process.platform === 'win32')(
             adapters: [createClaudeCodeAdapter(), createCodexAdapter()],
             reader: new FsSourceReader((id) => catalog.resolvePath(id)),
             git: provider,
+            allowLoopbackHttpForTests: true,
             library: lib.service,
             clock: systemClock,
           });

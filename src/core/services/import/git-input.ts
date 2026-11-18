@@ -10,6 +10,27 @@ import { gitRefProblem, gitUrlProblem } from '../../cwm/git-source';
 export const GIT_URL_MAX_LENGTH = 2048;
 export const GIT_REF_MAX_LENGTH = 128;
 
+const PRIVATE_SUFFIXES = ['.localhost', '.local', '.internal', '.home.arpa'];
+
+/**
+ * Adresy, ktore nie sa publicznym serwerem repozytoriow: literały IP (v4 i v6), `localhost`, nazwy z
+ * domen lokalnych i prywatnych oraz nazwy bez kropki. Parser `URL` sprowadza zapisy typu `0x7f.1` do
+ * kanonicznego IPv4, wiec wystarczy sprawdzic postac kanoniczna. To nie jest ochrona przed nazwa DNS,
+ * ktora wskazuje na adres prywatny: takiej nazwy aplikacja nie rozwiazuje przed pobraniem (ADR 0058).
+ */
+export function gitHostProblem(hostname: string): string | null {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  const isIp = host.startsWith('[') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
+  const isPrivateName =
+    host === 'localhost' ||
+    host === 'home.arpa' ||
+    PRIVATE_SUFFIXES.some((suffix) => host.endsWith(suffix));
+  if (isIp || isPrivateName || !host.includes('.')) {
+    return 'Adres wskazuje na komputer lokalny, adres IP albo nazwę z sieci prywatnej. Podaj publiczną nazwę serwera, na przykład github.com.';
+  }
+  return null;
+}
+
 export function gitUrlInputProblem(text: string): string | null {
   if (text.length === 0) return 'Podaj adres repozytorium.';
   if (text.length > GIT_URL_MAX_LENGTH) return 'Adres jest za długi.';
@@ -25,6 +46,8 @@ export function gitUrlInputProblem(text: string): string | null {
   if (parsed.username !== '' || parsed.password !== '') {
     return 'Adres nie może zawierać nazwy użytkownika ani hasła. Logowanie nie jest obsługiwane, więc działają tylko repozytoria publiczne.';
   }
+  const hostProblem = gitHostProblem(parsed.hostname);
+  if (hostProblem !== null) return hostProblem;
   if (parsed.search !== '' || parsed.hash !== '') {
     return 'Adres nie może zawierać znaków ? ani #. Gałąź albo tag podaj w polu Ref.';
   }

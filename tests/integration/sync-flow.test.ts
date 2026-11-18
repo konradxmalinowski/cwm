@@ -162,7 +162,16 @@ describe('synchronizacja na plikach', () => {
       at: '2026-11-18T10:01:00.000Z',
       note: `git=${url}@${commit}`,
     });
+    await s.index.operationLog().append({
+      ...base,
+      operation: 'update',
+      at: '2026-11-18T10:02:00.000Z',
+      note: `git=${url}@${commit} usunieto=hooks,permissionMode`,
+    });
     const summaries = (await s.history.list()).map((e) => e.summary);
+    expect(summaries).toContain(
+      `Zmieniono element acme-case-2, z repozytorium ${url}@cccccccccccc, usunięto pola wykonawcze: hooks, permissionMode`,
+    );
     expect(summaries).toContain(
       `Utworzono element acme-case-2 (nazwa ze źródła: Acme-Case), z repozytorium ${url}@cccccccccccc`,
     );

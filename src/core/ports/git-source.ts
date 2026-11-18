@@ -41,4 +41,6 @@ export type GitSourceOpen =
 
 export interface GitSourceProvider {
   open(request: GitSourceRequest): Promise<GitSourceOpen>;
+  /** Przerywa trwajace pobieranie (zamykanie aplikacji). Brak implementacji to brak przerywania. */
+  abort?(): void;
 }

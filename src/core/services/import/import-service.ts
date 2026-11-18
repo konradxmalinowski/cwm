@@ -22,6 +22,9 @@ import type { GitSourceFailure, GitSourceProvider, GitSourceRequest } from '../.
 import type { SourceReader } from '../../ports/source-reader';
 import type { LibraryService } from '../library/library-service';
 import { validateSlug } from '../library/validate';
+import { gitRefProblem, gitUrlProblem } from '../../cwm/git-source';
+import { gitRefInputProblem, gitUrlInputProblem } from './git-input';
+import { reviewGitCandidate } from './git-risk';
 import { sha256Bytes, sha256Text } from '../normalization/hash';
 import { normalizeToLf } from '../normalization/line-endings';
 import {
@@ -50,6 +53,8 @@ export interface ScannedCandidate {
   readonly duplicateOf: string | null;
   readonly secrets: readonly SecretHit[];
   readonly selectedByDefault: boolean;
+  /** Pola wykonawcze usuniete z elementu z repozytorium Git przy imporcie (ADR 0058); puste dla importu lokalnego. */
+  readonly dropped: readonly string[];
 }
 
 export interface ScannedSkip extends ImportSkip {
@@ -128,6 +133,11 @@ export interface ImportServiceDeps {
   readonly reader: SourceReader;
   /** Pobieranie z repozytorium Git (ADR 0058). Brak portu to `git-unavailable`: funkcja jest opcjonalna. */
   readonly git?: GitSourceProvider;
+  /**
+   * Tylko testy: dopuszcza adres http na petli zwrotnej. Domyslnie `scanGit` przyjmuje wylacznie publiczny
+   * adres https, niezaleznie od tego, kto go wola (ADR 0058).
+   */
+  readonly allowLoopbackHttpForTests?: boolean;
   readonly library: Pick<LibraryService, 'list' | 'create' | 'update'>;
   readonly clock: Clock;
   readonly ttlMs?: number;
@@ -139,6 +149,13 @@ export interface ImportServiceDeps {
 export const SCAN_TTL_MS = 30 * 60 * 1000;
 const MAX_SCAN_SESSIONS = 8;
 const GENERIC_FAILURE = 'Nie udało się zapisać elementu. Szczegóły są w logu aplikacji.';
+
+interface RawCandidate {
+  readonly candidate: ImportCandidate;
+  readonly rootLabel: string;
+  readonly secrets: SecretHit[];
+  readonly dropped: readonly string[];
+}
 
 interface ScanSession {
   /** Pochodzenie z repozytorium Git; trafia do `importedFrom.git` i do notatki w historii. */
@@ -289,6 +306,11 @@ export class ImportService {
     this.newToken = deps.newToken ?? defaultToken;
   }
 
+  /** Zamykanie aplikacji: przerywa trwajace pobieranie z repozytorium Git. */
+  abortGit(): void {
+    this.deps.git?.abort?.();
+  }
+
   detect(): Promise<readonly DetectedRoot[]> {
     return this.deps.catalog.detect();
   }
@@ -324,6 +346,12 @@ export class ImportService {
         'Import z repozytorium Git jest niedostępny w tej instalacji.',
       );
     }
+    const problem =
+      this.deps.allowLoopbackHttpForTests === true
+        ? (gitUrlProblem(request.url) ?? (request.ref === null ? null : gitRefProblem(request.ref)))
+        : (gitUrlInputProblem(request.url) ??
+          (request.ref === null ? null : gitRefInputProblem(request.ref)));
+    if (problem !== null) throw new ImportError('git-rejected', problem);
     if (this.gitBusy) {
       throw new ImportError('git-busy', 'Trwa już pobieranie repozytorium. Poczekaj na wynik.');
     }
@@ -353,7 +381,7 @@ export class ImportService {
     git: GitOrigin | null,
     submodules: number,
   ): Promise<ScanReport> {
-    const raw: { candidate: ImportCandidate; rootLabel: string; secrets: SecretHit[] }[] = [];
+    const raw: RawCandidate[] = [];
     const skipped: ScannedSkip[] = [];
     const scans: RootScan[] = [];
 
@@ -386,14 +414,41 @@ export class ImportService {
     }
 
     for (const done of await this.finalizeScans(scans, reader)) {
-      for (const candidate of done.result.candidates) {
-        raw.push({ candidate, rootLabel: done.root.label, secrets: this.classify(candidate) });
+      for (const found of done.result.candidates) {
+        if (git === null) {
+          raw.push({
+            candidate: found,
+            rootLabel: done.root.label,
+            secrets: this.classify(found),
+            dropped: [],
+          });
+          continue;
+        }
+        // Cudze repozytorium: pola wykonawcze usuwamy albo element pomijamy, zanim ktokolwiek je zobaczy.
+        const review = reviewGitCandidate(found);
+        if (review.candidate === null) {
+          skipped.push({
+            tool: found.tool,
+            rootId: found.rootId,
+            rootLabel: done.root.label,
+            relPath: found.relPath,
+            reason: 'unsupported',
+            message: review.rejection ?? 'Element z repozytorium nie jest importowany.',
+          });
+          continue;
+        }
+        raw.push({
+          candidate: review.candidate,
+          rootLabel: done.root.label,
+          secrets: this.classify(review.candidate),
+          dropped: review.dropped,
+        });
       }
       for (const s of done.result.skipped) skipped.push({ ...s, rootLabel: done.root.label });
     }
 
     const library = (await this.deps.library.list()).items;
-    const candidates = this.resolveStatuses(raw, library);
+    const candidates = this.resolveStatuses(raw, library, git !== null);
     const scanToken = this.remember(candidates, git);
     const librarySlugs = library.map((item) => ({ kind: item.kind, slug: item.identity.slug }));
     return {
@@ -458,8 +513,9 @@ export class ImportService {
   }
 
   private resolveStatuses(
-    raw: readonly { candidate: ImportCandidate; rootLabel: string; secrets: SecretHit[] }[],
+    raw: readonly RawCandidate[],
     library: readonly LibraryItem[],
+    fromGit: boolean,
   ): ScannedCandidate[] {
     const ids = raw.map((_, i) => `cand-${i + 1}`);
     const status: CandidateStatus[] = raw.map(() => 'new');
@@ -538,7 +594,7 @@ export class ImportService {
       }
     });
 
-    return raw.map(({ candidate, rootLabel, secrets }, i) => {
+    return raw.map(({ candidate, rootLabel, secrets, dropped }, i) => {
       const st = status[i] ?? 'new';
       return {
         candidateId: ids[i] ?? `cand-${i + 1}`,
@@ -549,7 +605,9 @@ export class ImportService {
         duplicateOf: duplicateOf[i] ?? null,
         secrets,
         // `changed` zostaje odznaczone: nadpisanie wersji w bibliotece wymaga swiadomego wyboru.
-        selectedByDefault: secrets.length === 0 && st === 'new',
+        // Z cudzego repozytorium nic nie jest zaznaczone z gory: uzytkownik wybiera swiadomie (ADR 0058).
+        selectedByDefault: !fromGit && secrets.length === 0 && st === 'new',
+        dropped,
       };
     });
   }
@@ -652,6 +710,7 @@ export class ImportService {
             ? [`slug-z=${draft.identity.slug}`]
             : []),
           ...(session.git === null ? [] : [`git=${session.git.url}@${session.git.commit}`]),
+          ...(scanned.dropped.length === 0 ? [] : [`usunieto=${scanned.dropped.join(',')}`]),
         ];
         const options = noteParts.length === 0 ? undefined : { note: noteParts.join(' ') };
         const result =

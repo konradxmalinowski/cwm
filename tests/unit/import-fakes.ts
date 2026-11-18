@@ -127,12 +127,17 @@ export const GIT_COMMIT = 'a'.repeat(40);
 export class FakeGitProvider implements GitSourceProvider {
   requests: GitSourceRequest[] = [];
   released = 0;
+  aborted = 0;
   submodules: string[] = [];
   /** Gdy ustawione, `open` zwraca ten wynik zamiast zrodla. */
   failure: Extract<GitSourceOpen, { ok: false }> | null = null;
   /** Gdy ustawione, `open` czeka na to obietnice (test jednoczesnych pobran). */
   gate: Promise<void> | null = null;
   constructor(readonly roots: DetectedRoot[]) {}
+
+  abort(): void {
+    this.aborted++;
+  }
 
   async open(request: GitSourceRequest): Promise<GitSourceOpen> {
     this.requests.push(request);

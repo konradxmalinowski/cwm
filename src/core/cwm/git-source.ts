@@ -200,6 +200,7 @@ function printable(text: string): string {
 export function checkGitTreeListing(raw: string, limits: GitTreeLimits): GitTreeCheck {
   const fail = (message: string): GitTreeCheck => ({ ok: false, message });
   const submodules: string[] = [];
+  const seen = new Set<string>();
   let files = 0;
   let bytes = 0;
   for (const record of raw.split('\0')) {
@@ -213,6 +214,13 @@ export function checkGitTreeListing(raw: string, limits: GitTreeLimits): GitTree
     if (path.split('/').some((part) => part.toLowerCase() === '.git')) {
       return fail(`sciezka ze skladnikiem .git: ${printable(path)}`);
     }
+    // Dwie sciezki rozniace sie tylko wielkoscia liter nie istnieja razem na APFS i NTFS: jedna nadpisalaby
+    // druga, a `SKILL.md` i `skill.md` w jednym drzewie to atak na to, co adapter przeczyta. Odmowa jest jawna.
+    const folded = path.normalize('NFC').toLowerCase();
+    if (seen.has(folded)) {
+      return fail(`sciezki roznia sie tylko wielkoscia liter: ${printable(path)}`);
+    }
+    seen.add(folded);
     // `ls-tree -t` wypisuje tez katalogi; ich skroty zbiera `gitListedTreeIds`.
     if (mode === '040000') continue;
     if (mode === '160000') {

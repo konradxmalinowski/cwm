@@ -172,6 +172,8 @@ function start(): void {
   });
 
   app.on('before-quit', () => {
+    // Trwajace pobieranie z repozytorium Git nie ma przezyc aplikacji (ADR 0058).
+    importService?.abortGit();
     const store = indexState.store;
     indexState = { store: null, info: indexState.info };
     closeIndexOnQuit(store);

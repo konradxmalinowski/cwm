@@ -126,6 +126,16 @@ export async function ensureScopedDirectory(scope: WriteScope, dir: string): Pro
   }
 }
 
+/**
+ * Ustawia tryb 0700 na samym korzeniu zakresu (POSIX). `ensureScopedDirectory` robi to tylko dla katalogow,
+ * ktore sam utworzyl, a katalog z poprzedniej wersji albo z recznej zmiany moglby miec szersze uprawnienia.
+ * Korzen musi istniec.
+ */
+export async function secureScopedRoot(scope: WriteScope): Promise<void> {
+  const root = await checkRoot(scope);
+  if (posix) await chmod(root, DIR_MODE);
+}
+
 /** Zapis atomowy z trybem 0600. Istniejacy cel musi byc zwyklym plikiem; katalog nadrzedny musi istniec. */
 export async function writeScopedFile(
   scope: WriteScope,

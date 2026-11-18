@@ -28,7 +28,7 @@ export function startImport(
     workDir: join(userDataDir, GIT_IMPORT_DIR_NAME),
     onUnexpected: logUnexpected,
   });
-  void git.purge();
+  git.purgeAtStart();
   return new ImportService({
     catalog,
     adapters: createAdapters(),

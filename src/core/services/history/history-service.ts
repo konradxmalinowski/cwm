@@ -99,9 +99,12 @@ function zipSummary(group: OperationGroup): string {
  */
 function repositorySuffix(note: string | undefined): string {
   const match = /(?:^| )git=(\S+)@([0-9a-f]{40}|[0-9a-f]{64})(?: |$)/.exec(note ?? '');
-  return match === null
-    ? ''
-    : `, z repozytorium ${match[1] ?? ''}@${(match[2] ?? '').slice(0, 12)}`;
+  if (match === null) return '';
+  const dropped = /(?:^| )usunieto=(\S+)(?: |$)/.exec(note ?? '')?.[1];
+  const from = `, z repozytorium ${match[1] ?? ''}@${(match[2] ?? '').slice(0, 12)}`;
+  return dropped === undefined
+    ? from
+    : `${from}, usunięto pola wykonawcze: ${dropped.split(',').join(', ')}`;
 }
 
 function summaryOf(kind: string, group: OperationGroup, count: number): string {

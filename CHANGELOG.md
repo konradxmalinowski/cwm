@@ -12,7 +12,7 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 - Import z repozytorium Git (ADR 0058). W kreatorze importu, pod listą lokalizacji, nowe źródło "Z repozytorium Git":
   adres https i opcjonalny ref (gałąź, tag albo pełny SHA). Aplikacja pobiera repozytorium tym samym, zahartowanym
   kodem co `cwm plugin add git` (płytkie pobranie, limity czasu, liczby plików i rozmiaru, bez hooków, submodułów,
-  LFS, SSH i danych logowania), skanuje je jak niezaufaną treść i usuwa kopię zaraz po skanie. Rozpoznaje katalogi
+  LFS, SSH i danych logowania), skanuje je jak niezaufaną treść i usuwa kopię zaraz po skanie. Nic z repozytorium nie jest zaznaczone z góry; hooki, serwery MCP i tryb uprawnień zadeklarowane we frontmatterze są usuwane z elementu przy imporcie (ostrzeżenie i wpis w Historii), a deklaracje narzędzi dostają ostrzeżenie, bo komendy i agenci działają w narzędziu po eksporcie. Adres musi być publicznym https (bez IP, `localhost`, `.local`, `.internal` i nazw bez kropki). Rozpoznaje katalogi
   `skills/`, `.claude/`, `.codex/` i `.gemini/` (skille, agenci, komendy) oraz pojedynczy `SKILL.md` w korzeniu;
   hooki i instrukcje globalne z cudzego repozytorium nie wchodzą. Podgląd pokazuje adres, ref i commit, a element
   zapisuje adres (bez danych logowania) i pełny SHA, więc Historia mówi "z repozytorium X@sha". Wymaga programu

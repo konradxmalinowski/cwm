@@ -83,12 +83,49 @@ Kreator importu dostaje drugie źródło: "Z repozytorium Git", adres https i op
    "Pobierz i przeskanuj" (zawsze aktywny; pusty adres daje błąd przy polu i fokus na nim). Dalej ten
    sam podgląd, z linią o źródle (adres, ref, commit) i ostrzeżeniem o submodułach, które nie są pobierane.
 
+10. **Pola wykonawcze w elementach z repozytorium.** Frontmatter agenta, komendy albo skilla może deklarować
+    `hooks`, `mcpServers`, `permissionMode` oraz listy narzędzi (`tools`, `allowed-tools`). Eksportery
+    (Claude Code, Codex, Gemini CLI) odtwarzają bajty pliku źródła, gdy element wraca do narzędzia, z którego
+    przyszedł, a przy eksporcie do innego narzędzia tylko wymieniają utracone klucze w ostrzeżeniu. Pole
+    zadeklarowane w cudzym repozytorium wróciłoby więc do narzędzia i tam zostało uruchomione. Wycinanie przy
+    eksporcie dotykałoby trzech eksporterów i każdego rodzaju elementu, więc zdecydowano inaczej: **przy
+    imporcie** (`core/services/import/git-risk.ts`, tylko dla źródła Git).
+    - `hooks`, `mcpServers` i `permissionMode` (także `mcp_servers`, `permission_mode`) są usuwane z
+      frontmattera pliku źródła w snapshocie oraz z `unmappedKeys`. Treść i reszta pól zostają bez zmian.
+      Frontmatter, w którym po wycięciu nadal widać taki klucz (inna składnia YAML), jest pomijany w całości.
+    - `tools`, `allowed-tools`, `allowedTools`, `disallowedTools` zostają, a element dostaje ostrzeżenie, że
+      po eksporcie narzędzie będzie mogło z nich korzystać.
+    - Plik TOML (agent Codeksa, komenda Gemini CLI) z `mcp_servers`, `hooks`, `permissionMode`,
+      `approval_policy` albo `sandbox_mode` innym niż `read-only` jest pomijany z powodem: klucza nie da się
+      wyciąć z TOML bez ruszania reszty.
+    - Wycięte pola są w ostrzeżeniu przy elemencie i w notatce wpisu Historii (`usunieto=...`; Historia
+      pokazuje "usunięto pola wykonawcze: ..."). Użytkownik może je dopisać ręcznie w edytorze elementu w
+      bibliotece: wtedy jest to jego decyzja.
+    - Nic z repozytorium nie jest zaznaczone z góry, także elementy `new` bez sekretów.
+11. **Adres: https i publiczny host.** `open()` i `ImportService.scanGit` same wymagają https, niezależnie od
+    kontroli w IPC. Wyjątek dla `http` na pętli zwrotnej istnieje tylko za opcją wstrzykiwaną w testach
+    (`allowLoopbackHttpForTests`), nigdy domyślnie. `gitUrlInputProblem` odrzuca literały IP (v4 i v6),
+    `localhost`, `*.localhost`, `*.local`, `*.internal`, `*.home.arpa` i nazwy bez kropki. Nazwa DNS, która
+    rozwiązuje się na adres prywatny, nadal przechodzi: aplikacja nie rozwiązuje nazw przed pobraniem, więc
+    to nie jest ochrona przed SSRF, tylko odrzucenie oczywistych adresów lokalnych (jak w ADR 0048 adres
+    https jest zaufany tak jak pole wpisane przez użytkownika).
+12. **Sprzątanie i zamykanie.** Sprzątanie z chwili startu jest zapamiętane, a `open()` czeka na nie.
+    `purge()` i `open()` ustawiają tryb 0700 na katalogu roboczym. `before-quit` zabija grupy procesów
+    trwających poleceń `git` (`abortRunningGit`); nasłuchiwacze sygnałów procesu, które rejestruje `runGit`,
+    są zdejmowane po zakończeniu każdego polecenia. Przerwanie z poziomu kreatora (AbortSignal) zostaje poza
+    zakresem.
+13. **Kolizje wielkości liter.** Lista plików commita z dwiema ścieżkami różniącymi się tylko wielkością liter
+    albo postacią Unicode (`SKILL.md` i `skill.md`) jest odrzucana jawnie w `checkGitTreeListing`, przed
+    zapisem czegokolwiek (to samo dotyczy `cwm plugin add git`). Wcześniej chroniła przed tym dopiero
+    weryfikacja `verifyGitCopy`, bez testu.
+
 ## Konsekwencje
 
 Użytkownik przyjmuje skille z publicznego repozytorium w kilku kliknięciach, a każdy element niesie
-adres i commit, z którego pochodzi. Nic z repozytorium nie jest wykonywane: ani skrypty, ani hooki
-(ich import i tak nie przychodzi tą drogą), a treść przechodzi tę samą kontrolę sekretów i ten sam
-podgląd co import lokalny.
+adres i commit, z którego pochodzi. Import niczego nie uruchamia, a treść przechodzi tę samą kontrolę
+sekretów i ten sam podgląd co import lokalny. Komendy i agenci zaczynają działać w narzędziu dopiero po
+eksporcie, dlatego nic nie jest zaznaczone z góry, pola wykonawcze są usuwane, a listy narzędzi opatrzone
+ostrzeżeniem.
 
 Ograniczenia, na które się godzimy:
 
@@ -105,6 +142,8 @@ Ograniczenia, na które się godzimy:
 - Narzędzie w etykiecie elementu to adapter, który skanował katalog (Claude Code dla `skills/` i `SKILL.md`
   w korzeniu), a nie narzędzie autora repozytorium.
 - Przypięcie SHA-1 i brak weryfikacji podpisów commitów: te same granice co w ADR 0048.
+- Usuwanie pól działa na górnym poziomie frontmattera. Treść skilla, agenta i komendy to nadal instrukcja
+  dla modelu, a polecenia w ciele komendy (np. wstawki powłoki) importer nie analizuje.
 - Zawartość skilla pozostaje cudzym tekstem. Kontrola sekretów jest heurystyką, a import niczego
   nie uruchamia, ale eksport do narzędzia robi z tej treści instrukcję dla modelu: decyzja "zaufaj temu
   repozytorium" należy do użytkownika, który zaznacza element w podglądzie.

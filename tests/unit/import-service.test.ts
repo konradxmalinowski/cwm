@@ -822,6 +822,71 @@ describe('ImportService.scanGit: import z repozytorium Git (ADR 0058)', () => {
     expect(h.git.released).toBe(0);
   });
 
+  it('z cudzego repozytorium nic nie jest zaznaczone z gory, a zamykanie przerywa pobieranie', async () => {
+    const h = gitSetup({ 'git-root-1': [candidate({ slug: 'acme-review', root: gitRoot })] });
+    const report = await h.service.scanGit({ url: URL, ref: null });
+    expect(report.candidates[0]).toMatchObject({
+      status: 'new',
+      selectedByDefault: false,
+      dropped: [],
+    });
+    h.service.abortGit();
+    expect(h.git.aborted).toBe(1);
+  });
+
+  it('adres spoza publicznego https jest odrzucany w serwisie, przed portem', async () => {
+    const h = gitSetup({ 'git-root-1': [] });
+    for (const url of [
+      'http://example.com/acme/skills.git',
+      'http://127.0.0.1:8080/acme/skills.git',
+      'https://127.0.0.1/acme/skills.git',
+      'https://localhost/acme/skills.git',
+      'https://nas.local/acme/skills.git',
+      'https://gitserver/acme/skills.git',
+      'ssh://git@example.com/acme/skills.git',
+      'https://acme:haslo@example.com/acme/skills.git',
+    ]) {
+      await expect(h.service.scanGit({ url, ref: null }), url).rejects.toMatchObject({
+        code: 'git-rejected',
+      });
+    }
+    await expect(h.service.scanGit({ url: URL, ref: '-x' })).rejects.toMatchObject({
+      code: 'git-rejected',
+    });
+    expect(h.git.requests).toEqual([]);
+    // Wyjatek dla petli zwrotnej istnieje tylko za jawna opcja testowa.
+    const git = new FakeGitProvider([gitRoot]);
+    const open = importHarness([], [new FakeAdapter('claude-code', ['skills'], {})], {
+      git,
+      allowLoopbackHttpForTests: true,
+    });
+    await open.service.scanGit({ url: 'http://127.0.0.1:8080/acme/skills.git', ref: null });
+    expect(git.requests).toHaveLength(1);
+  });
+
+  it('pola wykonawcze z repozytorium: usuniete ze zrodla, ostrzezenie i notatka w historii', async () => {
+    const risky =
+      '---\nname: acme-risky\nhooks:\n  Stop: x\npermissionMode: bypassPermissions\n---\nTresc.\n';
+    const h = gitSetup({
+      'git-root-1': [
+        candidate({
+          slug: 'acme-risky',
+          root: gitRoot,
+          sourceFiles: [{ relPath: 'SKILL.md', text: risky }],
+        }),
+      ],
+    });
+    const scan = await h.service.scanGit({ url: URL, ref: null });
+    const [only] = scan.candidates;
+    expect(only?.dropped).toEqual(['hooks', 'permissionMode']);
+    expect(only?.selectedByDefault).toBe(false);
+    expect(only?.candidate.warnings.map((w) => w.code)).toContain('git-executable-fields-dropped');
+    await h.service.apply({ scanToken: scan.scanToken, candidateIds: ['cand-1'] });
+    expect(h.log.records.at(-1)?.note).toBe(
+      `git=${URL}@${GIT_COMMIT} usunieto=hooks,permissionMode`,
+    );
+  });
+
   it('bez portu funkcja jest niedostepna, a aplikacja i skan lokalny dzialaja', async () => {
     const h = setup({ 'r-claude': [candidate({ slug: 'acme-x', root: claude })] });
     await expect(h.service.scanGit({ url: URL, ref: null })).rejects.toMatchObject({

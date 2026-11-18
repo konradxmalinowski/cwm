@@ -13,9 +13,14 @@ import type {
 import type { SourceReader } from '../../core/ports/source-reader';
 import type { DetectedRoot, RootKind } from '../../core/ports/tool-adapter';
 import { SingleSkillReader } from '../../core/services/import/single-skill-reader';
-import { fetchGitSource, type GitFetchResult } from '../cwm/git-fetch';
+import { abortRunningGit, fetchGitSource, type GitFetchResult } from '../cwm/git-fetch';
 import { createLayout, type CwmLayout } from '../cwm/layout';
-import { ensureScopedDirectory, homeScope, removeScopedTree } from '../cwm/writer';
+import {
+  ensureScopedDirectory,
+  homeScope,
+  removeScopedTree,
+  secureScopedRoot,
+} from '../cwm/writer';
 import { FsSourceReader } from '../source/fs-source-reader';
 
 /**
@@ -68,6 +73,11 @@ const ABORT_MESSAGES: readonly [RegExp, string][] = [
 export interface GitImportOptions {
   /** Katalog roboczy pod `userData` (bezwzgledny); powstaje z trybem 0700, a jego zawartosc jest tymczasowa. */
   readonly workDir: string;
+  /**
+   * Tylko testy: dopuszcza adres http na petli zwrotnej (lokalny serwer z repozytorium utworzonym w tescie).
+   * Domyslnie `open` przyjmuje wylacznie adres https, niezaleznie od kontroli w IPC (ADR 0058).
+   */
+  readonly allowLoopbackHttpForTests?: boolean;
   /** Szew na testy: domyslnie `fetchGitSource`. */
   readonly fetch?: typeof fetchGitSource;
   /** Log bledow nieoczekiwanych (bez wyswietlania uzytkownikowi). */
@@ -77,16 +87,30 @@ export interface GitImportOptions {
 export class FsGitSourceProvider implements GitSourceProvider {
   private readonly layout: CwmLayout;
   private readonly fetch: typeof fetchGitSource;
+  /** Sprzatanie z chwili startu; `open` czeka na nie, zeby nie usunac kopii wlasnego pobierania. */
+  private startup: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: GitImportOptions) {
     this.layout = createLayout(options.workDir);
     this.fetch = options.fetch ?? fetchGitSource;
   }
 
-  /** Usuwa wszystko, co zostalo po poprzednim (przerwanym) imporcie. Wolane przy starcie i przed kazdym pobraniem. */
+  /** Uruchamia sprzatanie po poprzednim (przerwanym) imporcie i zapamietuje obietnice: `open` na nia czeka. */
+  purgeAtStart(): void {
+    this.startup = this.purge();
+  }
+
+  /** Zabija trwajace polecenia `git` (zamykanie aplikacji). */
+  abort(): void {
+    abortRunningGit();
+  }
+
+  /** Usuwa wszystko, co zostalo po poprzednim imporcie i ustawia 0700 na katalogu roboczym. */
   async purge(): Promise<void> {
     try {
-      await removeScopedTree(homeScope(this.options.workDir), this.layout.sourcesDir);
+      const scope = homeScope(this.options.workDir);
+      if (await isDirectory(this.options.workDir)) await secureScopedRoot(scope);
+      await removeScopedTree(scope, this.layout.sourcesDir);
     } catch (error: unknown) {
       this.options.onUnexpected?.(error);
     }
@@ -95,6 +119,12 @@ export class FsGitSourceProvider implements GitSourceProvider {
   async open(request: GitSourceRequest): Promise<GitSourceOpen> {
     const urlProblem = gitUrlProblem(request.url);
     if (urlProblem !== null) return refuse('rejected', urlProblem);
+    if (
+      new URL(request.url).protocol !== 'https:' &&
+      this.options.allowLoopbackHttpForTests !== true
+    ) {
+      return refuse('rejected', 'Dozwolony jest tylko adres https.');
+    }
     if (request.ref !== null) {
       const refProblem = gitRefProblem(request.ref);
       if (refProblem !== null) return refuse('rejected', refProblem);
@@ -103,7 +133,9 @@ export class FsGitSourceProvider implements GitSourceProvider {
 
     let fetched: GitFetchResult;
     try {
+      await this.startup;
       await ensureScopedDirectory(homeScope(this.options.workDir), this.options.workDir);
+      await secureScopedRoot(homeScope(this.options.workDir));
       await this.purge();
       fetched = await this.fetch({
         layout: this.layout,

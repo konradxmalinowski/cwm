@@ -157,8 +157,10 @@
         <h2 class="section__title" id="import-git-title">Z repozytorium Git</h2>
         <p class="view__sub import-git__lead">
           Pobiera publiczne repozytorium przez https i skanuje je tak samo jak lokalizacje narzędzi.
-          Zawartość jest traktowana jak niezaufana: nic z niej nie jest uruchamiane, a kopia znika
-          zaraz po skanie. Do biblioteki trafia tylko to, co zaznaczysz.
+          Zawartość jest traktowana jak niezaufana: import niczego nie uruchamia, a kopia znika
+          zaraz po skanie. Komendy i agenci z repozytorium zaczną działać w narzędziu dopiero po
+          eksporcie, więc nic nie jest zaznaczone z góry, a hooki, serwery MCP i tryb uprawnień są
+          usuwane.
         </p>
         @if (gitError(); as message) {
           <div class="notice" role="alert" data-testid="import-git-error">
@@ -272,7 +274,8 @@
               ref <span class="mono">{{ repo.ref }}</span>,
             }
             commit <span class="mono">{{ repo.commit.slice(0, 12) }}</span>. Adres i commit zostaną
-            zapisane przy zaimportowanych elementach.
+            zapisane przy zaimportowanych elementach. Nic nie jest zaznaczone z góry: wybierz tylko
+            to, czemu ufasz.
           </p>
           @if (repo.submodules > 0) {
             <p class="view__sub">
