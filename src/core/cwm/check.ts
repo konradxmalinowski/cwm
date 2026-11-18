@@ -1,4 +1,5 @@
 import { escapeControlChars, MAX_ERRORS, type ValidationError } from './errors';
+import { isLoopback } from './loopback';
 import { FORBIDDEN_KEYS } from './safe-keys';
 
 /** Manifest jest niezaufanym wejsciem, wiec listy i teksty maja gorny limit. */
@@ -39,10 +40,6 @@ function isUnsafeSegment(segment: string): boolean {
   return (
     segment === '' || /[. ]$/.test(segment) || WINDOWS_DEVICE.test(segment) || segment.includes(':')
   );
-}
-
-export function isLoopback(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '[::1]' || /^127(?:\.\d{1,3}){3}$/.test(hostname);
 }
 
 /** Zbiera bledy zamiast rzucac, zeby uzytkownik zobaczyl wszystkie naraz. */

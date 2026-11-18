@@ -1,4 +1,4 @@
-import { isLoopback } from './check';
+import { isLoopback } from './loopback';
 
 /**
  * Czyste reguly pobierania pluginow z git (ADR 0048): adres, ref, srodowisko i argumenty procesu
