@@ -19,6 +19,7 @@ import type {
   ToolAdapter,
 } from '../../ports/tool-adapter';
 import type { GitSourceFailure, GitSourceProvider, GitSourceRequest } from '../../ports/git-source';
+import type { ProjectRootCatalog } from '../../ports/project-roots';
 import type { SourceReader } from '../../ports/source-reader';
 import type { LibraryService } from '../library/library-service';
 import { validateSlug } from '../library/validate';
@@ -66,9 +67,17 @@ export interface LibrarySlug {
   readonly slug: string;
 }
 
+/** Projekt, z ktorego pochodzi skan (ADR 0059). */
+export interface ScanProject {
+  readonly projectId: string;
+  readonly name: string;
+}
+
 export interface ScanReport {
   /** Repozytorium, z ktorego pochodzi skan; `null` dla skanu lokalizacji narzedzi. */
   readonly git: (GitOrigin & { readonly submodules: number }) | null;
+  /** Projekt, z ktorego pochodzi skan; kandydaci zostana do niego przypieci. */
+  readonly project: ScanProject | null;
   readonly scanToken: string;
   readonly candidates: readonly ScannedCandidate[];
   readonly skipped: readonly ScannedSkip[];
@@ -109,7 +118,15 @@ export type ApplySkipReason =
   | 'rename-not-allowed';
 
 export type ImportErrorCode =
-  'unknown-root' | 'unknown-scan' | 'git-unavailable' | 'git-rejected' | 'git-failed' | 'git-busy';
+  | 'unknown-root'
+  | 'unknown-scan'
+  | 'git-unavailable'
+  | 'git-rejected'
+  | 'git-failed'
+  | 'git-busy'
+  | 'unknown-project'
+  | 'project-invalid'
+  | 'project-unavailable';
 
 const GIT_ERROR_CODE: Readonly<Record<GitSourceFailure, ImportErrorCode>> = {
   'git-unavailable': 'git-unavailable',
@@ -133,6 +150,8 @@ export interface ImportServiceDeps {
   readonly reader: SourceReader;
   /** Pobieranie z repozytorium Git (ADR 0058). Brak portu to `git-unavailable`: funkcja jest opcjonalna. */
   readonly git?: GitSourceProvider;
+  /** Rooty projektow (ADR 0059); `reader` musi je rozwiazywac. Brak portu: import z projektu niedostepny. */
+  readonly projects?: ProjectRootCatalog;
   /**
    * Tylko testy: dopuszcza adres http na petli zwrotnej. Domyslnie `scanGit` przyjmuje wylacznie publiczny
    * adres https, niezaleznie od tego, kto go wola (ADR 0058).
@@ -160,6 +179,8 @@ interface RawCandidate {
 interface ScanSession {
   /** Pochodzenie z repozytorium Git; trafia do `importedFrom.git` i do notatki w historii. */
   readonly git: GitOrigin | null;
+  /** Projekt skanu: kandydaci dostaja `scope: project` i jego `projectId`. */
+  readonly project: ScanProject | null;
   readonly expiresAt: number;
   readonly candidates: Map<string, ScannedCandidate>;
 }
@@ -334,6 +355,29 @@ export class ImportService {
   }
 
   /**
+   * Skan projektu z rejestru (ADR 0059): te same adaptery i ten sam przebieg co dla lokalizacji
+   * narzedzi, na rootach projektu. Kandydaci zostana przypieci do projektu przy zapisie.
+   */
+  async scanProject(projectId: string): Promise<ScanReport> {
+    const projects = this.deps.projects;
+    if (projects === undefined) {
+      throw new ImportError(
+        'project-unavailable',
+        'Import z projektu jest niedostępny w tej instalacji.',
+      );
+    }
+    const found = await projects.roots(projectId);
+    if (!found.ok) throw new ImportError(found.code, found.message);
+    return this.scanRoots(
+      found.roots.filter((r) => r.exists),
+      this.deps.reader,
+      null,
+      0,
+      { projectId: found.projectId, name: found.name },
+    );
+  }
+
+  /**
    * Skan repozytorium Git (ADR 0058). Port pobiera i weryfikuje kopie, tu idzie ten sam skan co dla
    * lokalizacji narzedzi, na tych samych adapterach, a kopia znika po skanie: kandydaci zyja w pamieci,
    * `apply` nie siega do dysku.
@@ -366,6 +410,7 @@ export class ImportService {
           source.reader,
           source.origin,
           source.submodules.length,
+          null,
         );
       } finally {
         await source.release().catch((error: unknown) => this.deps.onUnexpected?.(error));
@@ -380,6 +425,7 @@ export class ImportService {
     reader: SourceReader,
     git: GitOrigin | null,
     submodules: number,
+    project: ScanProject | null = null,
   ): Promise<ScanReport> {
     const raw: RawCandidate[] = [];
     const skipped: ScannedSkip[] = [];
@@ -448,11 +494,12 @@ export class ImportService {
     }
 
     const library = (await this.deps.library.list()).items;
-    const candidates = this.resolveStatuses(raw, library, git !== null);
-    const scanToken = this.remember(candidates, git);
+    const candidates = this.resolveStatuses(raw, library, git !== null, project?.projectId ?? null);
+    const scanToken = this.remember(candidates, git, project);
     const librarySlugs = library.map((item) => ({ kind: item.kind, slug: item.identity.slug }));
     return {
       git: git === null ? null : { ...git, submodules },
+      project,
       scanToken,
       candidates,
       skipped,
@@ -485,7 +532,11 @@ export class ImportService {
     return out;
   }
 
-  private remember(candidates: readonly ScannedCandidate[], git: GitOrigin | null): string {
+  private remember(
+    candidates: readonly ScannedCandidate[],
+    git: GitOrigin | null,
+    project: ScanProject | null,
+  ): string {
     const now = this.deps.clock.now().getTime();
     this.purge(now);
     while (this.sessions.size >= MAX_SCAN_SESSIONS) {
@@ -496,6 +547,7 @@ export class ImportService {
     const token = this.newToken();
     this.sessions.set(token, {
       git,
+      project,
       expiresAt: now + this.ttlMs,
       candidates: new Map(candidates.map((c) => [c.candidateId, c])),
     });
@@ -516,6 +568,7 @@ export class ImportService {
     raw: readonly RawCandidate[],
     library: readonly LibraryItem[],
     fromGit: boolean,
+    projectId: string | null,
   ): ScannedCandidate[] {
     const ids = raw.map((_, i) => `cand-${i + 1}`);
     const status: CandidateStatus[] = raw.map(() => 'new');
@@ -584,6 +637,12 @@ export class ImportService {
       const same = exact.get(`${kind}\0${draft.identity.slug}`);
       if (same !== undefined) {
         existing[i] = same.id;
+        // Element innego projektu albo globalny pod ta sama nazwa to nie ten sam element: zastapienie
+        // przenioslby go miedzy zakresami, wiec wchodzi tylko pod nowa nazwa (ADR 0059).
+        if ((same.classification.projectId ?? null) !== projectId) {
+          status[i] = 'conflict';
+          return;
+        }
         status[i] = sameContent(draft, same) ? 'unchanged' : 'changed';
         return;
       }
@@ -786,10 +845,10 @@ export class ImportService {
     return {
       ...draft,
       identity,
-      classification: {
-        scope: draft.classification?.scope ?? 'private',
-        secretFindings: findings,
-      },
+      classification:
+        session.project === null
+          ? { scope: draft.classification?.scope ?? 'private', secretFindings: findings }
+          : { scope: 'project', secretFindings: findings, projectId: session.project.projectId },
       source: {
         snapshots,
         importedFrom: origin,

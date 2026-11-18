@@ -18,7 +18,9 @@ import type {
 } from '../../../../shared/ipc/export-contract';
 import type { ToolIdDto } from '../../../../shared/ipc/import-contract';
 import type { ItemSummaryDto } from '../../../../shared/ipc/library-contract';
+import type { ProjectDto } from '../../../../shared/ipc/projects-contract';
 import { ExportApiService } from '../../core/ipc/export-api.service';
+import { ProjectsApiService } from '../../core/ipc/projects-api.service';
 import { LibraryApiService } from '../../core/ipc/library-api.service';
 import { kindLabel, plural } from '../../core/labels';
 import { ROUTES } from '../../core/routing/route';
@@ -56,6 +58,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 })
 export class ExportWizardComponent {
   private readonly exportApi = inject(ExportApiService);
+  private readonly projectsApi = inject(ProjectsApiService);
   private readonly libraryApi = inject(LibraryApiService);
   private readonly selection = inject(ExportSelectionService);
 
@@ -73,6 +76,10 @@ export class ExportWizardComponent {
 
   protected readonly phase = signal<Phase>('select');
   protected readonly tool = signal<ToolIdDto | null>(null);
+  /** Cel "projekt" (ADR 0059): projekty z rejestru i wybrany projekt; eksport idzie wtedy do Claude Code. */
+  protected readonly projectList = signal<readonly ProjectDto[]>([]);
+  protected readonly projectTarget = signal<string | null>(null);
+  protected readonly includeGlobal = signal(false);
   /** Cel "Archiwum ZIP" (ADR 0054): zamiast narzedzia plik wybrany w oknie systemowym. */
   protected readonly zip = signal(false);
   /** Uklad plikow w archiwum: wedlug tego narzedzia. */
@@ -103,7 +110,13 @@ export class ExportWizardComponent {
   private readonly points = signal<ReadonlyMap<string, Omit<DecisionView, 'chosen' | 'settled'>>>(
     new Map(),
   );
-  private lastRequest: { tool: ToolIdDto; itemIds: string[]; zip: boolean } | null = null;
+  private lastRequest: {
+    tool: ToolIdDto;
+    itemIds: string[];
+    zip: boolean;
+    projectId?: string;
+    includeGlobal?: boolean;
+  } | null = null;
 
   private seq = 0;
   private itemsSeq = 0;
@@ -292,6 +305,13 @@ export class ExportWizardComponent {
     });
 
     void this.loadItems();
+    void this.loadProjects();
+  }
+
+  /** Lista projektow do celu eksportu; blad listy nie blokuje eksportu do narzedzi. */
+  private async loadProjects(): Promise<void> {
+    const result = await this.projectsApi.list();
+    if (result.ok) this.projectList.set(result.value.projects);
   }
 
   private zipSentence(plan: ExportZipPlanDto): string {
@@ -349,11 +369,24 @@ export class ExportWizardComponent {
   protected onTool(value: ToolIdDto): void {
     this.tool.set(value);
     this.zip.set(false);
+    this.projectTarget.set(null);
   }
 
   protected onZip(): void {
     this.tool.set(null);
     this.zip.set(true);
+    this.projectTarget.set(null);
+  }
+
+  /** Rooty projektu sa dzis tylko dla Claude Code (`.claude/`, `CLAUDE.md`). */
+  protected onProject(projectId: string): void {
+    this.tool.set('claude-code');
+    this.zip.set(false);
+    this.projectTarget.set(projectId);
+  }
+
+  protected onIncludeGlobal(checked: boolean): void {
+    this.includeGlobal.set(checked);
   }
 
   protected onLayout(value: ToolIdDto): void {
@@ -389,7 +422,9 @@ export class ExportWizardComponent {
     this.planError.set(null);
     this.phase.set('planning');
     const itemIds = [...this.selected()];
-    this.lastRequest = { tool, itemIds, zip };
+    const projectId = zip ? null : this.projectTarget();
+    const target = projectId === null ? {} : { projectId, includeGlobal: this.includeGlobal() };
+    this.lastRequest = { tool, itemIds, zip, ...target };
     this.choices.set(new Map());
     this.points.set(new Map());
     this.zipConfirmed.set(new Set());
@@ -397,7 +432,7 @@ export class ExportWizardComponent {
     this.zipCancelled.set(false);
     const result = zip
       ? await this.exportApi.zipPlan({ tool, itemIds })
-      : await this.exportApi.plan({ tool, itemIds });
+      : await this.exportApi.plan({ tool, itemIds, ...target });
     if (seq !== this.seq) return;
     if (!result.ok) {
       this.planError.set(result.error.message);

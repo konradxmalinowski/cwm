@@ -5,7 +5,10 @@ import { LibraryService } from '../../src/core/services/library/library-service'
 import {
   FakeAdapter,
   FakeGitProvider,
+  FakeProjectCatalog,
   GIT_COMMIT,
+  PROJECT_A,
+  PROJECT_B,
   candidate,
   importHarness,
   root,
@@ -937,5 +940,75 @@ describe('ImportService.scanGit: import z repozytorium Git (ADR 0058)', () => {
 
   it('ImportError z portu ma nazwe klasy, zeby handler IPC go rozpoznal', () => {
     expect(new ImportError('git-busy', 'x').name).toBe('ImportError');
+  });
+});
+
+describe('ImportService.scanProject (ADR 0059)', () => {
+  const projectRoot = root('r-proj-a', 'claude-code', { label: 'acme-app: .claude/skills' });
+  const missingRoot = root('r-proj-a-agents', 'claude-code', {
+    kind: 'agents',
+    label: 'acme-app: .claude/agents',
+    exists: false,
+    active: false,
+  });
+
+  function projectSetup(byRoot: Record<string, ReturnType<typeof candidate>[]>) {
+    const projects = new FakeProjectCatalog({
+      [PROJECT_A]: { name: 'acme-app', roots: [projectRoot, missingRoot] },
+    });
+    const adapters = [new FakeAdapter('claude-code', ['skills', 'agents'], byRoot)];
+    return { projects, adapters, ...importHarness([claude], adapters, { projects }) };
+  }
+
+  it('skanuje tylko istniejace rooty projektu, a zapis przypina element do projektu', async () => {
+    const h = projectSetup({ 'r-proj-a': [candidate({ slug: 'acme-lint', root: projectRoot })] });
+    const report = await h.service.scanProject(PROJECT_A);
+    expect(report.project).toEqual({ projectId: PROJECT_A, name: 'acme-app' });
+    expect(h.adapters[0]?.scans).toBe(1);
+    const [only] = report.candidates;
+    expect(only?.status).toBe('new');
+    expect(only?.rootLabel).toBe('acme-app: .claude/skills');
+
+    const applied = await h.service.apply({
+      scanToken: report.scanToken,
+      candidateIds: ['cand-1'],
+    });
+    const itemId = applied.imported[0]?.itemId ?? '';
+    const saved = await h.library.get(itemId);
+    expect(saved.item.classification).toMatchObject({ scope: 'project', projectId: PROJECT_A });
+  });
+
+  it('ten sam slug w bibliotece poza projektem to konflikt, nie zastapienie', async () => {
+    const h = projectSetup({
+      'r-proj-a': [candidate({ slug: 'acme-review', root: projectRoot, body: 'projekt\n' })],
+    });
+    const global = await h.library.create(candidate({ slug: 'acme-review', root: claude }).draft);
+    const report = await h.service.scanProject(PROJECT_A);
+    expect(report.candidates[0]?.status).toBe('conflict');
+    expect(report.candidates[0]?.existingItemId).toBe(global.item.id);
+
+    // W druga strone tak samo: skan globalny nie nadpisze elementu projektu.
+    const local = setup({ 'r-claude': [candidate({ slug: 'acme-bound', root: claude })] });
+    await local.library.create({
+      ...candidate({ slug: 'acme-bound', root: claude }).draft,
+      classification: { scope: 'project', secretFindings: [], projectId: PROJECT_B },
+    });
+    const globalScan = await local.service.scan(['r-claude']);
+    expect(globalScan.candidates[0]?.status).toBe('conflict');
+  });
+
+  it('nieznany projekt, katalog niewazny i brak portu to bledy z kodem', async () => {
+    const h = projectSetup({});
+    await expect(h.service.scanProject(PROJECT_B)).rejects.toMatchObject({
+      code: 'unknown-project',
+    });
+    h.projects.invalid.add(PROJECT_A);
+    await expect(h.service.scanProject(PROJECT_A)).rejects.toMatchObject({
+      code: 'project-invalid',
+    });
+    const bare = setup({});
+    await expect(bare.service.scanProject(PROJECT_A)).rejects.toMatchObject({
+      code: 'project-unavailable',
+    });
   });
 });

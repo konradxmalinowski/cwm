@@ -21,6 +21,7 @@ import {
   type ExportPlanReport,
   type ExportService,
 } from '../export/export-service';
+import { SCOPE_REFUSAL } from '../export/project-scope';
 import { classifyCandidate, sameContent } from '../import/import-service';
 import type { LibraryService } from '../library/library-service';
 import { sha256Bytes } from '../normalization/hash';
@@ -184,6 +185,8 @@ export class SyncService {
       const records = new Map((await this.deps.state.list(tool)).map((r) => [r.itemId, r]));
       const supported: ItemId[] = [];
       for (const item of library) {
+        // Element projektu nie ma stanu wzgledem katalogu globalnego (ADR 0059).
+        if (item.classification.projectId !== undefined) continue;
         const record = records.get(item.id) ?? null;
         const status = await this.stateOf(item, tool, record);
         if (status !== 'unsupported') supported.push(item.id);
@@ -333,6 +336,10 @@ export class SyncService {
           skipped.push({ itemId: id, tool, reason: 'Nie znaleziono elementu w bibliotece.' });
           continue;
         }
+        if (item.classification.projectId !== undefined) {
+          skipped.push({ itemId: id, tool, reason: SCOPE_REFUSAL.projectToGlobal });
+          continue;
+        }
         const record = records.get(id) ?? null;
         const status = await this.stateOf(item, tool, record);
         const choice = decided.get(`${tool}\0${id}`);
@@ -463,7 +470,7 @@ export class SyncService {
       const draft: ItemDraft = {
         ...match.draft,
         identity: { ...match.draft.identity, slug: item.identity.slug },
-        classification: { scope: item.classification.scope, secretFindings: [] },
+        classification: { ...item.classification, secretFindings: [] },
         source: {
           snapshots: match.draft.source?.snapshots ?? [],
           importedFrom: {

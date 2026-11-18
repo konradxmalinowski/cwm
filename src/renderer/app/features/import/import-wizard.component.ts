@@ -8,6 +8,7 @@ import {
   signal,
 } from '@angular/core';
 
+import { projectNameProblem } from '../../../../core/model/project';
 import { gitRefInputProblem, gitUrlInputProblem } from '../../../../core/services/import/git-input';
 import type {
   CandidateDto,
@@ -16,7 +17,9 @@ import type {
   ImportDetectDto,
   ImportScanDto,
 } from '../../../../shared/ipc/import-contract';
+import type { ProjectDto } from '../../../../shared/ipc/projects-contract';
 import { ImportApiService } from '../../core/ipc/import-api.service';
+import { ProjectsApiService } from '../../core/ipc/projects-api.service';
 import { kindLabel, plural } from '../../core/labels';
 import { ROUTES } from '../../core/routing/route';
 import {
@@ -42,6 +45,11 @@ type DetectState =
 
 type Phase = 'locations' | 'scanning' | 'preview' | 'applying' | 'result';
 
+type ProjectsState =
+  | { readonly status: 'loading' }
+  | { readonly status: 'error'; readonly message: string }
+  | { readonly status: 'ready'; readonly projects: readonly ProjectDto[] };
+
 @Component({
   selector: 'app-import-wizard',
   imports: [SecretConfirmDialogComponent],
@@ -51,6 +59,7 @@ type Phase = 'locations' | 'scanning' | 'preview' | 'applying' | 'result';
 })
 export class ImportWizardComponent {
   private readonly api = inject(ImportApiService);
+  private readonly projectsApi = inject(ProjectsApiService);
 
   protected readonly libraryHref = `#${ROUTES.library}`;
   protected readonly toolLabel = toolLabel;
@@ -81,7 +90,7 @@ export class ImportWizardComponent {
 
   // ---- Zrodlo: repozytorium Git (ADR 0058) ----
   /** Skad pochodzi biezacy skan: od tego zalezy tekst kroku skanowania i pustego podgladu. */
-  protected readonly source = signal<'local' | 'git'>('local');
+  protected readonly source = signal<'local' | 'git' | 'project'>('local');
   protected readonly gitUrl = signal('');
   protected readonly gitRef = signal('');
   /** Bledy pol pokazujemy dopiero po pierwszej probie wyslania, nie przy pisaniu. */
@@ -96,6 +105,18 @@ export class ImportWizardComponent {
     this.gitSubmitted() ? this.gitRefProblem() : null,
   );
   protected readonly gitSource = computed(() => this.scan()?.git ?? null);
+
+  // ---- Zrodlo: projekt z rejestru (ADR 0059) ----
+  protected readonly projects = signal<ProjectsState>({ status: 'loading' });
+  protected readonly projectsError = signal<string | null>(null);
+  /** Komunikat po dodaniu albo usunieciu projektu, dla czytnika ekranu i oka. */
+  protected readonly projectsNote = signal<string | null>(null);
+  protected readonly projectsBusy = signal(false);
+  protected readonly projectRenaming = signal<string | null>(null);
+  protected readonly projectNameDraft = signal('');
+  protected readonly projectNameError = signal<string | null>(null);
+  protected readonly projectSource = computed(() => this.scan()?.project ?? null);
+  private projectsSeq = 0;
 
   private seq = 0;
 
@@ -176,7 +197,9 @@ export class ImportWizardComponent {
       case 'scanning':
         return this.source() === 'git'
           ? 'Pobieram repozytorium i skanuję jego zawartość.'
-          : 'Skanuję wybrane lokalizacje.';
+          : this.source() === 'project'
+            ? 'Skanuję katalog projektu.'
+            : 'Skanuję wybrane lokalizacje.';
       case 'preview': {
         const n = this.candidates().length;
         if (n === 0) return 'Skan nie znalazł niczego do zaimportowania.';
@@ -236,6 +259,116 @@ export class ImportWizardComponent {
     });
 
     void this.loadDetect();
+    void this.loadProjects();
+  }
+
+  protected async loadProjects(): Promise<void> {
+    const seq = ++this.projectsSeq;
+    const result = await this.projectsApi.list();
+    if (seq !== this.projectsSeq) return;
+    this.projects.set(
+      result.ok
+        ? { status: 'ready', projects: result.value.projects }
+        : { status: 'error', message: result.error.message },
+    );
+  }
+
+  /** Katalog wybiera okno systemowe w main; renderer dostaje tylko identyfikator i nazwe. */
+  protected async addProject(): Promise<void> {
+    if (this.projectsBusy()) return;
+    this.projectsBusy.set(true);
+    this.projectsError.set(null);
+    this.projectsNote.set(null);
+    const result = await this.projectsApi.add();
+    this.projectsBusy.set(false);
+    if (!result.ok) {
+      this.projectsError.set(result.error.message);
+      return;
+    }
+    if (result.value.status === 'cancelled') return;
+    this.projectsNote.set(`Dodano projekt „${result.value.project.name}”.`);
+    await this.loadProjects();
+  }
+
+  protected beginProjectRename(project: ProjectDto): void {
+    this.projectRenaming.set(project.projectId);
+    this.projectNameDraft.set(project.name);
+    this.projectNameError.set(null);
+    setTimeout(() => document.getElementById(this.projectNameId(project))?.focus(), 0);
+  }
+
+  protected cancelProjectRename(project: ProjectDto): void {
+    this.projectRenaming.set(null);
+    this.projectNameError.set(null);
+    setTimeout(() => document.getElementById(this.projectRenameButtonId(project))?.focus(), 0);
+  }
+
+  protected onProjectName(value: string): void {
+    this.projectNameDraft.set(value);
+  }
+
+  protected async saveProjectRename(event: Event, project: ProjectDto): Promise<void> {
+    event.preventDefault();
+    const name = this.projectNameDraft().trim();
+    const problem = projectNameProblem(name);
+    if (problem !== null) {
+      this.projectNameError.set(problem);
+      document.getElementById(this.projectNameId(project))?.focus();
+      return;
+    }
+    const result = await this.projectsApi.rename({ projectId: project.projectId, name });
+    if (!result.ok) {
+      this.projectNameError.set(result.error.message);
+      document.getElementById(this.projectNameId(project))?.focus();
+      return;
+    }
+    this.projectRenaming.set(null);
+    this.projectNameError.set(null);
+    this.projectsNote.set(`Zmieniono nazwę projektu na „${result.value.name}”.`);
+    await this.loadProjects();
+    setTimeout(() => document.getElementById(this.projectRenameButtonId(project))?.focus(), 0);
+  }
+
+  /** Usuwa projekt tylko z listy aplikacji; pliki w katalogu projektu zostaja bez zmian. */
+  protected async removeProject(project: ProjectDto): Promise<void> {
+    this.projectsError.set(null);
+    this.projectsNote.set(null);
+    const result = await this.projectsApi.remove({ projectId: project.projectId });
+    if (!result.ok) {
+      this.projectsError.set(result.error.message);
+      return;
+    }
+    this.projects.set({ status: 'ready', projects: result.value.projects });
+    this.projectsNote.set(
+      `Usunięto „${project.name}” z listy projektów. Pliki w katalogu projektu zostały bez zmian.`,
+    );
+    setTimeout(() => document.getElementById('project-add')?.focus(), 0);
+  }
+
+  protected projectNameId(project: ProjectDto): string {
+    return `project-name-${project.projectId}`;
+  }
+
+  protected projectRenameButtonId(project: ProjectDto): string {
+    return `project-rename-${project.projectId}`;
+  }
+
+  protected async startProjectScan(project: ProjectDto): Promise<void> {
+    if (this.phase() !== 'locations') return;
+    const seq = ++this.seq;
+    this.scanError.set(null);
+    this.gitError.set(null);
+    this.projectsError.set(null);
+    this.source.set('project');
+    this.phase.set('scanning');
+    const result = await this.api.scanProject({ projectId: project.projectId });
+    if (seq !== this.seq) return;
+    if (!result.ok) {
+      this.projectsError.set(result.error.message);
+      this.phase.set('locations');
+      return;
+    }
+    this.acceptScan(result.value);
   }
 
   protected async loadDetect(): Promise<void> {

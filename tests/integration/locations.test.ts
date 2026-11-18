@@ -1,10 +1,13 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
 import type { PlatformEnv } from '../../src/infra/platform/env';
 import { FsLocationCatalog, type PathProbe } from '../../src/infra/platform/locations';
+import { FsProjectCatalog } from '../../src/infra/platform/project-locations';
+import { checkChosenProjectDir } from '../../src/infra/projects/project-dir';
+import { FsProjectRegistry } from '../../src/infra/projects/project-registry';
 import { createTempTree, removeTempTrees } from '../harness/isolation';
 
 afterAll(() => {
@@ -186,5 +189,173 @@ describe('toolHomeExists', () => {
     writeFileSync(join(home, '.claude'), 'x');
     const catalog = new FsLocationCatalog(envFor(home), { salt: SALT });
     expect(await catalog.toolHomeExists('claude-code')).toBe(false);
+  });
+});
+
+/** Dowiazanie tam, gdzie system pozwala; na Windowsie bez uprawnien test pomija te asercje. */
+function trySymlink(target: string, link: string): boolean {
+  try {
+    symlinkSync(target, link, 'dir');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+describe('katalog projektu z okna wyboru (ADR 0059)', () => {
+  function ctx(home: string, protectedDirs: string[] = []) {
+    return { platform: process.platform, home, protectedDirs, env: {} };
+  }
+
+  it('repozytorium pod katalogiem domowym przechodzi i wraca jako realpath', async () => {
+    const base = createTempTree('acme-proj-');
+    const home = join(base, 'home');
+    const repo = join(home, 'code', 'acme-app');
+    dir(repo);
+    const checked = await checkChosenProjectDir(repo, ctx(home));
+    expect(checked).toEqual({ ok: true, dir: realpathSync.native(repo) });
+  });
+
+  it('odrzuca katalog domowy, jego rodzica, konfiguracje narzedzia, sciezke wzgledna i brak katalogu', async () => {
+    const base = createTempTree('acme-proj-');
+    const home = join(base, 'home');
+    const tools = join(home, '.claude');
+    dir(join(tools, 'skills'));
+    writeFileSync(join(home, 'plik.txt'), 'x');
+    const c = ctx(home, [tools]);
+    for (const chosen of [
+      home,
+      base,
+      tools,
+      join(tools, 'skills'),
+      join(home, 'plik.txt'),
+      join(home, 'brak'),
+      'wzgledna/sciezka',
+    ]) {
+      expect((await checkChosenProjectDir(chosen, c)).ok, chosen).toBe(false);
+    }
+    // Katalog zawierajacy konfiguracje narzedzia tez nie jest projektem.
+    const outside = join(base, 'repo-z-konfiguracja');
+    dir(join(outside, 'cfg'));
+    expect((await checkChosenProjectDir(outside, ctx(home, [join(outside, 'cfg')]))).ok).toBe(
+      false,
+    );
+  });
+
+  it('odrzuca katalogi systemowe i korzen dysku', async () => {
+    const home = createTempTree('acme-home-');
+    if (process.platform === 'win32') return;
+    for (const chosen of ['/', '/usr', '/usr/lib', '/etc', '/tmp']) {
+      expect((await checkChosenProjectDir(chosen, ctx(home))).ok, chosen).toBe(false);
+    }
+  });
+
+  it('wybrany katalog bedacy dowiazaniem jest odrzucony', async () => {
+    const base = createTempTree('acme-proj-');
+    const repo = join(base, 'repo');
+    dir(repo);
+    const link = join(base, 'repo-link');
+    if (!trySymlink(repo, link)) return;
+    expect(await checkChosenProjectDir(link, ctx(join(base, 'home')))).toMatchObject({ ok: false });
+  });
+});
+
+describe('rejestr i rooty projektu (ADR 0059)', () => {
+  const SALT_PROMISE = Promise.resolve(SALT);
+
+  async function project() {
+    const base = createTempTree('acme-proj-');
+    const repo = realpathSync.native(createTempTree('acme-repo-'));
+    const file = join(base, 'projects.json');
+    let n = 0;
+    const registry = new FsProjectRegistry(file, {
+      newId: () => `proj-${String(++n).padStart(16, '0')}`,
+    });
+    const added = await registry.add(repo, 'acme-app');
+    return {
+      base,
+      repo,
+      file,
+      registry,
+      added,
+      catalog: new FsProjectCatalog(registry, SALT_PROMISE),
+    };
+  }
+
+  it('rejestr zapisuje, zmienia nazwe, usuwa i odmawia duplikatu; plik nie zna innych pol', async () => {
+    const t = await project();
+    expect(t.added).toMatchObject({ id: 'proj-0000000000000001', name: 'acme-app', dir: t.repo });
+    await expect(t.registry.add(t.repo, 'drugi')).rejects.toMatchObject({ code: 'project-exists' });
+    await t.registry.rename(t.added.id, 'acme-web');
+    const reread = new FsProjectRegistry(t.file);
+    await reread.ready();
+    expect(reread.list().map((p) => p.name)).toEqual(['acme-web']);
+    await expect(t.registry.rename(t.added.id, ' ')).rejects.toMatchObject({
+      code: 'invalid-name',
+    });
+    await t.registry.remove(t.added.id);
+    expect(t.registry.list()).toEqual([]);
+    await expect(t.registry.remove(t.added.id)).rejects.toMatchObject({ code: 'unknown-project' });
+    expect(JSON.parse(readFileSync(t.file, 'utf8'))).toEqual({
+      format: 'cwm-projects',
+      version: 1,
+      projects: [],
+    });
+  });
+
+  it('rooty Claude Code w projekcie: istniejace i brakujace, stabilne rootId i etykiety bez sciezki', async () => {
+    const t = await project();
+    dir(join(t.repo, '.claude', 'skills'));
+    writeFileSync(join(t.repo, 'CLAUDE.md'), '# acme\n');
+    const found = await t.catalog.roots(t.added.id);
+    expect(found.ok).toBe(true);
+    if (!found.ok) return;
+    const byLabel = new Map(found.roots.map((r) => [r.label, r]));
+    expect(byLabel.get('acme-app: .claude/skills')).toMatchObject({ exists: true, kind: 'skills' });
+    expect(byLabel.get('acme-app: CLAUDE.md')).toMatchObject({
+      exists: true,
+      kind: 'global-instructions',
+    });
+    expect(byLabel.get('acme-app: .claude/agents')?.exists).toBe(false);
+    expect(JSON.stringify(found)).not.toContain(t.repo);
+
+    const skills = byLabel.get('acme-app: .claude/skills');
+    expect(t.catalog.resolvePath(skills?.rootId ?? '')).toBe(join(t.repo, '.claude', 'skills'));
+    expect(t.catalog.ownerOf(skills?.rootId ?? '')).toEqual({
+      projectId: t.added.id,
+      label: 'acme-app: .claude/skills',
+    });
+    // Ten sam rejestr i sol po restarcie daja te same identyfikatory.
+    const again = await new FsProjectCatalog(t.registry, SALT_PROMISE).roots(t.added.id);
+    expect(again.ok && again.roots.map((r) => r.rootId)).toEqual(found.roots.map((r) => r.rootId));
+    expect(await t.catalog.roots('proj-ffffffffffffffff')).toMatchObject({
+      ok: false,
+      code: 'unknown-project',
+    });
+  });
+
+  it('dowiazanie w sciezce roota wylacza ten root, a zmieniony katalog projektu wylacza projekt', async () => {
+    const t = await project();
+    const elsewhere = createTempTree('acme-elsewhere-');
+    if (!trySymlink(elsewhere, join(t.repo, '.claude'))) return;
+    const found = await t.catalog.roots(t.added.id);
+    expect(found.ok && found.roots.map((r) => r.label)).toEqual(['acme-app: CLAUDE.md']);
+
+    const before = await new FsProjectCatalog(t.registry, SALT_PROMISE).roots(t.added.id);
+    const claudeMd = before.ok ? before.roots[0]?.rootId : undefined;
+    expect(t.catalog.resolvePath(claudeMd ?? '')).toBe(join(t.repo, 'CLAUDE.md'));
+
+    // Katalog projektu podmieniony na dowiazanie: projekt jest niewazny, rooty nie rozwiazuja sie.
+    const moved = createTempTree('acme-moved-');
+    const t2 = await project();
+    const ids = await t2.catalog.roots(t2.added.id);
+    const anyRoot = ids.ok ? ids.roots[0]?.rootId : undefined;
+    rmSync(t2.repo, { recursive: true, force: true });
+    if (!trySymlink(moved, t2.repo)) return;
+    expect(await t2.catalog.roots(t2.added.id)).toMatchObject({
+      ok: false,
+      code: 'project-invalid',
+    });
+    expect(t2.catalog.resolvePath(anyRoot ?? '')).toBeNull();
   });
 });

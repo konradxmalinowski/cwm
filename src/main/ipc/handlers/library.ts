@@ -94,6 +94,7 @@ export function toDetailDto(item: LibraryItem): ItemDetailDto {
       body: item.content.body,
     },
     scope: item.classification.scope,
+    projectId: item.classification.projectId ?? null,
     assets: item.assets.map((a) => ({ relPath: a.relPath, size: a.sizeBytes })),
     // Tylko nazwa narzedzia: `importedFrom.path` jest sciezka bezwzgledna (regula 4).
     importedFromTool: item.source.importedFrom?.tool ?? null,
@@ -165,7 +166,10 @@ export function toItemDraft(dto: ItemDraftDto, previous: LoadedItem | null): Ite
     before !== null && before.content.description === dto.description
       ? before.content.descriptionOrigin
       : 'source';
-  const scope = dto.scope ?? before?.classification.scope;
+  // Przypiecie do projektu nie jest polem formularza: zostaje z zapisanego elementu, a z nim zakres
+  // `project`. Renderer nie moze ani przypiac elementu, ani go odpiac (ADR 0059).
+  const projectId = before?.classification.projectId;
+  const scope = projectId !== undefined ? 'project' : (dto.scope ?? before?.classification.scope);
 
   return {
     kind: dto.kind,
@@ -178,6 +182,7 @@ export function toItemDraft(dto: ItemDraftDto, previous: LoadedItem | null): Ite
           classification: {
             scope,
             secretFindings: before?.classification.secretFindings ?? [],
+            ...(projectId === undefined ? {} : { projectId }),
           },
         }),
   };

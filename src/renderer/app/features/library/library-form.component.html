@@ -147,14 +147,24 @@
         }
       </div>
 
-      <div class="field">
-        <label class="field__label" for="field-scope">Zakres</label>
-        <select id="field-scope" class="control" (change)="onScope($any($event.target).value)">
-          @for (s of scopes; track s.value) {
-            <option [value]="s.value" [selected]="scope() === s.value">{{ s.label }}</option>
-          }
-        </select>
-      </div>
+      @if (projectBound()) {
+        <div class="field" data-testid="field-scope-project">
+          <p class="field__label">Zakres</p>
+          <p class="field__hint">
+            Element jest przypięty do projektu, z którego go zaimportowano, i eksportuje się tylko
+            do niego. Formularz nie zmienia tego zakresu.
+          </p>
+        </div>
+      } @else {
+        <div class="field">
+          <label class="field__label" for="field-scope">Zakres</label>
+          <select id="field-scope" class="control" (change)="onScope($any($event.target).value)">
+            @for (s of scopes; track s.value) {
+              <option [value]="s.value" [selected]="scope() === s.value">{{ s.label }}</option>
+            }
+          </select>
+        </div>
+      }
 
       <div class="row-actions">
         <button type="submit" class="btn btn--primary" [disabled]="saving()" data-testid="save">

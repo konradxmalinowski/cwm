@@ -9,6 +9,18 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ### Added
 
+- Konfiguracje projektowe (ADR 0059, zastępuje ADR 0032). W kreatorze importu nowa sekcja "Z projektu": lista
+  projektów, do której katalog dodajesz w systemowym oknie wyboru (aplikacja odrzuca katalog domowy i jego katalogi
+  nadrzędne, katalogi systemowe, konfigurację narzędzi, dane aplikacji i dowiązania symboliczne), ze zmianą nazwy i
+  usuwaniem z listy. Import z projektu czyta `.claude/skills`, `.claude/agents`, `.claude/commands` i `CLAUDE.md` w
+  korzeniu repozytorium, a zaimportowane elementy są przypięte do projektu. W kreatorze eksportu każdy projekt jest
+  celem: element projektu trafia tylko do swojego repozytorium, nigdy do `~/.claude` ani do innego projektu, a element
+  globalny tylko po zaznaczeniu "Dołącz elementy globalne". Zapis do projektu ma ten sam plan, podgląd, kopię zapasową i
+  cofnięcie z Historii, ale zawsze kopiuje pliki zamiast tworzyć dowiązania i nie zmienia `.gitignore`. Zakres
+  sprawdzają dwa niezależne miejsca: planowanie i proces główny na gotowym planie. Synchronizacja i archiwum ZIP pomijają
+  elementy projektu. Renderer nigdy nie dostaje ścieżki projektu; nowe kanały IPC to `projects:list`, `projects:add`,
+  `projects:rename`, `projects:remove` i `import:scan-project`, a `export:plan` przyjmuje `projectId` i `includeGlobal`.
+
 - Import z repozytorium Git (ADR 0058). W kreatorze importu, pod listą lokalizacji, nowe źródło "Z repozytorium Git":
   adres https i opcjonalny ref (gałąź, tag albo pełny SHA). Aplikacja pobiera repozytorium tym samym, zahartowanym
   kodem co `cwm plugin add git` (płytkie pobranie, limity czasu, liczby plików i rozmiaru, bez hooków, submodułów,

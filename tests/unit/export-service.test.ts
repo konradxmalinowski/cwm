@@ -21,7 +21,7 @@ import {
   ZipExportService,
   type ZipExportDeps,
 } from '../../src/core/services/export/zip-export-service';
-import { root } from './import-fakes';
+import { FakeProjectCatalog, PROJECT_A, PROJECT_B, root } from './import-fakes';
 import { bytes, dec, draft } from './library-fakes';
 import { SECRETS, filler } from './security-secrets';
 import { emptyPlan, entry, exportHarness } from './export-fakes';
@@ -105,6 +105,132 @@ describe('ExportService.plan', () => {
     const h = await exportHarness();
     await h.service.plan('claude-code', [h.itemId, h.itemId]);
     expect(h.exporter.seen[0]).toHaveLength(1);
+  });
+});
+
+describe('ExportService: zakres projektu (ADR 0059)', () => {
+  const projectRoot = root('r-proj-a', 'claude-code', { label: 'acme-app: .claude/skills' });
+
+  async function scoped() {
+    const projects = new FakeProjectCatalog({
+      [PROJECT_A]: { name: 'acme-app', roots: [projectRoot] },
+    });
+    const applied: string[] = [];
+    const h = await exportHarness({
+      overrides: {
+        projects,
+        observer: {
+          applied: (report) => {
+            applied.push(report.planId);
+            return Promise.resolve();
+          },
+        },
+      },
+    });
+    const bound = await h.library.create(
+      draft({
+        slug: 'acme-bound',
+        classification: { scope: 'project', secretFindings: [], projectId: PROJECT_A },
+      }),
+    );
+    const other = await h.library.create(
+      draft({
+        slug: 'acme-other',
+        classification: { scope: 'project', secretFindings: [], projectId: PROJECT_B },
+      }),
+    );
+    return { ...h, projects, applied, boundId: bound.item.id, otherId: other.item.id };
+  }
+
+  it('katalog globalny odmawia elementu projektu, zanim zobaczy go eksporter', async () => {
+    const h = await scoped();
+    const report = await h.service.plan('claude-code', [h.itemId, h.boundId]);
+    expect(report.target).toEqual({ kind: 'global' });
+    expect(h.exporter.seen[0]?.map((l) => l.item.id)).toEqual([h.itemId]);
+    expect(report.plan.refusals.map((r) => r.itemId)).toEqual([h.boundId]);
+    expect(report.items.find((i) => i.itemId === h.boundId)?.projectId).toBe(PROJECT_A);
+  });
+
+  it('projekt: rooty z rejestru, zawsze kopia, obcy projekt odmowiony, globalny tylko jawnie', async () => {
+    const h = await scoped();
+    const target = { kind: 'project', projectId: PROJECT_A, includeGlobal: false } as const;
+    const report = await h.service.plan(
+      'claude-code',
+      [h.itemId, h.boundId, h.otherId],
+      [],
+      target,
+    );
+    expect(report.target).toMatchObject({
+      kind: 'project',
+      projectId: PROJECT_A,
+      name: 'acme-app',
+    });
+    expect(h.exporter.contexts[0]?.roots.map((r) => r.rootId)).toEqual(['r-proj-a']);
+    expect(h.exporter.contexts[0]?.materialization).toEqual({ directory: 'copy', file: 'copy' });
+    expect(h.exporter.seen[0]?.map((l) => l.item.id)).toEqual([h.boundId]);
+    expect(report.plan.refusals.map((r) => r.itemId).sort()).toEqual([h.itemId, h.otherId].sort());
+
+    const withGlobal = await h.service.plan('claude-code', [h.itemId, h.boundId], [], {
+      ...target,
+      includeGlobal: true,
+    });
+    expect(withGlobal.plan.refusals).toEqual([]);
+    expect(h.exporter.seen[1]?.map((l) => l.item.id)).toEqual([h.itemId, h.boundId]);
+  });
+
+  it('zapis do projektu nie zostawia stanu synchronizacji, zapis globalny tak', async () => {
+    const h = await scoped();
+    const project = await h.service.plan('claude-code', [h.boundId], [], {
+      kind: 'project',
+      projectId: PROJECT_A,
+      includeGlobal: false,
+    });
+    await h.service.apply(project.planId, true);
+    expect(h.applied).toEqual([]);
+    const global = await h.service.plan('claude-code', [h.itemId]);
+    await h.service.apply(global.planId, true);
+    expect(h.applied).toEqual([global.planId]);
+  });
+
+  it('sam element obcego projektu daje plan bez wpisow i bez wolania eksportera', async () => {
+    const h = await scoped();
+    const report = await h.service.plan('claude-code', [h.otherId], [], {
+      kind: 'project',
+      projectId: PROJECT_A,
+      includeGlobal: true,
+    });
+    expect(h.exporter.seen).toHaveLength(0);
+    expect(report.plan.entries).toEqual([]);
+    expect(report.plan.applicable).toBe(false);
+  });
+
+  it('nieznany projekt, katalog niewazny i brak rejestru to bledy z kodem', async () => {
+    const h = await scoped();
+    const unknown = { kind: 'project', projectId: PROJECT_B, includeGlobal: false } as const;
+    expect(await code(h.service.plan('claude-code', [h.itemId], [], unknown))).toBe(
+      'unknown-project',
+    );
+    h.projects.invalid.add(PROJECT_A);
+    expect(
+      await code(
+        h.service.plan('claude-code', [h.boundId], [], { ...unknown, projectId: PROJECT_A }),
+      ),
+    ).toBe('project-invalid');
+    const bare = await exportHarness();
+    expect(await code(bare.service.plan('claude-code', [bare.itemId], [], unknown))).toBe(
+      'project-unavailable',
+    );
+  });
+
+  it('cofniecie zapisu do projektu dostaje etykiety z rejestru i nie zaleznie od katalogu narzedzia', async () => {
+    const h = await scoped();
+    h.catalog.homes = new Set();
+    const report = await h.service.adopt(
+      emptyPlan({ entries: [entry({ rootId: 'r-proj-a', action: 'delete', content: null })] }),
+    );
+    expect(report.toolMissing).toBe(false);
+    expect(report.target).toMatchObject({ kind: 'project', projectId: PROJECT_A });
+    expect(report.rootLabels.get('r-proj-a')).toBe('acme-app: .claude/skills');
   });
 });
 

@@ -4,6 +4,7 @@ import type {
   GitSourceProvider,
   GitSourceRequest,
 } from '../../src/core/ports/git-source';
+import type { ProjectRootCatalog, ProjectRootsResult } from '../../src/core/ports/project-roots';
 import type { SourceReader } from '../../src/core/ports/source-reader';
 import type {
   DetectedRoot,
@@ -156,6 +157,34 @@ export class FakeGitProvider implements GitSourceProvider {
         },
       },
     };
+  }
+}
+
+export const PROJECT_A = 'proj-00000000000000aa';
+export const PROJECT_B = 'proj-00000000000000bb';
+
+/** Rejestr projektow bez dysku (ADR 0059): projekt to nazwa i lista rootow; reszta to `unknown-project`. */
+export class FakeProjectCatalog implements ProjectRootCatalog {
+  invalid = new Set<string>();
+  constructor(readonly projects: Record<string, { name: string; roots: DetectedRoot[] }>) {}
+
+  roots(projectId: string): Promise<ProjectRootsResult> {
+    const project = this.projects[projectId];
+    if (project === undefined) {
+      return Promise.resolve({ ok: false, code: 'unknown-project', message: 'Nie ma projektu.' });
+    }
+    if (this.invalid.has(projectId)) {
+      return Promise.resolve({ ok: false, code: 'project-invalid', message: 'Katalog zniknal.' });
+    }
+    return Promise.resolve({ ok: true, projectId, name: project.name, roots: project.roots });
+  }
+
+  ownerOf(rootId: string): { projectId: string; label: string } | null {
+    for (const [projectId, project] of Object.entries(this.projects)) {
+      const found = project.roots.find((r) => r.rootId === rootId);
+      if (found !== undefined) return { projectId, label: found.label };
+    }
+    return null;
   }
 }
 

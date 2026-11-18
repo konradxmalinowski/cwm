@@ -16,7 +16,12 @@ import type {
 } from '../../../shared/ipc/import-contract';
 import type { Result } from '../../../shared/ipc/library-contract';
 import type { IpcRegistry } from '../registry';
-import { parseApplyRequest, parseScanGitRequest, parseScanRequest } from './import-validation';
+import {
+  parseApplyRequest,
+  parseScanGitRequest,
+  parseScanProjectRequest,
+  parseScanRequest,
+} from './import-validation';
 import type { Parsed } from './library-validation';
 
 const UNAVAILABLE_MESSAGE =
@@ -99,6 +104,9 @@ function toScanDto(report: ScanReport): ImportScanDto {
             submodules: report.git.submodules,
           },
         }),
+    ...(report.project === null
+      ? {}
+      : { project: { projectId: report.project.projectId, name: report.project.name } }),
     candidates,
     skipped,
     librarySlugs,
@@ -159,6 +167,14 @@ export function registerImportHandlers(registry: IpcRegistry, deps: ImportHandle
     'import:scan-git',
     guarded(parseScanGitRequest, async (service, request) =>
       ok(toScanDto(await service.scanGit({ url: request.url, ref: request.ref ?? null }))),
+    ),
+  );
+
+  // Katalog projektu zna tylko rejestr w main; renderer podaje identyfikator (ADR 0059).
+  registry.register(
+    'import:scan-project',
+    guarded(parseScanProjectRequest, async (service, request) =>
+      ok(toScanDto(await service.scanProject(request.projectId))),
     ),
   );
 

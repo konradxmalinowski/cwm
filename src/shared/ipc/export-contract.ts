@@ -19,6 +19,12 @@ export interface ExportPlanRequest {
    * Brak pola albo konflikt bez decyzji: plan zostaje niewykonywalny.
    */
   resolutions?: { itemId: string; relPath: string; resolution: ConflictResolutionDto }[];
+  /**
+   * Cel "projekt" (ADR 0059): eksport do rootow projektu z rejestru zamiast do katalogu globalnego.
+   * Elementy innych projektow sa odmowione; globalne wchodza tylko z `includeGlobal: true`.
+   */
+  projectId?: string;
+  includeGlobal?: boolean;
 }
 
 export interface ItemVerdictDto {
@@ -61,6 +67,8 @@ export interface ExportPlanDto {
   tool: ToolIdDto;
   /** Brak katalogu glownego narzedzia: eksport odmowiony w calosci (decyzja 2026-11-03). */
   toolMissing: boolean;
+  /** Cel "projekt": identyfikator i nazwa projektu. Brak pola to katalog globalny narzedzia. */
+  project?: { projectId: string; name: string };
   verdicts: ItemVerdictDto[];
   entries: PlanEntryDto[];
   refusals: { itemId: string; kind: ItemKindDto; slug: string; reason: string }[];

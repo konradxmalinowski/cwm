@@ -100,6 +100,26 @@ export const CANDIDATES: readonly CandidateSpec[] = [
   },
 ];
 
+/**
+ * Rooty wzgledne do katalogu projektu z rejestru (ADR 0059). Ta sama tabela co wyzej, tylko z baza
+ * w katalogu projektu zamiast w katalogu domowym; adaptery i eksportery nie widza roznicy, bo format
+ * plikow jest ten sam. Na razie tylko Claude Code: `.claude/` i `CLAUDE.md` w korzeniu projektu.
+ * `.claude/settings.json` (hooki) celowo nie jest rootem: ten plik trzyma tez uprawnienia projektu.
+ */
+export interface ProjectCandidateSpec {
+  readonly tool: ToolId;
+  readonly kind: RootKind;
+  readonly segments: readonly string[];
+  readonly entry: EntryType;
+}
+
+export const PROJECT_CANDIDATES: readonly ProjectCandidateSpec[] = [
+  { tool: 'claude-code', kind: 'skills', segments: ['.claude', 'skills'], entry: 'directory' },
+  { tool: 'claude-code', kind: 'agents', segments: ['.claude', 'agents'], entry: 'directory' },
+  { tool: 'claude-code', kind: 'commands', segments: ['.claude', 'commands'], entry: 'directory' },
+  { tool: 'claude-code', kind: 'global-instructions', segments: ['CLAUDE.md'], entry: 'file' },
+];
+
 const BASE_DIR: Record<
   Base,
   { readonly dir: string; readonly override?: string; readonly overrideIsParent?: boolean }

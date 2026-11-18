@@ -264,15 +264,17 @@
   }
 }
 
-// Import z repozytorium Git: osobna sekcja pod lista lokalizacji, odsunieta od niej, zeby dwa
+// Import z projektu (ADR 0059) i z repozytorium Git: osobne sekcje pod lista lokalizacji, odsunieta od niej, zeby dwa
 // zrodla nie wygladaly jak jedna lista. Pola uzywaja wspolnych klas formularza (.form, .field).
-.import-git {
+.import-git,
+.import-source {
   margin-top: var(--s6);
   padding-top: var(--s5);
   border-top: 1px solid var(--hairline);
 }
 
-.import-git__lead {
+.import-git__lead,
+.import-source__lead {
   max-width: 72ch;
 }
 

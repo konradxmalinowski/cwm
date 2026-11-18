@@ -35,6 +35,11 @@ export interface ImportScanGitRequest {
   ref?: string;
 }
 
+/** `import:scan-project` (ADR 0059): skan rootow projektu z rejestru. Renderer podaje tylko identyfikator. */
+export interface ImportScanProjectRequest {
+  projectId: string;
+}
+
 export interface GitScanDto {
   /** Adres bez danych logowania. */
   url: string;
@@ -112,6 +117,8 @@ export interface ImportScanDto {
   scanToken: string;
   /** Tylko skan repozytorium Git: skad pochodza kandydaci. Brak pola to skan lokalizacji narzedzi. */
   git?: GitScanDto;
+  /** Tylko skan projektu: zaimportowane elementy zostana przypiete do tego projektu (ADR 0059). */
+  project?: { projectId: string; name: string };
   candidates: CandidateDto[];
   skipped: SkippedDto[];
   /** Nazwy zajete w bibliotece w chwili skanu, do zywej walidacji nowego sluga (ADR 0017). */

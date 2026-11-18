@@ -380,6 +380,7 @@ export class ZipExportService {
       title: item.content.title,
       revision: item.version.revision,
       contentHash: item.version.contentHash,
+      projectId: item.classification.projectId ?? null,
     }));
 
     const inputs: ZipFileInput[] = [];
@@ -413,6 +414,7 @@ export class ZipExportService {
     const report: ExportPlanReport = {
       planId,
       tool,
+      target: { kind: 'global' },
       toolMissing: false,
       plan,
       items,

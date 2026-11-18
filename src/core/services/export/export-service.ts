@@ -3,9 +3,16 @@ import type { ApplyReport, ExportDecision, WritePlan } from '../../model/plan';
 import type { Clock } from '../../ports/clock';
 import { cryptoRandomBytes } from '../../ports/id-generator';
 import type { SourceReader } from '../../ports/source-reader';
-import type { ExportContext, LocationCatalog, ToolExporter } from '../../ports/tool-adapter';
+import type { ProjectRootCatalog } from '../../ports/project-roots';
+import type {
+  DetectedRoot,
+  ExportContext,
+  LocationCatalog,
+  ToolExporter,
+} from '../../ports/tool-adapter';
 import type { LinkCapability, WriteGate } from '../../ports/write-gate';
 import type { LibraryService } from '../library/library-service';
+import { GLOBAL_TARGET, boundProject, scopeRefusal, type ExportTarget } from './project-scope';
 
 /**
  * Serwis eksportu (ARCHITECTURE 3.5). Plan zyje tylko w main pod `planId`: `apply` bierze go z
@@ -24,7 +31,11 @@ export type ExportErrorCode =
   /** Odmowa przy budowie archiwum ZIP (ADR 0054), np. `zip-too-large`. */
   | `zip-${string}`
   /** Odmowa `WriteGate` przed zapisem, np. `gate-plan-changed`. */
-  | `gate-${string}`;
+  | `gate-${string}`
+  /** Cel "projekt" (ADR 0059): projekt nieznany, katalog niewazny albo rejestr niedostepny. */
+  | 'unknown-project'
+  | 'project-invalid'
+  | 'project-unavailable';
 
 export class ExportError extends Error {
   constructor(
@@ -46,7 +57,10 @@ export interface ApplyObserver {
 
 export interface ExportServiceDeps {
   readonly catalog: LocationCatalog;
+  /** Rooty projektow (ADR 0059). Brak portu: cel "projekt" jest niedostepny. */
+  readonly projects?: ProjectRootCatalog;
   readonly exporters: readonly ToolExporter[];
+  /** Czytnik musi rozwiazywac rooty globalne i projektowe. */
   readonly reader: SourceReader;
   readonly library: Pick<LibraryService, 'get'>;
   readonly gate: WriteGate;
@@ -82,11 +96,24 @@ export interface PlannedItem {
   /** Rewizja i hash tresci elementu w chwili planu: podstawa stanu synchronizacji. */
   readonly revision: number;
   readonly contentHash: Sha256;
+  /** Projekt, do ktorego element jest przypiety; `null` dla elementu globalnego (ADR 0059). */
+  readonly projectId: string | null;
 }
+
+/** Cel planu: katalog globalny narzedzia albo projekt z rejestru (ADR 0059). */
+export type PlanTarget =
+  | { readonly kind: 'global' }
+  | {
+      readonly kind: 'project';
+      readonly projectId: string;
+      readonly name: string;
+      readonly includeGlobal: boolean;
+    };
 
 export interface ExportPlanReport {
   readonly planId: string;
   readonly tool: ToolId;
+  readonly target: PlanTarget;
   readonly toolMissing: boolean;
   readonly plan: WritePlan;
   readonly items: readonly PlannedItem[];
@@ -145,8 +172,9 @@ export class ExportService {
     tool: ToolId,
     itemIds: readonly string[],
     decisions: readonly ExportDecision[] = [],
+    target: ExportTarget = GLOBAL_TARGET,
   ): Promise<ExportPlanReport> {
-    const report = await this.preview(tool, itemIds, decisions);
+    const report = await this.preview(tool, itemIds, decisions, target);
     if (!report.toolMissing) this.remember(report);
     return report;
   }
@@ -156,6 +184,7 @@ export class ExportService {
     tool: ToolId,
     itemIds: readonly string[],
     decisions: readonly ExportDecision[] = [],
+    target: ExportTarget = GLOBAL_TARGET,
   ): Promise<ExportPlanReport> {
     const exporter = this.exporters.get(tool);
     if (exporter === undefined) {
@@ -178,15 +207,18 @@ export class ExportService {
       title: item.content.title,
       revision: item.version.revision,
       contentHash: item.version.contentHash,
+      projectId: boundProject(item),
     }));
 
-    const roots = (await this.deps.catalog.detect()).filter((r) => r.tool === tool);
+    const destination = await this.destination(tool, target);
+    const { roots, planTarget } = destination;
     const rootLabels = new Map(roots.map((r) => [r.rootId, r.label]));
     const planId = this.newPlanId();
     const now = this.deps.clock.now().toISOString();
 
-    // Narzedzia nie ma na dysku: eksport odmowiony w calosci (decyzja 2026-11-03).
-    if (!(await this.deps.catalog.toolHomeExists(tool))) {
+    // Narzedzia nie ma na dysku: eksport odmowiony w calosci (decyzja 2026-11-03). Projekt ma
+    // katalog sprawdzony przez rejestr, wiec ten warunek go nie dotyczy (ADR 0059).
+    if (planTarget.kind === 'global' && !(await this.deps.catalog.toolHomeExists(tool))) {
       const empty: WritePlan = {
         planId,
         tool,
@@ -198,22 +230,69 @@ export class ExportService {
         orphans: [],
         applicable: false,
       };
-      return { planId, tool, toolMissing: true, plan: empty, items, rootLabels, entryIds: [] };
+      return {
+        planId,
+        tool,
+        target: planTarget,
+        toolMissing: true,
+        plan: empty,
+        items,
+        rootLabels,
+        entryIds: [],
+      };
     }
 
-    const ctx: ExportContext = {
-      roots,
-      reader: this.deps.reader,
-      ...(decisions.length === 0 ? {} : { decisions }),
-      materialization: materializationFor(await this.deps.links()),
-    };
-    const drafted = await exporter.plan(loaded, ctx);
-    const probed = await this.deps.gate.probe({ ...drafted, planId, tool });
+    // Zakres egzekwowany przed eksporterem: element spoza celu nie dostaje nawet planu (ADR 0059).
+    const allowed: LoadedItem[] = [];
+    const refusals: WritePlan['refusals'][number][] = [];
+    for (const one of loaded) {
+      const reason = scopeRefusal(one.item, target);
+      if (reason === null) allowed.push(one);
+      else
+        refusals.push({
+          itemId: one.item.id,
+          kind: one.item.kind,
+          slug: one.item.identity.slug,
+          reason,
+        });
+    }
+
+    let drafted: WritePlan;
+    if (allowed.length === 0) {
+      drafted = {
+        planId,
+        tool,
+        createdAt: now,
+        entries: [],
+        verdicts: [],
+        refusals: [],
+        conflicts: [],
+        orphans: [],
+        applicable: false,
+      };
+    } else {
+      // Do repozytorium projektu idzie zawsze kopia: dowiazanie do katalogu danych aplikacji
+      // trafiloby do Gita jako sciezka z tego komputera (ADR 0059).
+      const materialization =
+        planTarget.kind === 'project'
+          ? { directory: 'copy' as const, file: 'copy' as const }
+          : materializationFor(await this.deps.links());
+      const ctx: ExportContext = {
+        roots,
+        reader: this.deps.reader,
+        ...(decisions.length === 0 ? {} : { decisions }),
+        materialization,
+      };
+      drafted = await exporter.plan(allowed, ctx);
+    }
+    const scoped: WritePlan = { ...drafted, refusals: [...refusals, ...drafted.refusals] };
+    const probed = await this.deps.gate.probe({ ...scoped, planId, tool });
     const plan: WritePlan = { ...probed, planId };
 
     const report: ExportPlanReport = {
       planId,
       tool,
+      target: planTarget,
       toolMissing: false,
       plan,
       items,
@@ -230,12 +309,23 @@ export class ExportService {
   async adopt(draft: WritePlan, items: readonly PlannedItem[] = []): Promise<ExportPlanReport> {
     const roots = (await this.deps.catalog.detect()).filter((r) => r.tool === draft.tool);
     const rootLabels = new Map(roots.map((r) => [r.rootId, r.label]));
+    // Cofniecie zapisu do projektu: etykiety i cel z rejestru projektow, bez warunku katalogu narzedzia.
+    let target: PlanTarget = { kind: 'global' };
+    for (const entry of draft.entries) {
+      const owner = this.deps.projects?.ownerOf(entry.rootId) ?? null;
+      if (owner === null) continue;
+      rootLabels.set(entry.rootId, owner.label);
+      if (target.kind === 'global') {
+        target = { kind: 'project', projectId: owner.projectId, name: '', includeGlobal: true };
+      }
+    }
     const planId = this.newPlanId();
-    if (!(await this.deps.catalog.toolHomeExists(draft.tool))) {
+    if (target.kind === 'global' && !(await this.deps.catalog.toolHomeExists(draft.tool))) {
       const plan: WritePlan = { ...draft, planId, applicable: false };
       return {
         planId,
         tool: draft.tool,
+        target,
         toolMissing: true,
         plan,
         items,
@@ -248,6 +338,7 @@ export class ExportService {
     const report: ExportPlanReport = {
       planId,
       tool: draft.tool,
+      target,
       toolMissing: false,
       plan,
       items,
@@ -316,10 +407,42 @@ export class ExportService {
       rolledBack: report.rolledBack,
     };
     // Zapis sie odbyl; nieudana notatka o stanie synchronizacji nie moze go zamienic w blad.
-    await this.deps.observer?.applied(stored.report, result).catch((error: unknown) => {
-      this.deps.onUnexpected?.(error);
-    });
+    // Stan synchronizacji dotyczy katalogow globalnych; zapis do projektu go nie dotyka (ADR 0059).
+    if (stored.report.target.kind === 'global') {
+      await this.deps.observer?.applied(stored.report, result).catch((error: unknown) => {
+        this.deps.onUnexpected?.(error);
+      });
+    }
     return result;
+  }
+
+  /** Rooty celu: katalog globalny z warstwy lokalizacji albo rooty projektu z rejestru. */
+  private async destination(
+    tool: ToolId,
+    target: ExportTarget,
+  ): Promise<{ roots: readonly DetectedRoot[]; planTarget: PlanTarget }> {
+    if (target.kind === 'global') {
+      const roots = (await this.deps.catalog.detect()).filter((r) => r.tool === tool);
+      return { roots, planTarget: { kind: 'global' } };
+    }
+    const projects = this.deps.projects;
+    if (projects === undefined) {
+      throw new ExportError(
+        'project-unavailable',
+        'Eksport do projektu jest niedostępny w tej instalacji.',
+      );
+    }
+    const found = await projects.roots(target.projectId);
+    if (!found.ok) throw new ExportError(found.code, found.message);
+    return {
+      roots: found.roots.filter((r) => r.tool === tool),
+      planTarget: {
+        kind: 'project',
+        projectId: found.projectId,
+        name: found.name,
+        includeGlobal: target.includeGlobal,
+      },
+    };
   }
 
   private remember(report: ExportPlanReport): void {

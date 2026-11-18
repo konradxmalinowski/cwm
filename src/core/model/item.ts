@@ -106,6 +106,16 @@ export interface ImportOrigin {
   readonly git?: GitOrigin;
 }
 
+export interface ItemClassification {
+  readonly scope: ItemScope;
+  readonly secretFindings: readonly SecretFinding[];
+  /**
+   * Projekt, do ktorego element jest przypiety (ADR 0059). Tylko przy `scope: 'project'`. Element
+   * przypiety trafia wylacznie do swojego projektu; sama etykieta `project` bez pola niczego nie wiaze.
+   */
+  readonly projectId?: string;
+}
+
 export interface ItemIdentity {
   readonly slug: string;
   readonly declaredName: string | null;
@@ -148,10 +158,7 @@ export interface LibraryItem {
     /** `null` dla elementu utworzonego w aplikacji, a nie zaimportowanego. */
     readonly importedFrom: ImportOrigin | null;
   };
-  readonly classification: {
-    readonly scope: ItemScope;
-    readonly secretFindings: readonly SecretFinding[];
-  };
+  readonly classification: ItemClassification;
   readonly version: ItemVersion;
 }
 

@@ -335,8 +335,9 @@ sequenceDiagram
   Note over FS: zrodlo nie jest modyfikowane ani raz
 ```
 
-Rooty pochodzą wyłącznie z tabeli `CANDIDATES` (`src/infra/platform/locations.ts`), czyli z
-konfiguracji globalnych (ADR 0032); renderer nie podaje żadnej ścieżki. `finalize` to opcjonalny
+Rooty pochodzą wyłącznie z tabel `CANDIDATES` (konfiguracje globalne) i `PROJECT_CANDIDATES` (rooty
+względne do katalogu projektu z rejestru, ADR 0059) w `src/infra/platform/locations.ts`; renderer nie
+podaje żadnej ścieżki, a katalog projektu wybiera natywne okno w main. `finalize` to opcjonalny
 krok adaptera po skanie wszystkich rootów jednego narzędzia, dla zależności między rootami (agent
 Codeksa w jednym katalogu, wpis rejestracyjny w `config.toml` w drugim). Błąd adaptera w
 `finalize` nie psuje wyniku pozostałych rootów.
@@ -586,7 +587,7 @@ poziom się porusza, a kolumna ostatnia mówi, co go przesuwa.
 | Agent | full, partial lub lossy | partial lub lossy | Claude: `partial` przy polach obcych, `lossy`, gdy brakuje `name` lub `description` i adapter je dopisuje. Codex: zawsze co najmniej `partial` (dwa miejsca docelowe: `agents/<nazwa>.toml` i wpis `[agents.<nazwa>]`; `model` przybliżany przez `model_reasoning_effort`, `color` i `memory` giną), `lossy` przy dopisywanych polach |
 | Komenda | full lub partial | lossy | Claude `partial` przy polach obcych. Codex nie ma komend: element staje się skillem, ginie wywołanie przez `/nazwa` (ADR 0021) |
 | Instrukcja globalna | partial | partial | Jeden plik na narzędzie (`CLAUDE.md`, `AGENTS.md`), więc zarządzany jest blok między markerami aplikacji, nie plik. Treść poza blokiem nie jest eksportowana ani kontrolowana (ADR 0025) |
-| Instrukcja projektowa | unsupported | unsupported | Leży w katalogu projektu, a MVP obsługuje tylko konfigurację globalną (ADR 0032) |
+| Instrukcja projektowa | unsupported | unsupported | Rodzaj `project-instruction` jest nieużywany. `CLAUDE.md` projektu wchodzi jako `global-instruction` z zakresem `project` i wraca tylko do swojego projektu (ADR 0059) |
 | Hook | full | partial | Codex jest zawsze `partial`: czyta tylko `hooks.<Zdarzenie>` i po cichu pomija nieznane zdarzenia. Dla zdarzenia spoza listy znanych Codeksowi adapter dodaje ostrzeżenie |
 | Serwer MCP (`tool-setting`) | unsupported | unsupported | Decyzja polityczna, nie techniczna (ADR 0020) |
 | Pliki pomocnicze skilla | w poziomie skilla | w poziomie skilla | Kopiowane razem z elementem, nie mają własnego werdyktu (`reference-asset` jest `unsupported` jako samodzielny element) |
@@ -751,8 +752,9 @@ Kanały z handlerem:
 | `import:detect` | brak | rooty z `rootId`, etykietą, `exists`, `active` |
 | `import:scan` | `{ rootIds }` | `scanToken`, kandydaci ze statusem i trafieniami klasyfikatora sekretów, pominięte, `librarySlugs` (zajęte nazwy do walidacji nowego sluga) |
 | `import:scan-git` | `{ url, ref? }` | jak `import:scan`, plus `git`: adres bez danych logowania, ref, pełny SHA commita i liczba submoduli; pobranie i skan w main, kopia znika po skanie (ADR 0058) |
+| `import:scan-project` | `{ projectId }` | jak `import:scan`, plus `project` (identyfikator i nazwa); kandydaci zostaną przypięci do projektu (ADR 0059) |
 | `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged?, renames? }` | zaimportowane, pominięte z powodem, błędy |
-| `export:plan` | `{ tool, itemIds }` | `planId`, `toolMissing`, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy, konflikty, sieroty, `applicable` |
+| `export:plan` | `{ tool, itemIds, resolutions?, projectId?, includeGlobal? }` | `planId`, `toolMissing`, `project` przy celu projektowym, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy (w tym odmowy zakresu), konflikty, sieroty, `applicable`; plan łamiący zakres to `scope-violation` (ADR 0059) |
 | `export:apply` | `{ planId, approved: true }` | raport per wpis, `backupId`, `verified`, `rolledBack` |
 | `export:zip-plan` | `{ tool, itemIds, confirmedItemIds? }` | jak `export:plan` (układ plików wybranego narzędzia, wpisy `create`) plus `zip`: `fileName`, `fileCount`, `sizeBytes` i `held` (elementy prywatne, z sekretem i projektowe z `confirmed`); archiwum jest budowane w main (ADR 0054) |
 | `export:zip-save` | `{ planId, approved: true }` | `{ status: 'saved', fileName, fileCount }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
@@ -768,6 +770,10 @@ Kanały z handlerem:
 | `retention:set` | `{ maxEntries, maxAgeDays, maxStoreMiB, confirmed? }` | zapisane ustawienia; zakresy sprawdza main, nieznane pola przepadają; włączenie albo zaostrzenie limitu bez `confirmed: true` to `confirmation-required` |
 | `retention:preview` | `{ settings? }` | suchy przebieg na podanych (albo zapisanych) limitach: `blocked`, liczby wpisów, obiektów i bajtów do usunięcia, `sizeLimitUnmet`, `ageRuleSkipped` i `previewToken` (jednorazowy, 5 minut) |
 | `retention:apply` | `{ confirmed: true, token }` | te same liczby po wykonaniu, `objectsFailed`; przerywa się (`plan-changed`), gdy przeliczony plan usuwa więcej niż podgląd |
+| `projects:list` | brak | `{ projects }`: identyfikator i nazwa, bez katalogu (ADR 0059) |
+| `projects:add` | brak (ładunek ignorowany) | `{ status: 'added', project }` albo `{ status: 'cancelled' }`; katalog wybiera natywne okno w main i sprawdza `checkChosenProjectDir` |
+| `projects:rename` | `{ projectId, name }` | projekt po zmianie nazwy |
+| `projects:remove` | `{ projectId }` | lista po usunięciu; pliki w repozytorium i elementy biblioteki zostają |
 
 Każdy kanał z `IPC_CHANNELS` ma handler; rejestr przy starcie odmawia startu, gdy któregoś brakuje
 (`IMPLEMENTED_CHANNELS` to ta sama lista). Kanały `diff:compute`, `profiles:list`, `profiles:save`,
@@ -792,6 +798,12 @@ przyjmuje tylko `planId`: ścieżkę wybiera main oknem zapisu, odmawia katalog�
 zapisuje atomowo i dopisuje do Historii wiersz `export-zip` (liczby, bez ścieżki). `export:zip-save` bierze
 `OperationLock` dopiero na czas zapisu pliku i wpisu w historii, nie na czas okna systemowego. Elementy prywatne i z trafieniem klasyfikatora sekretów dołączają się
 wyłącznie przez `confirmedItemIds`, a elementy projektowe nigdy.
+
+`projects:*` i `import:scan-project` (ADR 0059) nie przyjmują ścieżki. `projects:add` ignoruje ładunek i otwiera
+`dialog.showOpenDialog` w main; wynik przechodzi `checkChosenProjectDir` (bez katalogu domowego i jego rodziców,
+katalogów systemowych, konfiguracji narzędzi, danych aplikacji i dowiązań) i trafia do `userData/projects.json` jako
+`realpath`. Rooty projektu rozwiązuje `FsProjectCatalog`, który przy każdym użyciu sprawdza katalog od nowa, a zakres
+elementu sprawdzają dwa miejsca: planowanie w core i kontrola gotowego planu w main (`scope-violation`).
 
 `retention:*` (ADR 0056) przycinają historię i czyszczą content store. Żaden kanał nie przyjmuje ścieżki ani hashy:
 `retention:set` jest walidowany w main (trzy znane pola, liczby całkowite w zakresach), a `retention:apply` buduje wynik
@@ -1549,7 +1561,7 @@ przeniesione do ADR-ów. Otwarte zostaje jedno, z zapisem, który etap blokuje.
 | 2. Eksport instrukcji globalnych | Aplikacja zarządza blokiem między własnymi markerami i nie dotyka reszty pliku. Brak markerów oznacza dopisanie na końcu, nigdy przepisanie. Blok bez markerów wymaga decyzji użytkownika | 0025 |
 | 3. Tożsamość przy rozjechanej nazwie | Oba identyfikatory przechowywane, rozstrzygane per narzędzie przy eksporcie. Rozjechanie to ostrzeżenie, nie błąd | 0026 |
 | 4. Polityka usuwania przy synchronizacji | Aplikacja nigdy sama nie usuwa plików w narzędziu i nie dopisuje znaczników własności. Sieroty są tylko raportowane (`WritePlan.orphans`, `SyncStatusDto.orphans`), blok instrukcji bez elementu też. Usunięcie jest możliwe wyłącznie przy cofnięciu operacji aplikacji (`delete`, `restore-link`) | 0034 |
-| 5. Zakres projektowy w MVP | Tylko konfiguracje globalne: `~/.claude`, `~/.codex`, wspólny `~/.agents`. Konfiguracje projektowe po MVP; `scope: project` zostaje etykietą bez egzekwowania | 0032 |
+| 5. Zakres projektowy | W MVP tylko konfiguracje globalne (ADR 0032, zastąpione). Od ADR 0059: rejestr projektów z katalogiem z natywnego okna w main, rooty Claude Code w projekcie (`.claude/skills`, `agents`, `commands`, `CLAUDE.md`), element przypięty przez `classification.projectId` trafia tylko do swojego projektu, sprawdzane w core i w main | 0032, 0059 |
 | 7. Retencja historii | Pełne treści w content store adresowanym hashem, z deduplikacją. Limit i czyszczenie to polityka nad store'em, liczona z osiągalności, nie z wieku obiektu; domyślnie wyłączona | 0027, 0056 |
 | 8. Tworzenie drzewa narzędzia od zera | Eksport tylko do narzędzia z istniejącym katalogiem głównym (`~/.claude`, `~/.codex`, z `CLAUDE_CONFIG_DIR` i `CODEX_HOME`); brakujące podkatalogi i pliki w nim są tworzone. `~/.agents` nie przesądza o obecności Codeksa | 0033 |
 

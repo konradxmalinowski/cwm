@@ -65,6 +65,8 @@ export interface ItemDetailDto {
     body: string;
   };
   scope: 'public' | 'private' | 'project';
+  /** Projekt, do ktorego element jest przypiety (ADR 0059); zmienia go tylko import z projektu. */
+  projectId: string | null;
   assets: { relPath: string; size: number }[];
   /** Tylko nazwa narzedzia, nigdy sciezka zrodla importu. */
   importedFromTool: string | null;

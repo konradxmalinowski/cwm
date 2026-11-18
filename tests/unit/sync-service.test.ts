@@ -6,8 +6,8 @@ import { SourceReadError, type SourceReader } from '../../src/core/ports/source-
 import type { ToolExporter } from '../../src/core/ports/tool-adapter';
 import { sha256Bytes } from '../../src/core/services/normalization/hash';
 import { SyncError, SyncService } from '../../src/core/services/sync/sync-service';
-import { FakeCatalog, root } from './import-fakes';
-import { bytes } from './library-fakes';
+import { FakeCatalog, PROJECT_A, root } from './import-fakes';
+import { bytes, draft } from './library-fakes';
 import { exportHarness } from './export-fakes';
 
 class MemState implements SyncStateStore {
@@ -176,5 +176,22 @@ describe('SyncService: stany', () => {
   it('plan bez elementow jest odrzucony', async () => {
     const s = await setup();
     await expect(s.sync.plan(['claude-code'], [])).rejects.toMatchObject({ code: 'no-items' });
+  });
+
+  it('element przypiety do projektu nie ma stanu globalnego i nie wchodzi do planu (ADR 0059)', async () => {
+    const s = await setup();
+    const bound = await s.library.create(
+      draft({
+        slug: 'acme-bound',
+        classification: { scope: 'project', secretFindings: [], projectId: PROJECT_A },
+      }),
+    );
+    const status = await s.sync.status(['claude-code']);
+    expect(status.items.map((i) => i.itemId)).toEqual([s.itemId]);
+    const plan = await s.sync.plan(['claude-code'], [bound.item.id]);
+    expect(plan.plans).toEqual([]);
+    expect(plan.skipped).toEqual([
+      { itemId: bound.item.id, tool: 'claude-code', reason: expect.stringContaining('projektu') },
+    ]);
   });
 });

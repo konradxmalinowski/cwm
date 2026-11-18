@@ -150,6 +150,139 @@
       }
 
       <section
+        class="section import-source"
+        aria-labelledby="import-projects-title"
+        data-testid="import-projects"
+      >
+        <h2 class="section__title" id="import-projects-title">Z projektu</h2>
+        <p class="view__sub import-source__lead">
+          Czyta katalog <span class="mono">.claude/</span> (skille, agenci, komendy) i plik
+          <span class="mono">CLAUDE.md</span> w repozytorium projektu. Zaimportowane elementy
+          zostają przypięte do projektu: eksport zapisze je tylko do niego. Katalog wskazujesz w
+          oknie systemowym; katalog domowy, systemowy i dowiązanie symboliczne są odrzucane.
+        </p>
+        @if (projectsError(); as message) {
+          <div class="notice" role="alert" data-testid="import-projects-error">
+            <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+          </div>
+        }
+        <p class="view__sub" role="status" data-testid="import-projects-note">
+          {{ projectsNote() ?? '' }}
+        </p>
+        @let ps = projects();
+        @if (ps.status === 'loading') {
+          <p class="view__sub">Wczytuję listę projektów.</p>
+        } @else if (ps.status === 'error') {
+          <div class="notice" role="alert" data-testid="import-projects-load-error">
+            <p class="notice__text"><span class="notice__label">Błąd.</span> {{ ps.message }}</p>
+            <p class="row-actions">
+              <button type="button" class="btn" (click)="loadProjects()">Spróbuj ponownie</button>
+            </p>
+          </div>
+        } @else if (ps.projects.length === 0) {
+          <p class="view__sub" data-testid="import-projects-empty">
+            Lista projektów jest pusta. Dodaj katalog repozytorium, żeby importować z niego.
+          </p>
+        } @else {
+          <ul class="roots" data-testid="import-project-list">
+            @for (p of ps.projects; track p.projectId) {
+              <li class="root" data-testid="import-project" [attr.data-project]="p.projectId">
+                @if (projectRenaming() === p.projectId) {
+                  <form
+                    class="form"
+                    novalidate
+                    data-testid="import-project-rename-form"
+                    (submit)="saveProjectRename($event, p)"
+                  >
+                    <div class="field">
+                      <label class="field__label" [for]="projectNameId(p)">
+                        Nazwa projektu (wymagane)
+                      </label>
+                      <input
+                        class="control"
+                        type="text"
+                        autocomplete="off"
+                        aria-required="true"
+                        data-testid="import-project-name"
+                        [id]="projectNameId(p)"
+                        [value]="projectNameDraft()"
+                        [attr.aria-invalid]="projectNameError() !== null ? 'true' : null"
+                        [attr.aria-describedby]="
+                          projectNameError() !== null ? projectNameId(p) + '-error' : null
+                        "
+                        (input)="onProjectName($any($event.target).value)"
+                      />
+                      @if (projectNameError(); as message) {
+                        <p class="field__error" [id]="projectNameId(p) + '-error'">
+                          <strong>Błąd:</strong> {{ message }}
+                        </p>
+                      }
+                    </div>
+                    <div class="row-actions">
+                      <button
+                        type="submit"
+                        class="btn btn--small btn--primary"
+                        data-testid="import-project-rename-save"
+                      >
+                        Zapisz nazwę
+                      </button>
+                      <button type="button" class="btn btn--small" (click)="cancelProjectRename(p)">
+                        Anuluj
+                      </button>
+                    </div>
+                  </form>
+                } @else {
+                  <span class="root__main">
+                    <span class="root__label">{{ p.name }}</span>
+                  </span>
+                  <div class="row-actions">
+                    <button
+                      type="button"
+                      class="btn btn--small"
+                      data-testid="import-project-scan"
+                      (click)="startProjectScan(p)"
+                    >
+                      Przeskanuj<span class="sr-only"> projekt {{ p.name }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn--small"
+                      data-testid="import-project-rename"
+                      [id]="projectRenameButtonId(p)"
+                      (click)="beginProjectRename(p)"
+                    >
+                      Zmień nazwę<span class="sr-only"> projektu {{ p.name }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn--small"
+                      data-testid="import-project-remove"
+                      (click)="removeProject(p)"
+                    >
+                      Usuń z listy<span class="sr-only"> projekt {{ p.name }}</span>
+                    </button>
+                  </div>
+                }
+              </li>
+            }
+          </ul>
+        }
+        <p class="row-actions">
+          <button
+            type="button"
+            class="btn"
+            id="project-add"
+            data-testid="import-project-add"
+            [attr.aria-busy]="projectsBusy() ? 'true' : null"
+            (click)="addProject()"
+          >
+            Dodaj projekt
+          </button>
+          <span class="view__sub">Otwiera systemowe okno wyboru katalogu.</span>
+        </p>
+      </section>
+
+      <section
         class="section import-git"
         aria-labelledby="import-git-title"
         data-testid="import-git"
@@ -246,6 +379,9 @@
         @if (source() === 'git') {
           Pobieram repozytorium i czytam jego pliki. Zajmuje to zwykle kilka sekund, a przy wolnym
           łączu do kilku minut. Anulowanie odrzuca wynik, ale pobieranie w tle dokończy się samo.
+        } @else if (source() === 'project') {
+          Czytam katalog <span class="mono">.claude/</span> i plik
+          <span class="mono">CLAUDE.md</span> projektu.
         } @else {
           Czytam pliki z wybranych lokalizacji. Przy dużej konfiguracji może to chwilę potrwać.
         }
@@ -288,9 +424,24 @@
         </div>
       }
 
+      @if (projectSource(); as project) {
+        <div class="import-git__origin" data-testid="import-project-origin">
+          <p>
+            Z projektu „{{ project.name }}”. Zaimportowane elementy zostaną przypięte do tego
+            projektu: eksport zapisze je tylko do jego repozytorium, a synchronizacja z katalogami
+            globalnymi ich pominie.
+          </p>
+        </div>
+      }
+
       @if (candidates().length === 0) {
         <div class="empty" data-testid="import-no-candidates">
-          @if (gitSource() !== null) {
+          @if (projectSource() !== null) {
+            <p>
+              W projekcie nie ma skilli, agentów ani komend w <span class="mono">.claude/</span> ani
+              pliku <span class="mono">CLAUDE.md</span> w korzeniu. Wróć i wybierz inne źródło.
+            </p>
+          } @else if (gitSource() !== null) {
             <p>
               W repozytorium nie ma skilli, agentów ani komend w znanym układzie: katalogu
               <span class="mono">skills/</span>, <span class="mono">.claude/</span>,

@@ -175,6 +175,16 @@ async function firstUndo(page: Page): Promise<Locator> {
   return entry.locator('[data-testid="history-undo"]');
 }
 
+const SCENE_PROJECT = { projectId: 'proj-00000000000000aa', name: 'acme-app' };
+
+/** Rejestr projektow z jednym projektem, bez dysku i bez okna wyboru (ADR 0059). */
+async function mockProjects(c: SceneContext): Promise<void> {
+  await c.mock('projects:list', {
+    kind: 'reply',
+    result: { ok: true, value: { projects: [SCENE_PROJECT] } },
+  });
+}
+
 export const SCENES: readonly Scene[] = [
   // ======================= Biblioteka =======================
   {
@@ -751,6 +761,68 @@ export const SCENES: readonly Scene[] = [
     },
   },
   {
+    id: 'import/projekty',
+    view: 'Import',
+    world: 'seeded',
+    reach: async (c) => {
+      await mockProjects(c);
+      // Okno wyboru katalogu jest natywne: scena podmienia kanal, tak jak inne okna systemowe.
+      await c.mock('projects:add', {
+        kind: 'reply',
+        result: { ok: true, value: { status: 'cancelled' } },
+      });
+      await c.go('#/import');
+      await t(c.page, 'import-project').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(t(page, 'import-project')).toContainText('acme-app');
+      await expect(t(page, 'import-project-scan')).toBeEnabled();
+      await expect(t(page, 'import-project-rename')).toBeEnabled();
+      await expect(t(page, 'import-project-remove')).toBeEnabled();
+      await t(page, 'import-project-add').click();
+      await expect(t(page, 'import-projects-error')).toHaveCount(0);
+    },
+  },
+  {
+    id: 'import/projekt-nazwa',
+    view: 'Import',
+    world: 'seeded',
+    reach: async (c) => {
+      await mockProjects(c);
+      await c.go('#/import');
+      await t(c.page, 'import-project-rename').waitFor();
+      await t(c.page, 'import-project-rename').click();
+      await t(c.page, 'import-project-name').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(t(page, 'import-project-name')).toHaveValue('acme-app');
+      await expect(t(page, 'import-project-name')).toBeFocused();
+      await expect(t(page, 'import-project-rename-save')).toBeEnabled();
+    },
+  },
+  {
+    id: 'import/projekt-podglad',
+    view: 'Import',
+    world: 'seeded',
+    reach: async (c) => {
+      const scan = await realScan(c.page);
+      await mockProjects(c);
+      await c.mock('import:scan-project', {
+        kind: 'reply',
+        result: { ok: true, value: { ...scan, project: SCENE_PROJECT } },
+      });
+      await c.go('#/import');
+      await t(c.page, 'import-project-scan').waitFor();
+      await t(c.page, 'import-project-scan').click();
+      await t(c.page, 'import-project-origin').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(t(page, 'import-project-origin')).toContainText('acme-app');
+      await expect(t(page, 'import-project-origin')).toContainText('przypięte do tego projektu');
+      await expect(t(page, 'import-apply')).toBeEnabled();
+    },
+  },
+  {
     id: 'import/podglad',
     view: 'Import',
     state: 'ostrzezenie',
@@ -957,6 +1029,25 @@ export const SCENES: readonly Scene[] = [
         'Wybierz narzędzie i elementy, które trafią do jego konfiguracji.',
       );
       await expect(t(page, 'export-prepare')).toBeDisabled();
+    },
+  },
+  {
+    id: 'eksport/projekt',
+    view: 'Eksport',
+    world: 'seeded',
+    reach: async (c) => {
+      await mockProjects(c);
+      await c.go('#/eksport');
+      await t(c.page, 'export-items').waitFor();
+      await t(c.page, 'export-tool-project').check();
+      await t(c.page, 'export-project-target').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(t(page, 'export-tool-project')).toBeChecked();
+      await expect(t(page, 'export-project-target')).toContainText('Git zobaczy je jako zmiany');
+      await expect(t(page, 'export-include-global')).not.toBeChecked();
+      await t(page, 'export-include-global').check();
+      await expect(t(page, 'export-include-global')).toBeChecked();
     },
   },
   {

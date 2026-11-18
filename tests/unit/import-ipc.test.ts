@@ -9,6 +9,9 @@ import type { Result } from '../../src/shared/ipc/library-contract';
 import {
   FakeAdapter,
   FakeGitProvider,
+  FakeProjectCatalog,
+  PROJECT_A,
+  PROJECT_B,
   GIT_COMMIT,
   candidate,
   importHarness,
@@ -44,12 +47,13 @@ function harness() {
 }
 
 describe('kanaly import:*', () => {
-  it('import:plan zniknal z listy, a cztery pozostale sa zaimplementowane', () => {
+  it('import:plan zniknal z listy, a piec pozostalych jest zaimplementowanych', () => {
     expect(IPC_CHANNELS).not.toContain('import:plan' as never);
     for (const channel of [
       'import:detect',
       'import:scan',
       'import:scan-git',
+      'import:scan-project',
       'import:apply',
     ] as const) {
       expect(IPC_CHANNELS).toContain(channel);
@@ -57,13 +61,42 @@ describe('kanaly import:*', () => {
     }
   });
 
-  it('rejestruje dokladnie cztery kanaly', () => {
+  it('rejestruje dokladnie piec kanalow', () => {
     expect(wire(null).registry.list()).toEqual([
       'import:apply',
       'import:detect',
       'import:scan',
       'import:scan-git',
+      'import:scan-project',
     ]);
+  });
+
+  it('import:scan-project przyjmuje tylko identyfikator projektu i oddaje projekt bez sciezki (ADR 0059)', async () => {
+    const projectRoot = root('r-proj-a', 'claude-code', { label: 'acme-app: .claude/skills' });
+    const adapter = new FakeAdapter('claude-code', ['skills'], {
+      'r-proj-a': [candidate({ slug: 'acme-lint', root: projectRoot })],
+    });
+    const projects = new FakeProjectCatalog({
+      [PROJECT_A]: { name: 'acme-app', roots: [projectRoot] },
+    });
+    const { call } = wire(importHarness([claude], [adapter], { projects }).service);
+
+    for (const payload of [undefined, {}, { projectId: '/repo/acme' }, { projectId: 'proj-xyz' }]) {
+      expect(await call('import:scan-project', payload)).toMatchObject({
+        ok: false,
+        error: { code: 'invalid-request' },
+      });
+    }
+    expect(await call('import:scan-project', { projectId: PROJECT_B })).toMatchObject({
+      ok: false,
+      error: { code: 'unknown-project' },
+    });
+    const scanned = await call<ImportScanDto>('import:scan-project', { projectId: PROJECT_A });
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect(scanned.value.project).toEqual({ projectId: PROJECT_A, name: 'acme-app' });
+    expect(scanned.value.candidates[0]?.rootLabel).toBe('acme-app: .claude/skills');
+    expect(JSON.stringify(scanned.value)).not.toContain('r-proj-a');
   });
 
   it('detect zwraca rooty bez sciezki, scan i apply przechodza caly przeplyw', async () => {

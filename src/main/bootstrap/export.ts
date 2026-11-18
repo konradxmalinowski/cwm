@@ -18,6 +18,7 @@ import { FsWriteGate } from '../../infra/fs/write-gate';
 import { FsObjectStore } from '../../infra/store/object-store';
 import { systemEnv } from '../../infra/platform/env';
 import { FsLocationCatalog } from '../../infra/platform/locations';
+import type { FsProjectCatalog } from '../../infra/platform/project-locations';
 import { FsSourceReader } from '../../infra/source/fs-source-reader';
 import { createAdapters } from './adapters';
 import { createExporters } from './exporters';
@@ -33,6 +34,10 @@ export interface ExportBootstrapDeps {
   readonly indexStore: () => IndexStore | null;
   /** Wersja aplikacji do manifestu archiwum ZIP. */
   readonly appVersion: string;
+  /** Sol `rootId` wspolna z rejestrem projektow; bez niej wczytywana tutaj. */
+  readonly rootSalt?: Promise<Uint8Array>;
+  /** Rooty projektow (ADR 0059): eksport do projektu i cofniecie takiego zapisu. */
+  readonly projects?: FsProjectCatalog;
 }
 
 /**
@@ -78,9 +83,12 @@ export async function startExport(
   deps: ExportBootstrapDeps,
 ): Promise<ExportStartup> {
   const catalog = new FsLocationCatalog(systemEnv(), {
-    salt: await loadRootSalt(deps.userDataDir),
+    salt: await (deps.rootSalt ?? loadRootSalt(deps.userDataDir)),
   });
-  const resolvePath: RootPathResolver = (rootId) => catalog.resolvePath(rootId);
+  const { projects } = deps;
+  // Bramka, czytnik i Historia rozwiazuja rooty globalne i projektowe jednym resolverem.
+  const resolvePath: RootPathResolver = (rootId) =>
+    catalog.resolvePath(rootId) ?? projects?.resolvePath(rootId) ?? null;
   const linkMode = new LinkCapabilityDetector(deps.userDataDir);
   const gate = createWriteGate(resolvePath, deps, linkMode);
   const reader = new FsSourceReader(resolvePath);
@@ -89,6 +97,7 @@ export async function startExport(
   const exporters = createExporters(adapters);
   const exports = new ExportService({
     catalog,
+    ...(projects === undefined ? {} : { projects }),
     exporters,
     reader,
     library,
