@@ -53,7 +53,7 @@ interface FrontmatterRegion {
 
 function region(text: string): FrontmatterRegion | null {
   const lines = text.split('\n');
-  if ((lines[0] ?? '').replace(/^﻿/, '').trimEnd() !== '---') return null;
+  if ((lines[0] ?? '').replace(/^\uFEFF/, '').trimEnd() !== '---') return null;
   for (let i = 1; i < lines.length; i++) {
     const line = (lines[i] ?? '').trimEnd();
     if (line === '---' || line === '...') return { start: 1, end: i, lines };
