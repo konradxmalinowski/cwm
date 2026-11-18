@@ -190,8 +190,7 @@ describe('SyncService: stany', () => {
     expect(status.items.map((i) => i.itemId)).toEqual([s.itemId]);
     const plan = await s.sync.plan(['claude-code'], [bound.item.id]);
     expect(plan.plans).toEqual([]);
-    expect(plan.skipped).toEqual([
-      { itemId: bound.item.id, tool: 'claude-code', reason: expect.stringContaining('projektu') },
-    ]);
+    expect(plan.skipped.map((x) => [x.itemId, x.tool])).toEqual([[bound.item.id, 'claude-code']]);
+    expect(plan.skipped[0]?.reason).toContain('projektu');
   });
 });
