@@ -48,8 +48,9 @@ import {
 
 /**
  * Jedyne miejsce w CWM, ktore siega do sieci i uruchamia `git` (ADR 0048). Wolane tylko z
- * `cwm plugin add git|fetch|update`; `cwm start`, `cwm diff` i `cwm sync` tego pliku nie importuja
- * (regula lintu i proba w `scripts/verify-boundaries.mjs`).
+ * `cwm plugin add git|fetch|update` i z importu z repozytorium Git w aplikacji (ADR 0058, jedyny
+ * importer to `infra/git-import/git-import-source.ts`); `cwm start`, `cwm diff` i `cwm sync` tego
+ * pliku nie importuja (regula lintu i proba w `scripts/verify-boundaries.mjs`).
  *
  * `git` idzie po sciezce bezwzglednej (po `realpath`, z kontrola wlasciciela i uprawnien jak plik
  * silnika), ze srodowiskiem od zera i opcjami `-c` z `core/cwm/git-source.ts`. Pobranie to `fetch
@@ -81,7 +82,14 @@ export type GitFetchResult =
       /** Kopia z tym commitem i ta sama trescia juz byla na dysku. */
       readonly reused: boolean;
     }
-  | { readonly ok: false; readonly message: string };
+  | { readonly ok: false; readonly message: string; readonly kind?: GitFetchFailureKind };
+
+/**
+ * Skad pochodzi odmowa: `git-missing` (brak uruchamialnego `git`), `process` (proces `git` zawiodl albo
+ * zostal przerwany, komunikat moze zawierac wyjscie serwera i sciezke katalogu roboczego) i `content`
+ * (kontrola CWM odrzucila adres, ref albo tresc commita; komunikat jest wlasny i bez sciezek). Brak pola to `content`.
+ */
+export type GitFetchFailureKind = 'git-missing' | 'process' | 'content';
 
 export interface GitFetchInput {
   readonly layout: CwmLayout;
@@ -307,7 +315,7 @@ export async function fetchGitSource(input: GitFetchInput): Promise<GitFetchResu
     if (refProblem !== null) return fail(refProblem.replace(/\.$/, ''));
   }
   const git = await resolveGit();
-  if (!git.ok) return fail(git.reason);
+  if (!git.ok) return { ok: false, message: git.reason, kind: 'git-missing' };
 
   const scope = sourcesScope(input.layout.home, gitSourcesRoot(input.layout));
   await ensureScopedDirectory(scope, gitSourcesRoot(input.layout));
@@ -341,10 +349,11 @@ async function fetchInto(
   };
   const work = join(scratch, 'work');
 
-  const describe = (what: string, run: RunResult): GitFetchResult =>
-    fail(
-      `${what}: ${run.aborted ?? (tidy(run.stderr) || `git zakonczyl sie kodem ${run.code ?? '?'}`)}`,
-    );
+  const describe = (what: string, run: RunResult): GitFetchResult => ({
+    ok: false,
+    kind: 'process',
+    message: `${what}: ${run.aborted ?? (tidy(run.stderr) || `git zakonczyl sie kodem ${run.code ?? '?'}`)}`,
+  });
 
   // Format skrotow repozytorium roboczego musi byc taki jak na serwerze. Przypiety commit go wskazuje
   // (40 albo 64 znaki); bez niego proba SHA-1, a SHA-256 po komunikacie o niezgodnych algorytmach.

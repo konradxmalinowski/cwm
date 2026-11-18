@@ -261,7 +261,11 @@ export class LibraryService {
     });
   }
 
-  async update(id: string, draft: ItemDraft): Promise<MutationResult> {
+  async update(
+    id: string,
+    draft: ItemDraft,
+    options?: { readonly note?: string },
+  ): Promise<MutationResult> {
     return this.exclusive(async () => {
       const tree = await this.readCompleteTree(id);
       const previous = decodeStoredItem(tree.files, id);
@@ -277,6 +281,7 @@ export class LibraryService {
         ...identityOf(built.loaded.item),
         before,
         after: built.encoded.state,
+        ...(options?.note === undefined ? {} : { note: options.note }),
       });
       return {
         item: built.loaded.item,

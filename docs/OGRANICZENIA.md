@@ -183,3 +183,8 @@ Po cofnięciu pierwszego eksportu skilla kopia w `materialized/` zostaje w katal
   zrobiona w narzędziu jest wykrywana tylko po tym, czy plik istnieje, nie po jego treści.
 - Zmiana samej wartości sekretu jest niewidoczna w diffie, bo obie strony pokazują ten sam znacznik.
 - Elementy z potencjalnym sekretem są przy imporcie domyślnie odznaczone.
+- Import z repozytorium Git (ADR 0058) obsługuje tylko publiczne repozytoria przez https. Repozytorium
+  z dowiązaniem symbolicznym w commicie jest odrzucane w całości, a limity (500 plików, 1 MiB na plik,
+  10 MiB razem) dotyczą całego repozytorium. Z repozytorium nie wchodzą instrukcje globalne ani hooki,
+  submoduły nie są pobierane. Wymaga programu `git` w PATH; na Windowsie funkcja kończy się komunikatem
+  o jego braku. Anulowanie skanu odrzuca wynik, ale pobieranie dokańcza się w tle.

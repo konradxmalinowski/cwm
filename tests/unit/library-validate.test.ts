@@ -342,6 +342,44 @@ describe('niezaufany item.json z dysku', () => {
     ).toBe('item-shape-invalid');
   });
 
+  it('pochodzenie z repozytorium Git: adres bez danych logowania i pelny commit przechodza, reszta nie', () => {
+    const origin = {
+      tool: 'claude-code',
+      rootId: 'git-root-1',
+      path: 'acme-review/SKILL.md',
+      at: '2026-11-18T10:00:00.000Z',
+    };
+    const withGit = (git: unknown): Record<string, unknown> => ({
+      ...valid(),
+      source: { snapshots: [], importedFrom: { ...origin, git } },
+    });
+    const good = {
+      url: 'https://example.com/acme/skills.git',
+      commit: 'a'.repeat(40),
+      ref: 'main',
+    };
+    expect(reasonOf(withGit(good))).toBe('ok');
+    expect(reasonOf(withGit({ ...good, ref: null, commit: 'b'.repeat(64) }))).toBe('ok');
+    const meta = parseItemMeta(withGit(good), ID, 'disk');
+    expect(meta.source.importedFrom?.git).toEqual(good);
+    // Starszy zapis bez pola `git` nadal sie wczytuje.
+    expect(parseItemMeta(withGit(undefined), ID, 'disk').source.importedFrom?.git).toBeUndefined();
+
+    for (const bad of [
+      { ...good, url: 'https://acme:haslo@example.com/acme/skills.git' },
+      { ...good, url: 'https://example.com/acme/skills.git?token=x' },
+      { ...good, url: 'ssh://example.com/acme/skills.git' },
+      { ...good, url: 'file:///srv/skills.git' },
+      { ...good, commit: 'abc1234' },
+      { ...good, ref: '-x' },
+      { ...good, ref: 5 },
+      'https://example.com/acme/skills.git',
+      null,
+    ]) {
+      expect(reasonOf(withGit(bad)), JSON.stringify(bad)).toBe('item-shape-invalid');
+    }
+  });
+
   it('klucz __proto__ w unmappedKeys nie zmienia prototypu', () => {
     const snapshot = {
       tool: 'codex',

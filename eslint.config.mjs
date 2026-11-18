@@ -273,12 +273,16 @@ export default tseslint.config(
     },
   },
 
-  // Siec i `git` tylko w `cwm plugin add git|fetch|update` (ADR 0048): `git-fetch.ts` importuje wylacznie
-  // polecenie `plugin` (i on sam). `cwm start`, `cwm diff`, `cwm sync` i reszta `src/` nie maja do
+  // Siec i `git` tylko w `cwm plugin add git|fetch|update` (ADR 0048) i w imporcie z repozytorium Git w
+  // aplikacji (ADR 0058): `git-fetch.ts` importuja wylacznie polecenie `plugin` i `git-import-source.ts` (i on sam). `cwm start`, `cwm diff`, `cwm sync` i reszta `src/` nie maja do
   // niego drogi. Blok powtarza strefy warstw, bo regula z pozniejszego bloku zastepuje wczesniejsza.
   {
     files: ['src/**/*.ts'],
-    ignores: ['src/cli/commands/plugin.ts', 'src/infra/cwm/git-fetch.ts'],
+    ignores: [
+      'src/cli/commands/plugin.ts',
+      'src/infra/cwm/git-fetch.ts',
+      'src/infra/git-import/git-import-source.ts',
+    ],
     rules: {
       'import-x/no-restricted-paths': [
         'error',
@@ -289,7 +293,7 @@ export default tseslint.config(
               target: './src',
               from: './src/infra/cwm/git-fetch.ts',
               message:
-                'git-fetch.ts (siec i git) tylko z cwm plugin add|fetch|update (ADR 0048): start, diff i sync go nie importuja.',
+                'git-fetch.ts (siec i git) tylko z cwm plugin add|fetch|update i z importu z repozytorium Git (ADR 0048, 0058): start, diff i sync go nie importuja.',
             },
           ],
         },

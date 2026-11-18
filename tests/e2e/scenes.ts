@@ -668,6 +668,89 @@ export const SCENES: readonly Scene[] = [
     },
   },
   {
+    id: 'import/git-walidacja',
+    view: 'Import',
+    state: 'blad',
+    world: 'seeded',
+    reach: async (c) => {
+      await c.go('#/import');
+      await t(c.page, 'import-git-scan').waitFor();
+      await t(c.page, 'import-git-url').fill('https://acme:haslo@example.com/acme/skills.git');
+      await t(c.page, 'import-git-scan').click();
+      await t(c.page, 'import-git-url-error').waitFor();
+    },
+    assert: async ({ page }) => {
+      const field = t(page, 'import-git-url');
+      await expect(field).toHaveAttribute('aria-invalid', 'true');
+      await expect(field).toBeFocused();
+      await expect(t(page, 'import-git-url-error')).toContainText('nie może zawierać nazwy');
+      // Komunikat nie powtarza adresu, bo mogl zawierac haslo.
+      await expect(t(page, 'import-git-url-error')).not.toContainText('haslo');
+    },
+  },
+  {
+    id: 'import/git-blad',
+    view: 'Import',
+    state: 'blad',
+    world: 'seeded',
+    reach: async (c) => {
+      await c.mock('import:scan-git', {
+        kind: 'fail',
+        message: 'Import z repozytorium Git wymaga programu git. Nie znaleziono go w PATH.',
+      });
+      await c.go('#/import');
+      await t(c.page, 'import-git-scan').waitFor();
+      await t(c.page, 'import-git-url').fill('https://example.com/acme/skills.git');
+      await t(c.page, 'import-git-ref').fill('main');
+      await t(c.page, 'import-git-scan').click();
+      await t(c.page, 'import-git-error').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(t(page, 'import-git-error')).toContainText('wymaga programu git');
+      // Pola zostaja wypelnione, a lokalne skanowanie dalej dziala.
+      await expect(t(page, 'import-git-url')).toHaveValue('https://example.com/acme/skills.git');
+      await expect(t(page, 'import-git-ref')).toHaveValue('main');
+      await expect(t(page, 'import-scan')).toBeEnabled();
+    },
+  },
+  {
+    id: 'import/git-podglad',
+    view: 'Import',
+    world: 'seeded',
+    reach: async (c) => {
+      const scan = await realScan(c.page);
+      await c.mock('import:scan-git', {
+        kind: 'reply',
+        result: {
+          ok: true,
+          value: {
+            ...scan,
+            git: {
+              url: 'https://example.com/acme/skills.git',
+              ref: 'main',
+              commit: 'a'.repeat(40),
+              submodules: 2,
+            },
+          },
+        },
+      });
+      await c.go('#/import');
+      await t(c.page, 'import-git-scan').waitFor();
+      await t(c.page, 'import-git-url').fill('https://example.com/acme/skills.git');
+      await t(c.page, 'import-git-ref').fill('main');
+      await t(c.page, 'import-git-scan').click();
+      await t(c.page, 'import-git-origin').waitFor();
+    },
+    assert: async ({ page }) => {
+      await expect(t(page, 'import-git-origin')).toContainText(
+        'https://example.com/acme/skills.git',
+      );
+      await expect(t(page, 'import-git-origin')).toContainText('aaaaaaaaaaaa');
+      await expect(t(page, 'import-git-origin')).toContainText('2 submoduły');
+      await expect(t(page, 'import-apply')).toBeEnabled();
+    },
+  },
+  {
     id: 'import/podglad',
     view: 'Import',
     state: 'ostrzezenie',

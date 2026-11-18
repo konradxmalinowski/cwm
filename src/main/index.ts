@@ -329,7 +329,7 @@ function start(): void {
     if (library.failure !== undefined)
       log().error('[cwm] biblioteka niedostepna:', library.failure);
     if (library.service !== null) {
-      importService = startImport(library.service, logImportError);
+      importService = startImport(library.service, userData, logImportError);
       void startExport(library.service, logExportError, {
         userDataDir: userData,
         indexStore: () => indexState.store,

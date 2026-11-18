@@ -1,25 +1,39 @@
+import { join } from 'node:path';
+
 import { systemClock } from '../../core/ports/clock';
 import type { LibraryService } from '../../core/services/library/library-service';
 import { ImportService } from '../../core/services/import/import-service';
+import { FsGitSourceProvider } from '../../infra/git-import/git-import-source';
 import { systemEnv } from '../../infra/platform/env';
 import { FsLocationCatalog } from '../../infra/platform/locations';
 import { FsSourceReader } from '../../infra/source/fs-source-reader';
 import { createAdapters } from './adapters';
 
+/** Katalog roboczy importu z repozytorium Git: pod `userData`, 0700, zawartosc tylko na czas skanu (ADR 0058). */
+export const GIT_IMPORT_DIR_NAME = 'git-import';
+
 /**
  * Sklada import: katalog lokalizacji, czytnik zrodla (tylko do odczytu) i serwis. Mapa
- * `rootId` na sciezke zyje w katalogu i nie wychodzi poza ten plik.
+ * `rootId` na sciezke zyje w katalogu i nie wychodzi poza ten plik. Pobieranie z repozytorium Git
+ * dostaje katalog roboczy pod `userData`; pozostalosci po przerwanym imporcie znikaja przy starcie.
  */
 export function startImport(
   library: LibraryService,
+  userDataDir: string,
   logUnexpected: (error: unknown) => void,
 ): ImportService {
   const catalog = new FsLocationCatalog(systemEnv());
   const reader = new FsSourceReader((rootId) => catalog.resolvePath(rootId));
+  const git = new FsGitSourceProvider({
+    workDir: join(userDataDir, GIT_IMPORT_DIR_NAME),
+    onUnexpected: logUnexpected,
+  });
+  void git.purge();
   return new ImportService({
     catalog,
     adapters: createAdapters(),
     reader,
+    git,
     library,
     clock: systemClock,
     onUnexpected: logUnexpected,

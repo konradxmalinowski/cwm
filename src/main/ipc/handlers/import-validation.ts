@@ -1,4 +1,9 @@
-import type { ImportApplyRequest, ImportScanRequest } from '../../../shared/ipc/import-contract';
+import { gitRefInputProblem, gitUrlInputProblem } from '../../../core/services/import/git-input';
+import type {
+  ImportApplyRequest,
+  ImportScanGitRequest,
+  ImportScanRequest,
+} from '../../../shared/ipc/import-contract';
 import type { Parsed } from './library-validation';
 
 /**
@@ -39,6 +44,27 @@ export function parseScanRequest(payload: unknown): Parsed<ImportScanRequest> {
   const rootIds = idList(payload['rootIds'], MAX_ROOTS);
   if (rootIds === null || rootIds.length === 0) return fail('rootIds');
   return { ok: true, value: { rootIds } };
+}
+
+/**
+ * `import:scan-git`: adres i ref sa tekstem z pola formularza, wiec main sprawdza je od nowa tym samym
+ * kodem co renderer. Nazwa schematu, danych logowania, zapytania i formy kanonicznej jest sprawdzana tu,
+ * a nie w rendererze, bo renderer nie jest granica zaufania. Komunikat nigdy nie zawiera adresu.
+ */
+export function parseScanGitRequest(payload: unknown): Parsed<ImportScanGitRequest> {
+  if (!isRecord(payload)) return fail();
+  const rawUrl = payload['url'];
+  if (typeof rawUrl !== 'string') return fail('url');
+  const url = rawUrl.trim();
+  const urlProblem = gitUrlInputProblem(url);
+  if (urlProblem !== null) return { ok: false, message: urlProblem };
+  const rawRef = payload['ref'];
+  if (rawRef === undefined) return { ok: true, value: { url } };
+  if (typeof rawRef !== 'string') return fail('ref');
+  const ref = rawRef.trim();
+  const refProblem = gitRefInputProblem(ref);
+  if (refProblem !== null) return { ok: false, message: refProblem };
+  return { ok: true, value: ref === '' ? { url } : { url, ref } };
 }
 
 /**

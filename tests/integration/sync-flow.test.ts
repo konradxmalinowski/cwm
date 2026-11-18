@@ -139,6 +139,39 @@ describe('synchronizacja na plikach', () => {
     s.index.close();
   });
 
+  it('historia: import z repozytorium Git pokazuje adres i skrot commita', async () => {
+    const s = await exported();
+    const commit = 'c'.repeat(40);
+    const url = 'https://example.com/acme/skills.git';
+    const base = {
+      itemId: s.item.id,
+      itemKind: 'skill' as const,
+      slug: 'acme-case-2',
+      before: null,
+      after: null,
+    };
+    await s.index.operationLog().append({
+      ...base,
+      operation: 'create',
+      at: '2026-11-18T10:00:00.000Z',
+      note: `slug-z=Acme-Case git=${url}@${commit}`,
+    });
+    await s.index.operationLog().append({
+      ...base,
+      operation: 'update',
+      at: '2026-11-18T10:01:00.000Z',
+      note: `git=${url}@${commit}`,
+    });
+    const summaries = (await s.history.list()).map((e) => e.summary);
+    expect(summaries).toContain(
+      `Utworzono element acme-case-2 (nazwa ze źródła: Acme-Case), z repozytorium ${url}@cccccccccccc`,
+    );
+    expect(summaries).toContain(
+      `Zmieniono element acme-case-2, z repozytorium ${url}@cccccccccccc`,
+    );
+    s.index.close();
+  });
+
   it('rollback przywraca stan sprzed eksportu bajt w bajt, a cofniecie rollbacku eksport', async () => {
     const s = await exported();
     const written = readFileSync(s.skillFile, 'utf8');

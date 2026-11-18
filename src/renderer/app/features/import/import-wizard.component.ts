@@ -8,6 +8,7 @@ import {
   signal,
 } from '@angular/core';
 
+import { gitRefInputProblem, gitUrlInputProblem } from '../../../../core/services/import/git-input';
 import type {
   CandidateDto,
   CandidateStatus,
@@ -55,6 +56,7 @@ export class ImportWizardComponent {
   protected readonly toolLabel = toolLabel;
   protected readonly rootKindLabel = rootKindLabel;
   protected readonly kindLabel = kindLabel;
+  protected readonly plural = plural;
   protected readonly pathLabel = pathLabel;
   protected readonly skipReasonLabel = skipReasonLabel;
   protected readonly hitLocation = hitLocation;
@@ -76,6 +78,24 @@ export class ImportWizardComponent {
   /** Nazwy faktycznie wyslane do zapisu, zeby wynik mogl je pokazac. */
   protected readonly appliedRenames = signal<ReadonlyMap<string, string>>(new Map());
   protected readonly renameBlocked = signal(false);
+
+  // ---- Zrodlo: repozytorium Git (ADR 0058) ----
+  /** Skad pochodzi biezacy skan: od tego zalezy tekst kroku skanowania i pustego podgladu. */
+  protected readonly source = signal<'local' | 'git'>('local');
+  protected readonly gitUrl = signal('');
+  protected readonly gitRef = signal('');
+  /** Bledy pol pokazujemy dopiero po pierwszej probie wyslania, nie przy pisaniu. */
+  protected readonly gitSubmitted = signal(false);
+  protected readonly gitError = signal<string | null>(null);
+  private readonly gitUrlProblem = computed(() => gitUrlInputProblem(this.gitUrl().trim()));
+  private readonly gitRefProblem = computed(() => gitRefInputProblem(this.gitRef().trim()));
+  protected readonly gitUrlShown = computed(() =>
+    this.gitSubmitted() ? this.gitUrlProblem() : null,
+  );
+  protected readonly gitRefShown = computed(() =>
+    this.gitSubmitted() ? this.gitRefProblem() : null,
+  );
+  protected readonly gitSource = computed(() => this.scan()?.git ?? null);
 
   private seq = 0;
 
@@ -154,7 +174,9 @@ export class ImportWizardComponent {
         return 'Wybierz, z których lokalizacji zaimportować elementy.';
       }
       case 'scanning':
-        return 'Skanuję wybrane lokalizacje.';
+        return this.source() === 'git'
+          ? 'Pobieram repozytorium i skanuję jego zawartość.'
+          : 'Skanuję wybrane lokalizacje.';
       case 'preview': {
         const n = this.candidates().length;
         if (n === 0) return 'Skan nie znalazł niczego do zaimportowania.';
@@ -246,6 +268,8 @@ export class ImportWizardComponent {
       .map((r) => r.rootId);
     const seq = ++this.seq;
     this.scanError.set(null);
+    this.gitError.set(null);
+    this.source.set('local');
     this.phase.set('scanning');
     const result = await this.api.scan({ rootIds });
     if (seq !== this.seq) return;
@@ -254,10 +278,52 @@ export class ImportWizardComponent {
       this.phase.set('locations');
       return;
     }
-    this.scan.set(result.value);
+    this.acceptScan(result.value);
+  }
+
+  protected onGitUrl(value: string): void {
+    this.gitUrl.set(value);
+  }
+
+  protected onGitRef(value: string): void {
+    this.gitRef.set(value);
+  }
+
+  /** Adres i ref sprawdza renderer dla wygody, a main sprawdza je od nowa (granica IPC). */
+  protected async startGitScan(event: Event): Promise<void> {
+    event.preventDefault();
+    if (this.phase() !== 'locations') return;
+    this.gitSubmitted.set(true);
+    if (this.gitUrlProblem() !== null) {
+      document.getElementById('git-url')?.focus();
+      return;
+    }
+    if (this.gitRefProblem() !== null) {
+      document.getElementById('git-ref')?.focus();
+      return;
+    }
+    const url = this.gitUrl().trim();
+    const ref = this.gitRef().trim();
+    const seq = ++this.seq;
+    this.scanError.set(null);
+    this.gitError.set(null);
+    this.source.set('git');
+    this.phase.set('scanning');
+    const result = await this.api.scanGit(ref === '' ? { url } : { url, ref });
+    if (seq !== this.seq) return;
+    if (!result.ok) {
+      this.gitError.set(result.error.message);
+      this.phase.set('locations');
+      return;
+    }
+    this.acceptScan(result.value);
+  }
+
+  private acceptScan(value: ImportScanDto): void {
+    this.scan.set(value);
     this.selected.set(
       new Set(
-        result.value.candidates
+        value.candidates
           .filter((c) => c.selectedByDefault && c.secrets.length === 0 && isSelectable(c))
           .map((c) => c.candidateId),
       ),
@@ -265,7 +331,7 @@ export class ImportWizardComponent {
     this.confirmedSecrets.set(new Set());
     this.confirming.set(null);
     this.applyError.set(null);
-    this.renames.set(suggestRenames(result.value.candidates, result.value.librarySlugs));
+    this.renames.set(suggestRenames(value.candidates, value.librarySlugs));
     this.renameBlocked.set(false);
     this.phase.set('preview');
   }
@@ -467,6 +533,11 @@ export class ImportWizardComponent {
     this.selected.set(new Set());
     this.confirmedSecrets.set(new Set());
     this.scanError.set(null);
+    this.gitError.set(null);
+    this.gitSubmitted.set(false);
+    this.gitUrl.set('');
+    this.gitRef.set('');
+    this.source.set('local');
     this.applyError.set(null);
     this.phase.set('locations');
     void this.loadDetect();

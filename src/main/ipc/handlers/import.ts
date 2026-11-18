@@ -16,7 +16,7 @@ import type {
 } from '../../../shared/ipc/import-contract';
 import type { Result } from '../../../shared/ipc/library-contract';
 import type { IpcRegistry } from '../registry';
-import { parseApplyRequest, parseScanRequest } from './import-validation';
+import { parseApplyRequest, parseScanGitRequest, parseScanRequest } from './import-validation';
 import type { Parsed } from './library-validation';
 
 const UNAVAILABLE_MESSAGE =
@@ -87,7 +87,22 @@ function toScanDto(report: ScanReport): ImportScanDto {
     message: s.message,
   }));
   const librarySlugs = report.librarySlugs.map((l) => ({ kind: l.kind, slug: l.slug }));
-  return { scanToken: report.scanToken, candidates, skipped, librarySlugs };
+  return {
+    scanToken: report.scanToken,
+    ...(report.git === null
+      ? {}
+      : {
+          git: {
+            url: report.git.url,
+            ref: report.git.ref,
+            commit: report.git.commit,
+            submodules: report.git.submodules,
+          },
+        }),
+    candidates,
+    skipped,
+    librarySlugs,
+  };
 }
 
 function toApplyDto(report: ApplyReport): ImportApplyDto {
@@ -136,6 +151,14 @@ export function registerImportHandlers(registry: IpcRegistry, deps: ImportHandle
     'import:scan',
     guarded(parseScanRequest, async (service, request) =>
       ok(toScanDto(await service.scan(request.rootIds))),
+    ),
+  );
+
+  // Siec i katalog roboczy to sprawa serwisu i portu w main; handler przekazuje tylko zwalidowany adres i ref.
+  registry.register(
+    'import:scan-git',
+    guarded(parseScanGitRequest, async (service, request) =>
+      ok(toScanDto(await service.scanGit({ url: request.url, ref: request.ref ?? null }))),
     ),
   );
 

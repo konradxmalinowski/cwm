@@ -93,6 +93,17 @@ function zipSummary(group: OperationGroup): string {
   return `Eksport do archiwum ZIP: ${n} ${noun}`;
 }
 
+/**
+ * Import z repozytorium Git zostawia w notatce `git=<adres>@<commit>` (ADR 0058). Adres jest bez danych
+ * logowania, a historia pokazuje go razem ze skrotem commita: "z repozytorium X@sha".
+ */
+function repositorySuffix(note: string | undefined): string {
+  const match = /(?:^| )git=(\S+)@([0-9a-f]{40}|[0-9a-f]{64})(?: |$)/.exec(note ?? '');
+  return match === null
+    ? ''
+    : `, z repozytorium ${match[1] ?? ''}@${(match[2] ?? '').slice(0, 12)}`;
+}
+
 function summaryOf(kind: string, group: OperationGroup, count: number): string {
   const tool = group.rows.find((r) => r.tool !== undefined)?.tool;
   const toolName = tool === undefined ? 'narzędzia' : TOOL_NAMES[tool];
@@ -107,13 +118,13 @@ function summaryOf(kind: string, group: OperationGroup, count: number): string {
       return `Cofnięcie zapisu do ${toolName}: ${plural(count)}`;
     case 'create': {
       // Import z przemianowaniem zostawia w notatce nazwe ze zrodla (`slug-z=<nazwa>`).
-      const from = /^slug-z=(\S+)$/.exec(group.rows[0]?.note ?? '')?.[1];
-      return from === undefined
-        ? `Utworzono ${named}`
-        : `Utworzono ${named} (nazwa ze źródła: ${from})`;
+      const from = /(?:^| )slug-z=(\S+)(?: |$)/.exec(group.rows[0]?.note ?? '')?.[1];
+      const base =
+        from === undefined ? `Utworzono ${named}` : `Utworzono ${named} (nazwa ze źródła: ${from})`;
+      return `${base}${repositorySuffix(group.rows[0]?.note)}`;
     }
     case 'update':
-      return `Zmieniono ${named}`;
+      return `Zmieniono ${named}${repositorySuffix(group.rows[0]?.note)}`;
     case 'delete':
       return `Usunięto ${named}`;
     case 'adopt-disk':

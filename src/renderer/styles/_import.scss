@@ -263,3 +263,22 @@
     line-height: 40px;
   }
 }
+
+// Import z repozytorium Git: osobna sekcja pod lista lokalizacji, odsunieta od niej, zeby dwa
+// zrodla nie wygladaly jak jedna lista. Pola uzywaja wspolnych klas formularza (.form, .field).
+.import-git {
+  margin-top: var(--s6);
+  padding-top: var(--s5);
+  border-top: 1px solid var(--hairline);
+}
+
+.import-git__lead {
+  max-width: 72ch;
+}
+
+.import-git__origin {
+  display: grid;
+  gap: var(--s1);
+  max-width: 72ch;
+  overflow-wrap: anywhere;
+}

@@ -1,4 +1,9 @@
 import type { ItemKind, ToolId } from '../../src/core/model/item';
+import type {
+  GitSourceOpen,
+  GitSourceProvider,
+  GitSourceRequest,
+} from '../../src/core/ports/git-source';
 import type { SourceReader } from '../../src/core/ports/source-reader';
 import type {
   DetectedRoot,
@@ -113,6 +118,39 @@ export class FakeAdapter implements ToolAdapter {
       candidates: this.byRoot[rootInfo.rootId] ?? [],
       skipped: this.skippedByRoot[rootInfo.rootId] ?? [],
     });
+  }
+}
+
+export const GIT_COMMIT = 'a'.repeat(40);
+
+/** Port pobierania z repozytorium Git bez sieci i dysku: zwraca z gory ustawione rooty i liczy zwolnienia kopii. */
+export class FakeGitProvider implements GitSourceProvider {
+  requests: GitSourceRequest[] = [];
+  released = 0;
+  submodules: string[] = [];
+  /** Gdy ustawione, `open` zwraca ten wynik zamiast zrodla. */
+  failure: Extract<GitSourceOpen, { ok: false }> | null = null;
+  /** Gdy ustawione, `open` czeka na to obietnice (test jednoczesnych pobran). */
+  gate: Promise<void> | null = null;
+  constructor(readonly roots: DetectedRoot[]) {}
+
+  async open(request: GitSourceRequest): Promise<GitSourceOpen> {
+    this.requests.push(request);
+    if (this.gate !== null) await this.gate;
+    if (this.failure !== null) return this.failure;
+    return {
+      ok: true,
+      source: {
+        origin: { url: request.url, commit: GIT_COMMIT, ref: request.ref },
+        roots: this.roots,
+        reader: NO_READER,
+        submodules: this.submodules,
+        release: () => {
+          this.released++;
+          return Promise.resolve();
+        },
+      },
+    };
   }
 }
 

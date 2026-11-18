@@ -114,7 +114,7 @@ Przekładają się na dwanaście modułów z sekcji 6 i na jedenaście widoków 
 
 | Wymaganie | Konsekwencja architektoniczna |
 |---|---|
-| Dane zostają na komputerze, brak backendu | Zero połączeń sieciowych wychodzących. Blokada na poziomie `session.webRequest`, nie na poziomie obietnicy (ADR 0008) |
+| Dane zostają na komputerze, brak backendu | Zero połączeń sieciowych wychodzących z renderera. Blokada na poziomie `session.webRequest`, nie na poziomie obietnicy (ADR 0008). Jedyny wyjątek to import z repozytorium Git, który użytkownik uruchamia sam: proces `git` w main, bez udziału renderera (ADR 0058) |
 | Aplikacja nie nadpisuje po cichu | Każdy zapis do plików konfiguracji narzędzi przez `WriteGate`: plan, zatwierdzenie, backup, zapis atomowy, weryfikacja (ADR 0012). Zapis własnej biblioteki w `userData` idzie katalogiem roboczym z zamianą i kopią poprzedniej wersji, plan i zatwierdzenie tylko przy usunięciu (ADR 0031) |
 | Import i synchronizacja odwracalne | Content-addressed store plus log operacji; rollback nie wymaga Gita (ADR 0019) |
 | Treść importowana jest niezaufana | Nic nie jest wykonywane. Zakaz `child_process` w `core/` i `adapters/` wymuszony lintem (ADR 0008) |
@@ -750,6 +750,7 @@ Kanały z handlerem:
 | `library:repair` | `{ id, action }`, `adopt-disk` albo `restore-version` | element po naprawie |
 | `import:detect` | brak | rooty z `rootId`, etykietą, `exists`, `active` |
 | `import:scan` | `{ rootIds }` | `scanToken`, kandydaci ze statusem i trafieniami klasyfikatora sekretów, pominięte, `librarySlugs` (zajęte nazwy do walidacji nowego sluga) |
+| `import:scan-git` | `{ url, ref? }` | jak `import:scan`, plus `git`: adres bez danych logowania, ref, pełny SHA commita i liczba submoduli; pobranie i skan w main, kopia znika po skanie (ADR 0058) |
 | `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged?, renames? }` | zaimportowane, pominięte z powodem, błędy |
 | `export:plan` | `{ tool, itemIds }` | `planId`, `toolMissing`, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy, konflikty, sieroty, `applicable` |
 | `export:apply` | `{ planId, approved: true }` | raport per wpis, `backupId`, `verified`, `rolledBack` |
@@ -886,6 +887,11 @@ Niezaufane dane, bez wyjątku. Konkretnie:
 - Blokada sieci: `session.defaultSession.webRequest.onBeforeRequest` przepuszcza wyłącznie
   `file://` i wewnętrzny protokół aplikacji. Wymaganie "nie wysyłać zawartości lokalnych plików
   na zewnętrzne serwery" przestaje być obietnicą i staje się własnością, którą da się przetestować.
+- Import z repozytorium Git (ADR 0058) nie przechodzi przez tę blokadę, bo renderer w nim nie uczestniczy:
+  main uruchamia `git` (`infra/cwm/git-fetch.ts`, jedyne miejsce z procesem i siecią obok CLI) wyłącznie po
+  kliknięciu użytkownika i nigdy w tle. Pobranie idzie do `<userData>/git-import` (0700), jest weryfikowane
+  względem skrótu commita, skanowane jak niezaufana treść i usuwane po skanie. Do rendera wraca adres bez
+  danych logowania i commit, nigdy ścieżka ani wyjście procesu.
 
 ### 8.3 Granica 3: zapis
 
