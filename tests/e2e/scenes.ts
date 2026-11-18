@@ -1350,6 +1350,7 @@ export const SCENES: readonly Scene[] = [
     reach: async (c) => {
       await c.go('#/diagnostyka');
       await t(c.page, 'versioning-form').waitFor();
+      await t(c.page, 'versioning-enabled').check();
       await t(c.page, 'versioning-private').check();
       await t(c.page, 'versioning-ack').waitFor();
       await t(c.page, 'versioning-save').click();
