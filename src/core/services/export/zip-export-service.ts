@@ -12,6 +12,7 @@ import type {
 } from '../../ports/tool-adapter';
 import type { LibraryService } from '../library/library-service';
 import { classifyStrict, type SecretScanFile } from '../security/secret-classifier';
+import { restrictedFromRepository } from './project-scope';
 import {
   ExportError,
   MAX_PLAN_ITEMS,
@@ -191,7 +192,10 @@ function hasLocalPath(loaded: LoadedItem): boolean {
 
 function holdReason(loaded: LoadedItem, tool: ToolId): ZipHoldReason | null {
   const { classification } = loaded.item;
-  if (classification.scope === 'project') return 'project';
+  // Przypiecie do projektu (ADR 0059) wiaze tak samo jak etykieta: element zostaje poza archiwum.
+  if (classification.scope === 'project' || classification.projectId !== undefined) {
+    return 'project';
+  }
   if (
     classification.secretFindings.length > 0 ||
     classifyStrict(scanFiles(loaded, tool)).length > 0
@@ -380,6 +384,8 @@ export class ZipExportService {
       title: item.content.title,
       revision: item.version.revision,
       contentHash: item.version.contentHash,
+      projectId: item.classification.projectId ?? null,
+      restricted: restrictedFromRepository(item),
     }));
 
     const inputs: ZipFileInput[] = [];
@@ -413,6 +419,7 @@ export class ZipExportService {
     const report: ExportPlanReport = {
       planId,
       tool,
+      target: { kind: 'global' },
       toolMissing: false,
       plan,
       items,

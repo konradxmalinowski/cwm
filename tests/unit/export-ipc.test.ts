@@ -8,6 +8,7 @@ import type { ExportService } from '../../src/core/services/export/export-servic
 import { IMPLEMENTED_CHANNELS, IPC_CHANNELS } from '../../src/shared/ipc/channels';
 import { ZipExportService } from '../../src/core/services/export/zip-export-service';
 import {
+  parsePlanRequest,
   parseZipPlanRequest,
   parseZipSaveRequest,
 } from '../../src/main/ipc/handlers/export-validation';
@@ -17,11 +18,16 @@ import type {
   ExportZipPlanDto,
 } from '../../src/shared/ipc/export-contract';
 import type { Result } from '../../src/shared/ipc/library-contract';
-import { root } from './import-fakes';
-import { bytes } from './library-fakes';
+import { FakeProjectCatalog, PROJECT_A, PROJECT_B, root } from './import-fakes';
+import { planScopeViolation } from '../../src/main/services/project-scope-check';
+import { bytes, draft } from './library-fakes';
 import { emptyPlan, entry, exportHarness } from './export-fakes';
 
-function wire(service: ExportService | null, zip: ZipPort | null = null) {
+function wire(
+  service: ExportService | null,
+  zip: ZipPort | null = null,
+  rootOwner?: (rootId: string) => string | null,
+) {
   const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>();
   const registry = new IpcRegistry({
     handle(channel, listener) {
@@ -32,6 +38,7 @@ function wire(service: ExportService | null, zip: ZipPort | null = null) {
   registerExportHandlers(registry, {
     service: () => service,
     zip: () => zip,
+    ...(rootOwner === undefined ? {} : { rootOwner }),
     logUnexpected: (e) => logged.push(e),
   });
   const call = async <T = unknown>(channel: string, payload?: unknown): Promise<Result<T>> =>
@@ -275,6 +282,92 @@ describe('kanaly export:*', () => {
     expect(r).toMatchObject({ ok: false, error: { code: 'internal' } });
     expect(JSON.stringify(r)).not.toContain('/Users');
     expect(logged).toHaveLength(1);
+  });
+});
+
+describe('export:plan z celem projektu (ADR 0059)', () => {
+  const projectRoot = root('r-proj-a', 'claude-code', { label: 'acme-app: .claude/skills' });
+
+  it('walidacja: projectId tylko jako identyfikator z rejestru, includeGlobal tylko z projektem', () => {
+    const base = { tool: 'claude-code', itemIds: ['i1'] };
+    expect(parsePlanRequest({ ...base, projectId: PROJECT_A, includeGlobal: true })).toEqual({
+      ok: true,
+      value: { ...base, projectId: PROJECT_A, includeGlobal: true },
+    });
+    expect(parsePlanRequest({ ...base, projectId: '/repo/acme' }).ok).toBe(false);
+    expect(parsePlanRequest({ ...base, projectId: 'proj-1' }).ok).toBe(false);
+    expect(parsePlanRequest({ ...base, includeGlobal: true }).ok).toBe(false);
+    expect(parsePlanRequest({ ...base, projectId: PROJECT_A, includeGlobal: 'tak' }).ok).toBe(
+      false,
+    );
+  });
+
+  it('plan do projektu idzie przez kontrole w main, DTO niesie projekt bez sciezki', async () => {
+    const projects = new FakeProjectCatalog({
+      [PROJECT_A]: { name: 'acme-app', roots: [projectRoot] },
+    });
+    const h = await exportHarness({
+      overrides: { projects },
+      build: (items) =>
+        emptyPlan({
+          entries: [entry({ rootId: 'r-proj-a', itemIds: items.map((i) => i.item.id) })],
+        }),
+    });
+    const bound = await h.library.create(
+      draft({
+        slug: 'acme-bound',
+        classification: { scope: 'project', secretFindings: [], projectId: PROJECT_A },
+      }),
+    );
+    const owner = (rootId: string): string | null => projects.ownerOf(rootId)?.projectId ?? null;
+    const { call } = wire(h.service, null, owner);
+    const result = await call<ExportPlanDto>('export:plan', {
+      tool: 'claude-code',
+      itemIds: [bound.item.id],
+      projectId: PROJECT_A,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.project).toEqual({ projectId: PROJECT_A, name: 'acme-app' });
+    expect(result.value.entries[0]?.rootLabel).toBe('acme-app: .claude/skills');
+    expect(JSON.stringify(result.value)).not.toContain('r-proj-a');
+
+    // Ten sam plan do katalogu globalnego, ale eksporter pisze w root projektu: main go odrzuca.
+    const global = await call('export:plan', { tool: 'claude-code', itemIds: [h.itemId] });
+    expect(global).toMatchObject({ ok: false, error: { code: 'scope-violation' } });
+  });
+
+  it('kontrola w main: wpis poza celem i element obcego projektu sa naruszeniem', async () => {
+    const h = await exportHarness();
+    const report = await h.service.plan('claude-code', [h.itemId]);
+    const owners: Record<string, string> = { 'r-claude': PROJECT_B };
+    expect(planScopeViolation(report, () => null)).toBeNull();
+    expect(planScopeViolation(report, (id) => owners[id] ?? null)).not.toBeNull();
+
+    const projectReport = {
+      ...report,
+      target: { kind: 'project', projectId: PROJECT_B, name: 'acme', includeGlobal: false },
+    } as const;
+    // Element globalny w planie projektu bez jawnej zgody.
+    expect(planScopeViolation(projectReport, (id) => owners[id] ?? null)).not.toBeNull();
+    const withGlobal = { ...projectReport.target, includeGlobal: true };
+    // Domyslny element harnessu jest prywatny: zgoda na globalne go nie obejmuje.
+    expect(report.items[0]?.restricted).toBe(true);
+    expect(
+      planScopeViolation({ ...projectReport, target: withGlobal }, (id) => owners[id] ?? null),
+    ).not.toBeNull();
+    const open = report.items.map((i) => ({ ...i, restricted: false }));
+    expect(
+      planScopeViolation(
+        { ...projectReport, target: withGlobal, items: open },
+        (id) => owners[id] ?? null,
+      ),
+    ).toBeNull();
+    const foreign = {
+      ...projectReport,
+      items: report.items.map((i) => ({ ...i, projectId: PROJECT_A })),
+    };
+    expect(planScopeViolation(foreign, (id) => owners[id] ?? null)).not.toBeNull();
   });
 });
 

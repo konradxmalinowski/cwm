@@ -16,6 +16,11 @@
         }
       }
       @case ('plan') {
+        @if (plan()?.project; as project) {
+          <p class="view__sub" data-testid="export-plan-project">
+            Cel: projekt „{{ project.name }}”. Pliki trafią do jego repozytorium.
+          </p>
+        }
         @if (zipPlan() === null) {
           <p class="view__sub">
             Eksport nigdy niczego nie usuwa z narzędzia. Pliki, których nie ma w planie, zostają
@@ -85,11 +90,25 @@
                   type="radio"
                   name="export-tool"
                   [value]="option.value"
-                  [checked]="tool() === option.value"
+                  [checked]="tool() === option.value && projectTarget() === null"
                   [attr.data-testid]="'export-tool-' + option.value"
                   (change)="onTool(option.value)"
                 />
                 <span>{{ option.label }}</span>
+              </label>
+            }
+            @for (project of projectList(); track project.projectId) {
+              <label class="export-tool__option">
+                <input
+                  type="radio"
+                  name="export-tool"
+                  [value]="'project:' + project.projectId"
+                  [checked]="projectTarget() === project.projectId"
+                  data-testid="export-tool-project"
+                  [attr.data-project]="project.projectId"
+                  (change)="onProject(project.projectId)"
+                />
+                <span>Projekt „{{ project.name }}” (Claude Code)</span>
               </label>
             }
             <label class="export-tool__option">
@@ -105,6 +124,33 @@
             </label>
           </div>
         </fieldset>
+
+        @if (projectTarget() !== null) {
+          <div class="export-tool" data-testid="export-project-target">
+            <p class="view__sub">
+              Pliki trafią do <span class="mono">.claude/</span> i
+              <span class="mono">CLAUDE.md</span> w repozytorium projektu, więc Git zobaczy je jako
+              zmiany. Aplikacja nie zmienia <span class="mono">.gitignore</span> i niczego nie
+              commituje. Do projektu zawsze idzie kopia plików, bez dowiązań, a przed zapisem
+              powstaje kopia zapasowa jak przy każdym eksporcie. Elementy innych projektów są
+              odmawiane.
+            </p>
+            <label class="check">
+              <input
+                type="checkbox"
+                data-testid="export-include-global"
+                [checked]="includeGlobal()"
+                aria-describedby="export-include-global-hint"
+                (change)="onIncludeGlobal($any($event.target).checked)"
+              />
+              <span>Dołącz elementy globalne</span>
+            </label>
+            <p class="view__sub" id="export-include-global-hint">
+              Bez tego zaznaczenia element, który nie należy do żadnego projektu, nie trafi do
+              repozytorium. Element prywatny albo z możliwym sekretem nie trafi tam nigdy.
+            </p>
+          </div>
+        }
 
         @if (zip()) {
           <fieldset class="export-tool" data-testid="export-layout">

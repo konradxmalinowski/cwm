@@ -1,4 +1,5 @@
 import { TOOL_IDS } from '../../../core/model/item';
+import { isProjectId } from '../../../core/model/project';
 import type {
   ExportApplyRequest,
   ExportPlanRequest,
@@ -60,6 +61,15 @@ export function parsePlanRequest(payload: unknown): Parsed<ExportPlanRequest> {
       resolutions.push({ itemId, relPath, resolution });
     }
     if (resolutions.length > 0) request.resolutions = resolutions;
+  }
+  const { projectId, includeGlobal } = payload;
+  if (projectId !== undefined) {
+    if (!isProjectId(projectId)) return fail('projectId');
+    request.projectId = projectId;
+  }
+  if (includeGlobal !== undefined) {
+    if (typeof includeGlobal !== 'boolean' || projectId === undefined) return fail('includeGlobal');
+    request.includeGlobal = includeGlobal;
   }
   return { ok: true, value: request };
 }

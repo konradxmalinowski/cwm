@@ -118,6 +118,9 @@ function metaObject(item: LibraryItem): object {
         relPath: f.relPath,
         line: f.line,
       })),
+      ...(item.classification.projectId === undefined
+        ? {}
+        : { projectId: item.classification.projectId }),
     },
     version: {
       revision: item.version.revision,

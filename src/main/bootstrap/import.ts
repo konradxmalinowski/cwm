@@ -6,6 +6,7 @@ import { ImportService } from '../../core/services/import/import-service';
 import { FsGitSourceProvider } from '../../infra/git-import/git-import-source';
 import { systemEnv } from '../../infra/platform/env';
 import { FsLocationCatalog } from '../../infra/platform/locations';
+import type { FsProjectCatalog } from '../../infra/platform/project-locations';
 import { FsSourceReader } from '../../infra/source/fs-source-reader';
 import { createAdapters } from './adapters';
 
@@ -21,9 +22,14 @@ export function startImport(
   library: LibraryService,
   userDataDir: string,
   logUnexpected: (error: unknown) => void,
+  projects?: FsProjectCatalog,
 ): ImportService {
   const catalog = new FsLocationCatalog(systemEnv());
-  const reader = new FsSourceReader((rootId) => catalog.resolvePath(rootId));
+  // Czytnik zna rooty globalne i projektowe; rooty projektu sprawdzaja katalog przy kazdym odczycie (ADR 0059).
+  const reader = new FsSourceReader(
+    (rootId) => catalog.resolvePath(rootId) ?? projects?.resolvePath(rootId) ?? null,
+    (rootId) => projects?.boundaryOf(rootId) ?? null,
+  );
   const git = new FsGitSourceProvider({
     workDir: join(userDataDir, GIT_IMPORT_DIR_NAME),
     onUnexpected: logUnexpected,
@@ -34,6 +40,7 @@ export function startImport(
     adapters: createAdapters(),
     reader,
     git,
+    ...(projects === undefined ? {} : { projects }),
     library,
     clock: systemClock,
     onUnexpected: logUnexpected,

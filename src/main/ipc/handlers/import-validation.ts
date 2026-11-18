@@ -1,7 +1,9 @@
+import { isProjectId } from '../../../core/model/project';
 import { gitRefInputProblem, gitUrlInputProblem } from '../../../core/services/import/git-input';
 import type {
   ImportApplyRequest,
   ImportScanGitRequest,
+  ImportScanProjectRequest,
   ImportScanRequest,
 } from '../../../shared/ipc/import-contract';
 import type { Parsed } from './library-validation';
@@ -44,6 +46,14 @@ export function parseScanRequest(payload: unknown): Parsed<ImportScanRequest> {
   const rootIds = idList(payload['rootIds'], MAX_ROOTS);
   if (rootIds === null || rootIds.length === 0) return fail('rootIds');
   return { ok: true, value: { rootIds } };
+}
+
+/** `import:scan-project`: wylacznie identyfikator projektu z rejestru, nigdy sciezka. */
+export function parseScanProjectRequest(payload: unknown): Parsed<ImportScanProjectRequest> {
+  if (!isRecord(payload)) return fail();
+  const { projectId } = payload;
+  if (!isProjectId(projectId)) return fail('projectId');
+  return { ok: true, value: { projectId } };
 }
 
 /**

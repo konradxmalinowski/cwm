@@ -93,6 +93,10 @@ export class WriteGateRefusal extends Error {
 export interface WriteGateDeps {
   /** Wstrzykiwana mapa `rootId` -> sciezka (`FsLocationCatalog.resolvePath`); brama nie zna tabeli. */
   readonly resolveRoot: (rootId: RootId) => string | null;
+  /** Katalog projektu jako druga granica zawierania dla rootow projektowych (ADR 0059). */
+  readonly boundaryOf?: (rootId: RootId) => string | null;
+  /** Kontrola katalogu projektu tuz przed kazdym zapisem; `false` przerywa i cofa zapis. */
+  readonly rootIntact?: (rootId: RootId) => boolean;
   /** `userData`: tu leza `backups/`, `materialized/` i `tmp/`. */
   readonly userDataDir: string;
   readonly objects: ObjectStore;
@@ -464,6 +468,10 @@ export class FsWriteGate implements WriteGate {
 
     for (const [index, item] of resolved.entries()) {
       try {
+        // Katalog projektu sprawdzony od nowa tuz przed zapisem: podmiana po analizie przerywa i cofa.
+        if (this.deps.rootIntact?.(item.entry.rootId) === false) {
+          throw new Blocked('Katalog projektu zmienił się w trakcie zapisu.');
+        }
         const result = await this.execute(item, journal);
         reports.push({
           rootId: item.entry.rootId,
@@ -594,6 +602,7 @@ export class FsWriteGate implements WriteGate {
 
     if (entry.action === 'unchanged') {
       const loc = await locateTarget(rootPath, entry.relPath, {
+        ...this.boundaryOption(entry.rootId),
         platform: this.platform,
         fileRoot,
       });
@@ -648,7 +657,11 @@ export class FsWriteGate implements WriteGate {
     if (entry.content !== null || entry.files !== null) {
       throw new Blocked('Wpis usunięcia nie może zawierać treści do zapisu.');
     }
-    const loc = await locateTarget(rootPath, entry.relPath, { platform: this.platform, fileRoot });
+    const loc = await locateTarget(rootPath, entry.relPath, {
+      ...this.boundaryOption(entry.rootId),
+      platform: this.platform,
+      fileRoot,
+    });
     claim(loc.abs);
     const before = await this.snapshot(loc.abs);
     if (before.kind === 'missing') return this.resolved(entry, 'noop', [], null, null, null, null);
@@ -684,7 +697,11 @@ export class FsWriteGate implements WriteGate {
     if (typeof target !== 'string' || target === '' || target.includes('\0')) {
       throw new Blocked('Kopia nie podaje poprawnego celu dowiązania.');
     }
-    const loc = await locateTarget(rootPath, entry.relPath, { platform: this.platform, fileRoot });
+    const loc = await locateTarget(rootPath, entry.relPath, {
+      ...this.boundaryOption(entry.rootId),
+      platform: this.platform,
+      fileRoot,
+    });
     claim(loc.abs);
     const before = await this.snapshot(loc.abs);
     if (before.kind === 'symlink' && before.linkTarget === target) {
@@ -761,6 +778,7 @@ export class FsWriteGate implements WriteGate {
   ): Promise<{ ops: FileOp[]; dirLink: DirLink | null; replaced: ReplacedDir | null }> {
     if (entry.content !== null) {
       const loc = await locateTarget(rootPath, entry.relPath, {
+        ...this.boundaryOption(entry.rootId),
         platform: this.platform,
         fileRoot,
       });
@@ -775,6 +793,7 @@ export class FsWriteGate implements WriteGate {
 
     const files = entry.files ?? [];
     const dirLoc = await locateTarget(rootPath, entry.relPath, {
+      ...this.boundaryOption(entry.rootId),
       platform: this.platform,
       fileRoot,
     });
@@ -817,6 +836,7 @@ export class FsWriteGate implements WriteGate {
         throw new Blocked('Plik w katalogu przekracza limit rozmiaru.');
       const rel = `${entry.relPath}/${file.relPath}`;
       const loc = await locateTarget(rootPath, rel, {
+        ...this.boundaryOption(entry.rootId),
         platform: this.platform,
         fileRoot: false,
         ...(dirLink === null
@@ -997,7 +1017,11 @@ export class FsWriteGate implements WriteGate {
       };
     }
 
-    const loc = await locateTarget(rootPath, entry.relPath, { platform: this.platform, fileRoot });
+    const loc = await locateTarget(rootPath, entry.relPath, {
+      ...this.boundaryOption(entry.rootId),
+      platform: this.platform,
+      fileRoot,
+    });
     claim(loc.abs);
 
     let before: Existing;
@@ -1163,6 +1187,12 @@ export class FsWriteGate implements WriteGate {
         }
       }
     }
+  }
+
+  /** Opcja `boundary` dla `locateTarget`: tylko dla rootow projektu. */
+  private boundaryOption(rootId: RootId): { readonly boundary?: string } {
+    const boundary = this.deps.boundaryOf?.(rootId) ?? null;
+    return boundary === null ? {} : { boundary };
   }
 
   // --- wykonanie ---

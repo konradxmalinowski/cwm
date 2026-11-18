@@ -6,6 +6,7 @@ import type {
   ImportDetectDto,
   ImportScanDto,
   ImportScanGitRequest,
+  ImportScanProjectRequest,
   ImportScanRequest,
 } from '../../../../shared/ipc/import-contract';
 import type { Result } from '../../../../shared/ipc/library-contract';
@@ -24,6 +25,10 @@ export class ImportApiService {
 
   scanGit(request: ImportScanGitRequest): Promise<Result<ImportScanDto>> {
     return callBridge((bridge) => bridge.import.scanGit(request));
+  }
+
+  scanProject(request: ImportScanProjectRequest): Promise<Result<ImportScanDto>> {
+    return callBridge((bridge) => bridge.import.scanProject(request));
   }
 
   apply(request: ImportApplyRequest): Promise<Result<ImportApplyDto>> {

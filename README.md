@@ -125,6 +125,12 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
   sekretem są domyślnie odznaczone. Źródło nie jest modyfikowane. Skille, agentów i komendy można
   też pobrać z publicznego repozytorium Git (adres https i opcjonalny ref); aplikacja zapisuje
   adres i commit, z którego pochodzi element, i niczego z repozytorium nie uruchamia przy imporcie; hooki, serwery MCP i tryb uprawnień są usuwane z elementów, a nic nie jest zaznaczone z góry (ADR 0058).
+- **Projekty.** Lista repozytoriów, które wskazujesz w systemowym oknie wyboru katalogu (bez katalogu
+  domowego, systemowego i dowiązań). Z projektu import czyta `.claude/skills`, `.claude/agents`,
+  `.claude/commands` i `CLAUDE.md` w korzeniu, a zaimportowane elementy są przypięte do projektu:
+  eksport zapisze je tylko do niego, nigdy do `~/.claude` ani do innego projektu. Element globalny
+  trafia do projektu tylko po zaznaczeniu „Dołącz elementy globalne”, a prywatny albo z możliwym sekretem
+  nigdy. Usunięcie projektu z listy odpina jego elementy po potwierdzeniu (ADR 0059).
 - **Eksport.** Do Claude Code i Codeksa, z planem zapisu, podglądem różnic bez sekretów,
   ostrzeżeniami o utracie zgodności i potwierdzeniem. Przed zapisem powstaje kopia w `backups/`,
   po zapisie plik jest czytany z powrotem. Ten sam plan da się zapisać też jako archiwum ZIP
@@ -139,8 +145,10 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
 
 Zastrzeżenia, które warto znać przed pierwszym użyciem (szczegóły w `docs/OGRANICZENIA.md`):
 
-- Tylko konfiguracje globalne (ADR 0032). `CLAUDE.md`, `AGENTS.md` i `.mcp.json` leżące
-  w repozytoriach projektów nie trafiają do biblioteki.
+- Projekty tylko dla Claude Code (`.claude/` i `CLAUDE.md`, ADR 0059). `AGENTS.md`, `GEMINI.md`,
+  `.codex/`, `.gemini/`, hooki z `.claude/settings.json` i `.mcp.json` w repozytoriach nie trafiają do
+  biblioteki. Zapis do projektu zmienia pliki w repozytorium Git; aplikacja nie dotyka `.gitignore` i
+  niczego nie commituje. Synchronizacja obejmuje tylko katalogi globalne.
 - Eksport działa tylko do narzędzia, którego katalog główny (`~/.claude`, `~/.codex`) istnieje
   (ADR 0033).
 - Aplikacja nie usuwa plików w narzędziach (ADR 0034). Usunięcie elementu z biblioteki zostawia

@@ -1,6 +1,6 @@
 # ADR 0032: MVP obsługuje tylko konfiguracje globalne
 
-Status: zaakceptowane (odpowiedź właściciela produktu na pytanie 5 z Etapu 0, 2026-11-03)
+Status: zastąpione przez ADR 0059 (2026-11-18); wcześniej zaakceptowane (odpowiedź właściciela produktu na pytanie 5 z Etapu 0, 2026-11-03)
 Data: 2026-11-03
 Doprecyzowuje: ADR 0022 (zakres tabeli lokalizacji)
 Źródło: ARCHITECTURE 15.1, pytanie 5
@@ -53,3 +53,10 @@ użytkownik nie powinien traktować jej jako zabezpieczenia przed eksportem.
 
 Użytkownik, który trzyma instrukcje w repozytoriach, nie dostanie ich w bibliotece. To jest
 koszt tej decyzji i jest do zakomunikowania w README przy opisie zakresu.
+
+## Zastąpienie
+
+ADR 0059 wprowadza rejestr projektów z wyborem katalogu w natywnym oknie main, rooty projektowe Claude
+Code w tabeli `PROJECT_CANDIDATES` i egzekwowanie zakresu `project` (pole `classification.projectId`) w
+core i w main. Odpowiedź "Czy da się do tego dojść" z tej decyzji przestała obowiązywać: drogą jest
+nowy kanał `projects:add`, a nie ścieżka z renderera.

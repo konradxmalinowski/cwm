@@ -380,6 +380,32 @@ describe('niezaufany item.json z dysku', () => {
     }
   });
 
+  it('przypiecie do projektu: identyfikator z rejestru i tylko przy zakresie project (ADR 0059)', () => {
+    const bound = (classification: unknown): Record<string, unknown> => ({
+      ...valid(),
+      classification,
+    });
+    const projectId = 'proj-0123456789abcdef';
+    expect(reasonOf(bound({ scope: 'project', secretFindings: [], projectId }))).toBe('ok');
+    expect(
+      parseItemMeta(bound({ scope: 'project', secretFindings: [], projectId }), ID, 'disk')
+        .classification.projectId,
+    ).toBe(projectId);
+    // Etykieta `project` bez pola (stan sprzed ADR 0059) nadal sie wczytuje i niczego nie wiaze.
+    expect(
+      parseItemMeta(bound({ scope: 'project', secretFindings: [] }), ID, 'disk').classification
+        .projectId,
+    ).toBeUndefined();
+    for (const bad of [
+      { scope: 'private', secretFindings: [], projectId },
+      { scope: 'project', secretFindings: [], projectId: '/repo/acme' },
+      { scope: 'project', secretFindings: [], projectId: 'proj-XYZ' },
+      { scope: 'project', secretFindings: [], projectId: 7 },
+    ]) {
+      expect(reasonOf(bound(bad)), JSON.stringify(bad)).toBe('item-shape-invalid');
+    }
+  });
+
   it('klucz __proto__ w unmappedKeys nie zmienia prototypu', () => {
     const snapshot = {
       tool: 'codex',

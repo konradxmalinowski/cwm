@@ -130,10 +130,24 @@ export async function locateTarget(
     readonly platform: NodeJS.Platform;
     readonly fileRoot: boolean;
     readonly assumeReplaced?: { readonly abs: string; readonly parentReal: string };
+    /**
+     * Druga granica (ADR 0059): katalog projektu. Root po `realpath` (dla roota-pliku jego katalog)
+     * musi lezec w nim, wiec podmiana `.claude` na dowiazanie po planie blokuje wpis.
+     */
+    readonly boundary?: string;
   },
 ): Promise<LocatedTarget> {
   const rootReason = checkRootPath(rootPath, options.platform);
   if (rootReason !== null) throw new Blocked(rootReason);
+  if (options.boundary !== undefined) {
+    const boundaryReal = await realpathDeep(options.boundary);
+    const anchor = await realpathDeep(options.fileRoot ? path.dirname(rootPath) : rootPath);
+    if (!isPathInside(anchor, boundaryReal, { allowSame: true })) {
+      throw new Blocked(
+        'Lokalizacja docelowa po rozwiązaniu dowiązań wychodzi poza katalog projektu.',
+      );
+    }
+  }
 
   if (options.fileRoot) {
     const parentReal = await realpathDeep(path.dirname(rootPath));

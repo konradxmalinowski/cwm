@@ -34,6 +34,9 @@ import { registerSyncHandlers } from './ipc/handlers/sync';
 import { registerImportHandlers } from './ipc/handlers/import';
 import { registerRetentionHandlers } from './ipc/handlers/retention';
 import { registerLibraryHandlers } from './ipc/handlers/library';
+import { registerProjectsHandlers } from './ipc/handlers/projects';
+import { startProjects, type ProjectsStartup } from './bootstrap/projects';
+import { loadRootSalt } from '../infra/platform/root-salt';
 import { IpcRegistry } from './ipc/registry';
 import { IndexRebuildService } from './services/index-rebuild';
 import { RetentionRunner } from './services/retention-runner';
@@ -55,6 +58,12 @@ let zipExportService: ZipExportService | null = null;
 let syncService: SyncService | null = null;
 let historyService: HistoryService | null = null;
 let retentionRunner: RetentionRunner | null = null;
+let projectsStartup: ProjectsStartup | null = null;
+
+/** Projekt, do ktorego nalezy root (ADR 0059); kontrola zakresu w main na gotowym planie. */
+function rootOwner(rootId: string): string | null {
+  return projectsStartup?.catalog.ownerOf(rootId)?.projectId ?? null;
+}
 
 /** Konczy sie, gdy start wypelnil indeks biblioteki z plikow; raport diagnostyczny na to czeka. */
 let startupSettled: Promise<void> = Promise.resolve();
@@ -285,13 +294,16 @@ function start(): void {
     registerExportHandlers(registry, {
       service: () => exportService,
       zip: () => zipSave,
+      rootOwner,
       logUnexpected: logExportError,
     });
     registerSyncHandlers(registry, {
       sync: () => syncService,
       history: () => historyService,
+      rootOwner,
       logUnexpected: logExportError,
     });
+    registerProjectsHandlers(registry, { service: () => projectsStartup?.service ?? null });
     // Retencja (ADR 0056): serwis liczy osiagalnosc z biblioteki i indeksu, wiec jest dostepny
     // dopiero, gdy oba sa otwarte; ustawienia dzialaja zawsze.
     const retentionSettings = createRetentionSettings(userData);
@@ -330,12 +342,34 @@ function start(): void {
     libraryService = library.service;
     if (library.failure !== undefined)
       log().error('[cwm] biblioteka niedostepna:', library.failure);
+    // Jedna obietnica soli dla rootow globalnych i projektowych: dwa rownolegle odczyty przy pierwszym
+    // starcie zapisalyby dwie rozne sole.
+    const rootSalt = loadRootSalt(userData);
+    projectsStartup = startProjects({
+      userData,
+      home,
+      rootSalt,
+      library: () => libraryService,
+      logUnexpected: (error) => {
+        log().error(
+          '[cwm] nieoczekiwany blad listy projektow:',
+          error instanceof Error ? error.name : 'nieznany',
+        );
+      },
+    });
     if (library.service !== null) {
-      importService = startImport(library.service, userData, logImportError);
+      importService = startImport(
+        library.service,
+        userData,
+        logImportError,
+        projectsStartup.catalog,
+      );
       void startExport(library.service, logExportError, {
         userDataDir: userData,
         indexStore: () => indexState.store,
         appVersion: app.getVersion(),
+        rootSalt,
+        projects: projectsStartup.catalog,
       })
         .then((started) => {
           exportService = started.exports;

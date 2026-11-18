@@ -12,6 +12,7 @@ import type {
   SyncStatusDto,
 } from '../../../shared/ipc/sync-contract';
 import type { IpcRegistry } from '../registry';
+import { planScopeViolation, type RootOwner } from '../../services/project-scope-check';
 import { toPlanDto } from './export';
 import type { Parsed } from './library-validation';
 import {
@@ -30,6 +31,8 @@ const INTERNAL_MESSAGE =
 export interface SyncHandlerDeps {
   readonly sync: () => SyncService | null;
   readonly history: () => HistoryService | null;
+  /** Wlasciciel roota z rejestru projektow (ADR 0059); bez rejestru kazdy root jest globalny. */
+  readonly rootOwner?: RootOwner;
   readonly logUnexpected?: (error: unknown) => void;
 }
 
@@ -112,6 +115,12 @@ export function registerSyncHandlers(registry: IpcRegistry, deps: SyncHandlerDep
           resolution: r.resolution,
         })),
       );
+      // Synchronizacja pisze tylko do katalogow globalnych: element projektu nie moze sie tu znalezc.
+      const rootOwner = deps.rootOwner ?? ((): null => null);
+      for (const plan of report.plans) {
+        const violation = planScopeViolation(plan, rootOwner);
+        if (violation !== null) return err('scope-violation', violation);
+      }
       const value: SyncPlanDto = {
         syncId: report.syncId,
         plans: report.plans.map(toPlanDto),

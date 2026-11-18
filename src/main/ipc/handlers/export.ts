@@ -20,6 +20,7 @@ import type {
 } from '../../../shared/ipc/export-contract';
 import type { Result } from '../../../shared/ipc/library-contract';
 import type { IpcRegistry } from '../registry';
+import { planScopeViolation, type RootOwner } from '../../services/project-scope-check';
 import {
   parseExportApplyRequest,
   parsePlanRequest,
@@ -50,6 +51,8 @@ export interface ExportHandlerDeps {
   readonly service: () => ExportService | null;
   /** `null`, gdy eksport do ZIP nie jest przygotowany (biblioteka niedostepna): kanaly odpowiadaja bledem. */
   readonly zip?: () => ZipPort | null;
+  /** Wlasciciel roota z rejestru projektow (ADR 0059); bez rejestru kazdy root jest globalny. */
+  readonly rootOwner?: RootOwner;
   readonly logUnexpected?: (error: unknown) => void;
 }
 
@@ -119,6 +122,9 @@ export function toPlanDto(report: ExportPlanReport): ExportPlanDto {
     planId: report.planId,
     tool: report.tool,
     toolMissing: report.toolMissing,
+    ...(report.target.kind === 'project'
+      ? { project: { projectId: report.target.projectId, name: report.target.name } }
+      : {}),
     verdicts: plan.verdicts.flatMap(({ itemId, verdict }) => {
       const item = byId.get(itemId);
       if (item === undefined) return [];
@@ -217,23 +223,33 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
     };
   }
 
+  const rootOwner: RootOwner = deps.rootOwner ?? ((): null => null);
+
   registry.register(
     'export:plan',
-    guarded(parsePlanRequest, async (service, request) =>
-      ok(
-        toPlanDto(
-          await service.plan(
-            request.tool,
-            request.itemIds,
-            (request.resolutions ?? []).map((r) => ({
-              itemId: r.itemId as ItemId,
-              relPath: r.relPath,
-              resolution: r.resolution,
-            })),
-          ),
-        ),
-      ),
-    ),
+    guarded(parsePlanRequest, async (service, request) => {
+      const report = await service.preview(
+        request.tool,
+        request.itemIds,
+        (request.resolutions ?? []).map((r) => ({
+          itemId: r.itemId as ItemId,
+          relPath: r.relPath,
+          resolution: r.resolution,
+        })),
+        request.projectId === undefined
+          ? { kind: 'global' }
+          : {
+              kind: 'project',
+              projectId: request.projectId,
+              includeGlobal: request.includeGlobal === true,
+            },
+      );
+      // Serwis zapamietuje plan dopiero po tej kontroli: odrzucony plan nie ma `planId` do zapisu.
+      const violation = planScopeViolation(report, rootOwner);
+      if (violation !== null) return err('scope-violation', violation);
+      service.retain(report);
+      return ok(toPlanDto(report));
+    }),
   );
 
   registry.register(

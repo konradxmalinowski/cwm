@@ -16,6 +16,7 @@ export const IPC_CHANNELS = [
   'import:detect',
   'import:scan',
   'import:scan-git',
+  'import:scan-project',
   'import:apply',
   'export:plan',
   'export:apply',
@@ -35,6 +36,10 @@ export const IPC_CHANNELS = [
   'retention:set',
   'retention:preview',
   'retention:apply',
+  'projects:list',
+  'projects:add',
+  'projects:rename',
+  'projects:remove',
 ] as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[number];

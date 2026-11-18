@@ -63,6 +63,8 @@ export class LibraryFormComponent {
   protected readonly description = signal('');
   protected readonly body = signal('');
   protected readonly scope = signal<Scope>('private');
+  /** Element przypiety do projektu (ADR 0059): zakres zmienia tylko import z projektu, nie formularz. */
+  protected readonly projectBound = signal(false);
   protected readonly errors = signal<Partial<Record<FieldName, string>>>({});
   protected readonly formError = signal<string | null>(null);
   protected readonly saving = signal(false);
@@ -115,6 +117,7 @@ export class LibraryFormComponent {
     this.description.set(item.content.description);
     this.body.set(item.content.body);
     this.scope.set(item.scope);
+    this.projectBound.set(item.projectId !== null);
     this.declaredName = item.identity.declaredName;
     this.heading.set(`Edytujesz „${item.content.title}”.`);
   }

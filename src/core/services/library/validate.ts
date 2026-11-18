@@ -39,6 +39,7 @@ import {
   gitUrlProblem,
   sanitizeGitUrl,
 } from '../../cwm/git-source';
+import { isProjectId } from '../../model/project';
 
 export const ITEM_FORMAT_VERSION = 1;
 
@@ -684,6 +685,22 @@ export function parseItemMeta(raw: unknown, expectedId: string, context: ShapeCo
       };
     });
 
+  const scope = r.oneOf(
+    classification['scope'],
+    ['public', 'private', 'project'],
+    'classification.scope',
+  );
+  let projectId: string | undefined;
+  if (classification['projectId'] !== undefined) {
+    projectId = r.string(classification['projectId'], 'classification.projectId');
+    if (!isProjectId(projectId)) {
+      r.fail('classification.projectId', 'musi być identyfikatorem projektu z rejestru');
+    }
+    if (scope !== 'project') {
+      r.fail('classification.scope', 'element przypięty do projektu musi mieć zakres project');
+    }
+  }
+
   const version = r.object(root['version'], 'version');
   const updatedAt = r.string(version['updatedAt'], 'version.updatedAt');
   if (Number.isNaN(Date.parse(updatedAt))) r.fail('version.updatedAt', 'musi być datą ISO 8601');
@@ -709,12 +726,9 @@ export function parseItemMeta(raw: unknown, expectedId: string, context: ShapeCo
     assets,
     source: { snapshots: readSnapshots(r, source['snapshots']), importedFrom },
     classification: {
-      scope: r.oneOf(
-        classification['scope'],
-        ['public', 'private', 'project'],
-        'classification.scope',
-      ),
+      scope,
       secretFindings,
+      ...(projectId === undefined ? {} : { projectId }),
     },
     versionRecordHash:
       root['versionRecordHash'] === undefined
