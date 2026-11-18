@@ -1337,6 +1337,30 @@ export const SCENES: readonly Scene[] = [
         'Indeks otworzył się bez zastrzeżeń i baza odpowiada.',
       );
       await expect(t(page, 'diagnostics-nothing')).toContainText('nie wymagał naprawy');
+      // Wersjonowanie biblioteki w Git (ADR 0060) jest domyslnie wylaczone i nie tworzy repozytorium.
+      await expect(t(page, 'versioning-state-enabled')).toHaveText('Wyłączone');
+      await expect(t(page, 'versioning-commits')).toHaveText('0');
+      await expect(t(page, 'versioning-last')).toContainText('Brak');
+    },
+  },
+  {
+    id: 'diagnostyka/wersjonowanie-zgoda',
+    view: 'Diagnostyka',
+    world: 'seeded',
+    reach: async (c) => {
+      await c.go('#/diagnostyka');
+      await t(c.page, 'versioning-form').waitFor();
+      await t(c.page, 'versioning-private').check();
+      await t(c.page, 'versioning-ack').waitFor();
+      await t(c.page, 'versioning-save').click();
+      await t(c.page, 'versioning-ack-error').waitFor();
+    },
+    assert: async ({ page }) => {
+      // Zgoda na elementy prywatne wymaga osobnego potwierdzenia: blad stoi przy polu, a fokus wraca na nie.
+      await expect(t(page, 'versioning-ack-error')).toContainText('Potwierdź');
+      await expect(t(page, 'versioning-ack')).toBeFocused();
+      await expect(t(page, 'versioning-ack')).toHaveAttribute('aria-invalid', 'true');
+      await expect(t(page, 'versioning-saved')).toHaveCount(0);
     },
   },
   {

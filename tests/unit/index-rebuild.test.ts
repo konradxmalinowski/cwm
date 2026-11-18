@@ -6,6 +6,14 @@ import {
   type RetentionReport,
   type RetentionSettings,
 } from '../../src/core/model/retention';
+import {
+  DEFAULT_LIBRARY_GIT_SETTINGS,
+  libraryGitEligibility,
+  libraryGitSubject,
+  parseLibraryGitSettings,
+  type LibraryGitSettings,
+} from '../../src/core/model/library-git';
+import type { LibraryGit, LibraryGitSyncResult } from '../../src/core/ports/library-git';
 import { createUlidGenerator } from '../../src/core/ports/id-generator';
 import type { IndexStore } from '../../src/core/ports/index-store';
 import { LibraryService } from '../../src/core/services/library/library-service';
@@ -20,6 +28,7 @@ import {
   type IndexSnapshot,
   type QuarantineProbeResult,
 } from '../../src/main/services/index-rebuild';
+import { LibraryGitRunner, VERSIONED_CHANNELS } from '../../src/main/services/library-git-runner';
 import { PREVIEW_TOKEN_TTL_MS, RetentionRunner } from '../../src/main/services/retention-runner';
 import { OperationLock } from '../../src/main/services/write-lock';
 import {
@@ -770,5 +779,218 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
     expect(parseRetentionApplyRequest({ confirmed: true, token: 'a'.repeat(129) }).ok).toBe(false);
     expect(parseRetentionApplyRequest(null).ok).toBe(false);
     expect(parseRetentionApplyRequest([]).ok).toBe(false);
+  });
+});
+
+describe('wersjonowanie biblioteki w Git: ustawienia, zgoda i blokada (ADR 0060)', () => {
+  it('ustawienia: dwa pola logiczne, reszta przepada, niebooleowska wartosc to blad', () => {
+    expect(parseLibraryGitSettings({ enabled: true, includePrivate: false, path: '/x' })).toEqual({
+      ok: true,
+      value: { enabled: true, includePrivate: false },
+    });
+    for (const bad of [null, [], 'tak', { enabled: true }, { enabled: 1, includePrivate: false }]) {
+      expect(parseLibraryGitSettings(bad).ok).toBe(false);
+    }
+  });
+
+  it('temat commita to typ operacji i liczba elementow, bez nazw', () => {
+    expect(libraryGitSubject('import', 3)).toBe('import: 3 items');
+    expect(libraryGitSubject('delete', 1)).toBe('delete: 1 item');
+  });
+
+  it('zasada wejscia do historii: public tak, prywatne za zgoda, sekret nigdy, nieczytelne nigdy', () => {
+    const item = (scope: unknown, secretFindings: unknown): unknown => ({
+      classification: { scope, secretFindings },
+    });
+    expect(libraryGitEligibility(item('public', []), false)).toBe('included');
+    expect(libraryGitEligibility(item('private', []), false)).toBe('excluded-private');
+    expect(libraryGitEligibility(item('project', []), false)).toBe('excluded-private');
+    expect(libraryGitEligibility(item('private', []), true)).toBe('included');
+    expect(libraryGitEligibility(item('project', []), true)).toBe('included');
+    const found = [{ rule: 'r', relPath: 'body.md', line: 1 }];
+    expect(libraryGitEligibility(item('public', found), true)).toBe('excluded-secrets');
+    for (const broken of [
+      null,
+      [],
+      {},
+      { classification: null },
+      item('inny', []),
+      item('public', 'brak'),
+      item(undefined, []),
+    ]) {
+      expect(libraryGitEligibility(broken, true)).toBe('excluded-unreadable');
+    }
+  });
+
+  it('tylko kanaly zapisujace biblioteke dostaja commit', () => {
+    expect(Object.keys(VERSIONED_CHANNELS).sort()).toEqual([
+      'import:apply',
+      'library:delete-apply',
+      'library:repair',
+      'library:save',
+      'projects:remove',
+    ]);
+  });
+
+  function versioning(
+    options: {
+      settings?: LibraryGitSettings;
+      available?: boolean;
+      sync?: () => Promise<LibraryGitSyncResult>;
+    } = {},
+  ) {
+    let stored = options.settings ?? DEFAULT_LIBRARY_GIT_SETTINGS;
+    const calls: { operation: string; includePrivate: boolean }[] = [];
+    const git: LibraryGit = {
+      probe: () =>
+        Promise.resolve(
+          options.available === false
+            ? { available: false, message: 'brak gita' }
+            : { available: true },
+        ),
+      status: () =>
+        Promise.resolve({
+          repository: false,
+          commits: 0,
+          last: null,
+          items: { included: 0, excludedPrivate: 2, excludedSecrets: 1, excludedUnreadable: 0 },
+        }),
+      sync: (input) => {
+        calls.push(input);
+        return options.sync?.() ?? Promise.resolve({ ok: true, committed: true, items: 1 });
+      },
+    };
+    const lock = new OperationLock();
+    const logUnexpected = vi.fn();
+    const runner = new LibraryGitRunner({
+      settings: {
+        load: () => Promise.resolve(stored),
+        save: (next) => {
+          stored = next;
+          return Promise.resolve();
+        },
+      },
+      git,
+      lock,
+      logUnexpected,
+    });
+    return { runner, calls, lock, stored: () => stored, logUnexpected };
+  }
+
+  it('wylaczone wersjonowanie: operacja biblioteki nie uruchamia gita', async () => {
+    const h = versioning();
+    h.runner.afterWrite('library:save');
+    await h.runner.idle();
+    expect(h.calls).toEqual([]);
+  });
+
+  it('wlaczone: commit z typem operacji i zgoda z ustawien; kanal spoza listy go nie wywoluje', async () => {
+    const h = versioning({ settings: { enabled: true, includePrivate: true } });
+    h.runner.afterWrite('import:apply');
+    h.runner.afterWrite('export:apply');
+    h.runner.afterWrite('history:rollback');
+    await h.runner.idle();
+    expect(h.calls).toEqual([{ operation: 'import', includePrivate: true }]);
+  });
+
+  it('awaria gita to ostrzezenie w stanie, nie blad, a nastepny commit je czysci', async () => {
+    let fail = true;
+    const h = versioning({
+      settings: { enabled: true, includePrivate: false },
+      sync: () =>
+        Promise.resolve(
+          fail
+            ? { ok: false, message: 'Polecenie git nie powiodło się (add).' }
+            : { ok: true, committed: true, items: 2 },
+        ),
+    });
+    h.runner.afterWrite('library:save');
+    await h.runner.idle();
+    const failed = await h.runner.getState();
+    expect(failed.ok && failed.value.warning).toBe('Polecenie git nie powiodło się (add).');
+    expect(failed.ok && failed.value.itemsExcludedSecrets).toBe(1);
+
+    fail = false;
+    h.runner.afterWrite('library:delete-apply');
+    await h.runner.idle();
+    const healed = await h.runner.getState();
+    expect(healed.ok && healed.value.warning).toBeNull();
+  });
+
+  it('wyjatek z gita jest polkniety i zalogowany, kolejka dziala dalej', async () => {
+    let boom = true;
+    const h = versioning({
+      settings: { enabled: true, includePrivate: false },
+      sync: () => {
+        if (boom) return Promise.reject(new Error('sekret z /home/acme/library-git'));
+        return Promise.resolve({ ok: true, committed: false, items: 0 });
+      },
+    });
+    h.runner.afterWrite('library:save');
+    await expect(h.runner.idle()).resolves.toBeUndefined();
+    expect(h.logUnexpected).toHaveBeenCalledOnce();
+    const state = await h.runner.getState();
+    expect(JSON.stringify(state)).not.toContain('/home/acme');
+    boom = false;
+    h.runner.afterWrite('library:save');
+    await h.runner.idle();
+    expect(h.calls).toHaveLength(2);
+  });
+
+  it('trwajaca odbudowa: commit jest pominiety z ostrzezeniem, zapis biblioteki nie jest blokowany przez git', async () => {
+    const h = versioning({ settings: { enabled: true, includePrivate: false } });
+    const release = h.lock.tryEnterExclusive();
+    expect(release).not.toBeNull();
+    h.runner.afterWrite('library:save');
+    await h.runner.idle();
+    release?.();
+    expect(h.calls).toEqual([]);
+    const state = await h.runner.getState();
+    expect(state.ok && state.value.warning).toMatch(/nie trafiła jeszcze do Git/);
+  });
+
+  it('wlaczenie bez gita: blad z powodem i ustawienia bez zmian', async () => {
+    const h = versioning({ available: false });
+    const result = await h.runner.setSettings({ enabled: true, includePrivate: false });
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'git-unavailable', message: 'brak gita' },
+    });
+    expect(h.stored()).toEqual(DEFAULT_LIBRARY_GIT_SETTINGS);
+    expect(h.calls).toEqual([]);
+  });
+
+  it('wlaczenie robi pierwsza synchronizacje przed zapisem; jej awaria nie zmienia ustawien', async () => {
+    const failing = versioning({
+      sync: () => Promise.resolve({ ok: false, message: 'Polecenie git nie powiodło się (init).' }),
+    });
+    const refused = await failing.runner.setSettings({ enabled: true, includePrivate: false });
+    expect(refused.ok).toBe(false);
+    expect(failing.stored().enabled).toBe(false);
+
+    const h = versioning();
+    const done = await h.runner.setSettings({ enabled: true, includePrivate: false });
+    expect(done.ok && done.value.enabled).toBe(true);
+    expect(h.calls).toEqual([{ operation: 'enable', includePrivate: false }]);
+    expect(h.stored()).toEqual({ enabled: true, includePrivate: false });
+  });
+
+  it('zmiana zgody przy wlaczonej funkcji to pelna synchronizacja, wylaczenie nie dotyka repozytorium', async () => {
+    const h = versioning({ settings: { enabled: true, includePrivate: false } });
+    await h.runner.setSettings({ enabled: true, includePrivate: true });
+    expect(h.calls).toEqual([{ operation: 'resync', includePrivate: true }]);
+    await h.runner.setSettings({ enabled: false, includePrivate: true });
+    expect(h.calls).toHaveLength(1);
+    expect(h.stored()).toEqual({ enabled: false, includePrivate: true });
+  });
+
+  it('zapis ustawien odpowiada busy w trakcie odbudowy i odrzuca niepoprawny ladunek', async () => {
+    const h = versioning();
+    const release = h.lock.tryEnterExclusive();
+    const busy = await h.runner.setSettings({ enabled: true, includePrivate: false });
+    expect(busy.ok === false && busy.error.code).toBe('busy');
+    release?.();
+    const invalid = await h.runner.setSettings({ enabled: 'tak' });
+    expect(invalid.ok === false && invalid.error.code).toBe('invalid-request');
   });
 });

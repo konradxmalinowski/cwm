@@ -1,0 +1,151 @@
+<section class="section" aria-labelledby="diag-versioning" data-testid="versioning-section">
+  <h2 class="section__title" id="diag-versioning">Wersjonowanie biblioteki w Git</h2>
+  <p class="notice__text">
+    Po każdej operacji, która zmienia bibliotekę (zapis, usunięcie, naprawa, import), aplikacja
+    zapisuje commit w lokalnym repozytorium. Repozytorium leży obok biblioteki w katalogu danych
+    aplikacji, nie ma zdalnego adresu i niczego nie wysyła. Funkcja jest opcjonalna: bez Git albo po
+    wyłączeniu biblioteka działa tak samo. Wyłączenie nie usuwa repozytorium.
+  </p>
+
+  @let l = load();
+  @if (l.status === 'loading') {
+    <p role="status" data-testid="versioning-loading">Odczytuję stan wersjonowania.</p>
+  } @else if (l.status === 'error') {
+    <div class="notice" role="alert" data-testid="versioning-load-error">
+      <p class="notice__text"><span class="notice__label">Błąd.</span> {{ l.message }}</p>
+    </div>
+    <p class="row-actions">
+      <button type="button" class="btn" (click)="reload()">Spróbuj ponownie</button>
+    </p>
+  } @else if (state(); as s) {
+    @if (!s.available) {
+      <div class="notice" role="note" data-testid="versioning-unavailable">
+        <p class="notice__text">
+          <span class="notice__label">Git niedostępny.</span> {{ s.unavailableMessage }}
+        </p>
+      </div>
+    }
+
+    <div class="form" data-testid="versioning-form">
+      <label class="check">
+        <input
+          type="checkbox"
+          id="versioning-enabled"
+          data-testid="versioning-enabled"
+          [checked]="enabled()"
+          (change)="setEnabled($any($event.target).checked)"
+        />
+        <span>Wersjonuj bibliotekę w Git</span>
+      </label>
+
+      <label class="check">
+        <input
+          type="checkbox"
+          id="versioning-private"
+          data-testid="versioning-private"
+          aria-describedby="versioning-private-note"
+          [checked]="includePrivate()"
+          (change)="setIncludePrivate($any($event.target).checked)"
+        />
+        <span>Dołącz też elementy prywatne i projektowe</span>
+      </label>
+      <p class="field__hint" id="versioning-private-note">
+        Domyślnie do historii trafiają tylko elementy o zakresie publicznym, a większość elementów
+        jest prywatna. Elementy, w których wykryto sekrety, nie trafiają do historii nigdy, także po
+        zaznaczeniu tej opcji. Wycofanie zgody zdejmuje elementy z kolejnych commitów, ale nie usuwa
+        ich z commitów, które już powstały.
+      </p>
+
+      @if (needsAcknowledgement()) {
+        <div class="field">
+          <label class="check">
+            <input
+              type="checkbox"
+              id="versioning-ack"
+              data-testid="versioning-ack"
+              [attr.aria-describedby]="ackError() ? 'versioning-ack-error' : null"
+              [attr.aria-invalid]="ackError() ? 'true' : null"
+              [checked]="acknowledged()"
+              (change)="setAcknowledged($any($event.target).checked)"
+            />
+            <span>
+              Rozumiem, że treść elementów prywatnych trafi do historii Git i zostanie w niej,
+              dopóki nie usunę repozytorium.
+            </span>
+          </label>
+          @if (ackError()) {
+            <p class="field__error" id="versioning-ack-error" data-testid="versioning-ack-error">
+              <strong>Błąd:</strong> Potwierdź, że rozumiesz, co trafi do historii, albo odznacz
+              dołączanie elementów prywatnych.
+            </p>
+          }
+        </div>
+      }
+    </div>
+
+    <p class="row-actions">
+      <button
+        type="button"
+        class="btn"
+        data-testid="versioning-save"
+        [disabled]="save().status === 'saving'"
+        (click)="onSave()"
+      >
+        {{ save().status === 'saving' ? 'Zapisuję…' : 'Zapisz ustawienia' }}
+      </button>
+    </p>
+    @let v = save();
+    @if (v.status === 'saved') {
+      <p role="status" data-testid="versioning-saved">
+        @if (s.enabled) {
+          Ustawienia zapisane. Kolejne operacje na bibliotece trafią do historii.
+        } @else {
+          Ustawienia zapisane. Wersjonowanie jest wyłączone, istniejące repozytorium zostaje.
+        }
+      </p>
+    } @else if (v.status === 'error') {
+      <div class="notice" role="alert" data-testid="versioning-save-error">
+        <p class="notice__text">
+          <span class="notice__label">Błąd.</span> Nie zapisano ustawień. {{ v.message }}
+        </p>
+      </div>
+    }
+
+    @if (s.warning; as warning) {
+      <div class="notice" role="note" data-testid="versioning-warning">
+        <p class="notice__text">
+          <span class="notice__label">Ostrzeżenie.</span> {{ warning }} Biblioteka działa normalnie,
+          a repozytorium nadrobi zmiany przy następnej operacji.
+        </p>
+      </div>
+    }
+
+    <h3 class="field__label" id="versioning-status">Stan repozytorium</h3>
+    <dl class="report__grid" aria-labelledby="versioning-status" data-testid="versioning-state">
+      <dt>Wersjonowanie</dt>
+      <dd data-testid="versioning-state-enabled">{{ s.enabled ? 'Włączone' : 'Wyłączone' }}</dd>
+      <dt>Repozytorium</dt>
+      <dd>{{ s.repository ? 'Istnieje' : 'Jeszcze nie utworzone' }}</dd>
+      <dt>Liczba commitów</dt>
+      <dd data-testid="versioning-commits">{{ s.commits }}</dd>
+      <dt>Ostatni commit</dt>
+      <dd data-testid="versioning-last">
+        @if (s.lastCommitAt !== null) {
+          {{ formatDate(s.lastCommitAt) }}, <span class="mono">{{ s.lastCommitSubject }}</span>
+        } @else {
+          Brak
+        }
+      </dd>
+      <dt>Elementy w historii</dt>
+      <dd data-testid="versioning-included">{{ s.itemsIncluded }}</dd>
+      <dt>Wykluczone: prywatne</dt>
+      <dd data-testid="versioning-excluded-private">{{ s.itemsExcludedPrivate }}</dd>
+      <dt>Wykluczone: z sekretami</dt>
+      <dd data-testid="versioning-excluded-secrets">{{ s.itemsExcludedSecrets }}</dd>
+      @if (s.itemsExcludedUnreadable > 0) {
+        <dt>Wykluczone: nieczytelne</dt>
+        <dd data-testid="versioning-excluded-unreadable">{{ s.itemsExcludedUnreadable }}</dd>
+      }
+    </dl>
+  }
+</section>

@@ -9,6 +9,19 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ### Added
 
+- Wersjonowanie biblioteki w lokalnym Git (ADR 0060). W Diagnostyce nowa sekcja "Wersjonowanie biblioteki w Git": pole
+  wyboru włącza opcjonalne repozytorium w katalogu danych aplikacji (osobny magazyn obiektów obok `library/`, bez zdalnego
+  adresu i bez wysyłania czegokolwiek w sieć). Po każdej operacji, która zmienia bibliotekę (zapis, usunięcie, naprawa,
+  import, odpięcie projektu), powstaje commit z typem operacji i liczbą elementów, autorem `cwm <cwm@localhost>`, bez
+  podpisu i bez danych użytkownika. Funkcja jest domyślnie wyłączona, wymaga `git` w PATH (bez niego sekcja podaje powód, a
+  reszta aplikacji działa bez zmian) i nigdy nie zmienia wyniku operacji: awaria `git` to ostrzeżenie w Diagnostyce, a
+  zmiany nadrabia następny commit. Do historii trafiają tylko elementy publiczne; prywatne i projektowe dopiero po jawnej
+  zgodzie z osobnym potwierdzeniem, a elementy z wykrytym sekretem nigdy. Wycofanie zgody nie przepisuje historii.
+  Wyłączenie nie usuwa repozytorium; sekcja pokazuje liczbę commitów, ostatni commit i liczby elementów w historii oraz
+  wykluczonych. `git` działa w tym samym czystym środowisku co pobieranie z repozytoriów (bez konfiguracji globalnej,
+  hooków, helperów haseł i pytań, z limitami czasu), a kod uruchamiania procesu jest wspólny. Nowe kanały IPC:
+  `versioning:get` i `versioning:set`. Push do zdalnego repozytorium jest w backlogu.
+
 - Konfiguracje projektowe (ADR 0059, zastępuje ADR 0032). W kreatorze importu nowa sekcja "Z projektu": lista
   projektów, do której katalog dodajesz w systemowym oknie wyboru (aplikacja odrzuca katalog domowy i jego katalogi
   nadrzędne, katalogi systemowe, konfigurację narzędzi, dane aplikacji i dowiązania symboliczne), ze zmianą nazwy i
