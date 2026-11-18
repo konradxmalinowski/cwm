@@ -26,9 +26,22 @@ export interface VersioningStateDto extends VersioningSettingsDto {
   itemsIncluded: number;
   itemsExcludedPrivate: number;
   itemsExcludedSecrets: number;
+  /** Elementy z plikiem albo katalogiem `.git` w srodku. */
+  itemsExcludedGitEntry: number;
   itemsExcludedUnreadable: number;
   /** Ostatnia awaria gita w tej sesji albo `null`; biblioteka dziala niezaleznie od niej. */
   warning: string | null;
+  /** Jednorazowy znacznik zgody na elementy prywatne, wazny kilka minut; wydaje go kazdy odczyt stanu. */
+  consentNonce: string;
+}
+
+/**
+ * Zapis ustawien. Wlaczenie wersjonowania z elementami prywatnymi wymaga `acknowledged: true` oraz znacznika
+ * `nonce` z ostatniego odczytu stanu; main sprawdza oba (`consent-required`, `consent-expired`).
+ */
+export interface VersioningSetRequest extends VersioningSettingsDto {
+  acknowledged?: boolean;
+  nonce?: string;
 }
 
 export type VersioningStateResult = Result<VersioningStateDto>;

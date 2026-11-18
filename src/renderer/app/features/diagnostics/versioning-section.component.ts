@@ -45,10 +45,11 @@ export class VersioningSectionComponent implements OnInit {
   protected readonly acknowledged = signal(false);
   protected readonly ackError = signal(false);
 
-  /** Zgoda na prywatne elementy dopiero sie wlacza: wymaga osobnego potwierdzenia. */
+  /** Prywatne elementy dopiero zaczna trafiac do historii: wymaga to osobnego potwierdzenia (sprawdza je tez main). */
   protected readonly needsAcknowledgement = computed(() => {
     const saved = this.state();
-    return this.includePrivate() && (saved === null || !saved.includePrivate);
+    const granted = saved !== null && saved.enabled && saved.includePrivate;
+    return this.enabled() && this.includePrivate() && !granted;
   });
 
   ngOnInit(): void {
@@ -109,9 +110,14 @@ export class VersioningSectionComponent implements OnInit {
     const result = await this.api.setSettings({
       enabled: this.enabled(),
       includePrivate: this.includePrivate(),
+      acknowledged: this.acknowledged(),
+      nonce: this.state()?.consentNonce ?? '',
     });
     if (!result.ok) {
       this.save.set({ status: 'error', message: result.error.message });
+      // Znacznik zgody jest jednorazowy: po bledzie trzeba pobrac nowy, zeby ponowienie mialo szanse.
+      const fresh = await this.api.getState();
+      if (fresh.ok) this.state.set(fresh.value);
       return;
     }
     this.apply(result.value);

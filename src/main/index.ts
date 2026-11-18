@@ -39,6 +39,7 @@ import { registerLibraryHandlers } from './ipc/handlers/library';
 import { registerProjectsHandlers } from './ipc/handlers/projects';
 import { startProjects, type ProjectsStartup } from './bootstrap/projects';
 import { loadRootSalt } from '../infra/platform/root-salt';
+import { abortRunningGit } from '../infra/cwm/git-process';
 import { IpcRegistry } from './ipc/registry';
 import { IndexRebuildService } from './services/index-rebuild';
 import { RetentionRunner } from './services/retention-runner';
@@ -187,6 +188,8 @@ function start(): void {
   app.on('before-quit', () => {
     // Trwajace pobieranie z repozytorium Git nie ma przezyc aplikacji (ADR 0058).
     importService?.abortGit();
+    // Polecenia `git` lokalnego repozytorium biblioteki nie zaleza od importu (ADR 0060).
+    abortRunningGit();
     const store = indexState.store;
     indexState = { store: null, info: indexState.info };
     closeIndexOnQuit(store);

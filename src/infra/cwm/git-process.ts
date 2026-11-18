@@ -63,6 +63,8 @@ export interface RunContext {
   readonly commandMs?: number;
   /** Dodatkowe ustawienia `-c klucz=wartosc` po zestawie hartujacym; pozniejsze wygrywaja. */
   readonly extraConfig?: readonly string[];
+  /** Dodatkowe zmienne srodowiska procesu (np. `GIT_LITERAL_PATHSPECS`); nie nadpisuja PATH ani HOME. */
+  readonly extraEnv?: Readonly<Record<string, string>>;
 }
 
 export interface RunOptions {
@@ -135,13 +137,14 @@ export function runGit(
       });
       return;
     }
-    const env = buildGitEnv({
+    const baseEnv = buildGitEnv({
       parent: process.env,
       scratchDir: context.scratch,
       gitDir: dirname(context.git),
       allowLoopbackHttp: context.allowHttp,
       ...(options.repository === undefined ? {} : { repository: options.repository }),
     });
+    const env: Record<string, string> = { ...context.extraEnv, ...baseEnv };
     const configArgs = (context.extraConfig ?? []).flatMap((setting) => ['-c', setting]);
     const child = spawn(
       context.git,

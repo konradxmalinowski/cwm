@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 
 import type { Result } from '../../../../shared/ipc/library-contract';
 import type {
-  VersioningSettingsDto,
+  VersioningSetRequest,
   VersioningStateDto,
 } from '../../../../shared/ipc/versioning-contract';
 import { callBridge } from './ipc-call';
@@ -14,7 +14,7 @@ export class VersioningApiService {
     return callBridge((bridge) => bridge.versioning.get());
   }
 
-  setSettings(settings: VersioningSettingsDto): Promise<Result<VersioningStateDto>> {
+  setSettings(settings: VersioningSetRequest): Promise<Result<VersioningStateDto>> {
     return callBridge((bridge) => bridge.versioning.set(settings));
   }
 }

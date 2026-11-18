@@ -57,9 +57,17 @@ export function libraryGitSubject(operation: LibraryGitOperation, items: number)
   return `${operation}: ${items} ${items === 1 ? 'item' : 'items'}`;
 }
 
-/** Dlaczego element nie wchodzi do historii. `included` to jedyny stan, ktory trafia do repozytorium. */
+/**
+ * Dlaczego element nie wchodzi do historii; `included` to jedyny stan, ktory trafia do repozytorium.
+ * `excluded-secrets` to wykrycie zapisane w `item.json` albo ponowny skan tresci w chwili commita
+ * (ADR 0060, punkt 6); `excluded-git-entry` to plik albo katalog `.git` gdziekolwiek w elemencie.
+ */
 export type LibraryGitEligibility =
-  'included' | 'excluded-private' | 'excluded-secrets' | 'excluded-unreadable';
+  | 'included'
+  | 'excluded-private'
+  | 'excluded-secrets'
+  | 'excluded-git-entry'
+  | 'excluded-unreadable';
 
 const SCOPES: ReadonlySet<string> = new Set(['public', 'private', 'project']);
 

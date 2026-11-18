@@ -52,8 +52,9 @@
       <p class="field__hint" id="versioning-private-note">
         Domyślnie do historii trafiają tylko elementy o zakresie publicznym, a większość elementów
         jest prywatna. Elementy, w których wykryto sekrety, nie trafiają do historii nigdy, także po
-        zaznaczeniu tej opcji. Wycofanie zgody zdejmuje elementy z kolejnych commitów, ale nie usuwa
-        ich z commitów, które już powstały.
+        zaznaczeniu tej opcji, bo treść jest skanowana ponownie przy każdym commicie. Wycofanie
+        zgody zdejmuje elementy z kolejnych commitów, ale nie usuwa ich z commitów, które już
+        powstały.
       </p>
 
       @if (needsAcknowledgement()) {
@@ -136,15 +137,21 @@
           Brak
         }
       </dd>
-      <dt>Elementy w historii</dt>
-      <dd data-testid="versioning-included">{{ s.itemsIncluded }}</dd>
-      <dt>Wykluczone: prywatne</dt>
-      <dd data-testid="versioning-excluded-private">{{ s.itemsExcludedPrivate }}</dd>
-      <dt>Wykluczone: z sekretami</dt>
-      <dd data-testid="versioning-excluded-secrets">{{ s.itemsExcludedSecrets }}</dd>
-      @if (s.itemsExcludedUnreadable > 0) {
-        <dt>Wykluczone: nieczytelne</dt>
-        <dd data-testid="versioning-excluded-unreadable">{{ s.itemsExcludedUnreadable }}</dd>
+      @if (s.enabled) {
+        <dt>Elementy w historii</dt>
+        <dd data-testid="versioning-included">{{ s.itemsIncluded }}</dd>
+        <dt>Wykluczone: prywatne</dt>
+        <dd data-testid="versioning-excluded-private">{{ s.itemsExcludedPrivate }}</dd>
+        <dt>Wykluczone: z sekretami</dt>
+        <dd data-testid="versioning-excluded-secrets">{{ s.itemsExcludedSecrets }}</dd>
+        @if (s.itemsExcludedGitEntry > 0) {
+          <dt>Wykluczone: z wpisem .git w środku</dt>
+          <dd data-testid="versioning-excluded-git-entry">{{ s.itemsExcludedGitEntry }}</dd>
+        }
+        @if (s.itemsExcludedUnreadable > 0) {
+          <dt>Wykluczone: nieczytelne</dt>
+          <dd data-testid="versioning-excluded-unreadable">{{ s.itemsExcludedUnreadable }}</dd>
+        }
       }
     </dl>
   }

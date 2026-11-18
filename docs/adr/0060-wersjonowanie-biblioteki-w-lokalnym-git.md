@@ -49,9 +49,14 @@ sekundy, nie milisekundy.
    `git-fetch.ts` importuje go stamtąd i nadal re-eksportuje `abortRunningGit`. Lokalne repozytorium używa tego samego
    środowiska od zera (`buildGitEnv`: bez konfiguracji globalnej i systemowej, `GIT_TERMINAL_PROMPT=0`, `HOME` i `TMPDIR`
    w pustym katalogu 0700) i tych samych opcji `-c` (`gitHardeningArgs`: `core.hooksPath=/dev/null`, bez helperów
-   haseł, bez filtrów LFS, `gc.auto=0`). `RunContext` dostał dwa pola: `commandMs` (20 s zamiast 120 s) i `extraConfig`.
+   haseł, bez filtrów LFS, `gc.auto=0`). `RunContext` dostał trzy pola: `commandMs` (15 s zamiast 120 s), `extraConfig` i `extraEnv`.
    Dla tej warstwy `extraConfig` dodaje `protocol.https.allow=never` (żadne polecenie nie dotyka sieci), autora,
-   wyłączenie podpisów i `core.excludesFile=/dev/null`. Lista plików z prawem `child_process` w `eslint.config.mjs` i
+   wyłączenie podpisów, `core.excludesFile=/dev/null` oraz zamknięcie programów z konfiguracji: `gpg.program`,
+   `core.sshCommand`, `diff.external`, `core.gitProxy`, `core.worktree`, `core.pager=cat`, `log.showSignature=false`.
+   `extraEnv` ustawia `GIT_LITERAL_PATHSPECS=1`, więc ścieżki z listy nie są wzorcami. **Konfiguracja magazynu nie jest
+   zaufana:** przed każdym poleceniem (także przy odczycie stanu) `<git-dir>/config` jest przepisywany ze stałego
+   szablonu, a `include.path`, którego nie da się wyczyścić z wiersza poleceń, zamyka właśnie ten szablon. Przy
+   plikach przekierowujących (`commondir`, `gitdir`, `objects/info/alternates`) warstwa odmawia uruchomienia `git`. Lista plików z prawem `child_process` w `eslint.config.mjs` i
    w `scripts/verify-boundaries.mjs` zyskała `git-process.ts`; dwie nowe próby dowodzą, że `infra/library/` nie importuje
    ani `git-fetch.ts`, ani `child_process`. Importerzy `git-fetch.ts` pozostają ci sami (ADR 0058).
 3. **Wejście do historii tylko przez listę ścieżek i własne atrybuty.** Pliki dodaje się poleceniem `git add -A -f
@@ -71,8 +76,14 @@ sekundy, nie milisekundy.
    biblioteki i tworzy jeden commit, jeśli coś się zmieniło. Przebieg pominięty (zajęta blokada) albo nieudany nadrabia się
    przy następnej operacji i jednorazowo przy starcie aplikacji. Awaria daje ostrzeżenie w Diagnostyce (stały tekst bez
    ścieżek i wyjścia procesu) i wpis w logu; wynik `library:save` itd. jest już odesłany, a zapis na dysku się nie cofa.
-   Zamknięcie aplikacji w trakcie commita może zostawić `index.lock`; zamek starszy niż 5 minut jest usuwany przed
-   następnym przebiegiem, bo kolejka tego procesu jest jedynym użytkownikiem repozytorium.
+   Blokada zapisu trwa tylko przez skan i staging; sam commit idzie poza nią (limit całej synchronizacji to 20 s, a
+   zajęta blokada kończy przebieg bez ostrzeżenia, bo następny go nadrobi). Zamknięcie aplikacji w trakcie polecenia
+   może zostawić zamki (`index.lock`, `HEAD.lock`, `refs/**/*.lock`, `packed-refs.lock`, `shallow.lock`). Kolejka tego
+   procesu jest jedynym pisarzem, a odczyty stanu nie biorą zamków, więc na początku każdej synchronizacji, gdy żadne
+   polecenie `git` nie działa, wszystkie pliki `*.lock` w magazynie są usuwane. Zamek ręcznie uruchomionego `git`
+   na tym repozytorium też zostanie usunięty; to świadomy koszt. Listy plików z `ls-files` i `diff --name-only`
+   mają limit wyjścia 64 MiB, żeby duża biblioteka nie kończyła się błędem na stałe. `before-quit` woła
+   `abortRunningGit()` bezpośrednio, niezależnie od importu.
 5. **Tożsamość i treść commita.** Autor i komitujący to `cwm <cwm@localhost>`, ustawiani opcją `-c` przy każdym poleceniu
    (nie z konfiguracji użytkownika, której środowisko nie czyta). Bez podpisu (`commit.gpgsign=false`), `--no-verify`.
    Temat to typ operacji i liczba elementów (`import: 3 items`, `delete: 1 item`); liczba pochodzi z listy zmienionych
@@ -81,10 +92,20 @@ sekundy, nie milisekundy.
 6. **Elementy prywatne i z sekretami: decyzja.** Do historii trafiają domyślnie wyłącznie elementy o zakresie `public`.
    - Element z niepustym `classification.secretFindings` nie wchodzi **nigdy**, także po zgodzie. Zgoda nie ma tu zastosowania,
      bo wykrycie sekretu jest heurystyką, a historia Git jest nieodwracalna.
+   - `secretFindings` z `item.json` bywa nieaktualne (edycja po imporcie, plik zmieniony na dysku), więc w chwili commita
+     cała treść elementu jest skanowana od nowa (`classifyStrict`, jak w archiwum ZIP): `item.json` z tytułem i opisem,
+     `body.md`, pliki pomocnicze i snapshoty źródła. Trafienie wyklucza element (`excluded-secrets`). Zapis z edytora
+     (`library:save`) też liczy wykrycia od nowa i zastępuje nimi stare, więc biblioteka mówi prawdę, a usunięcie sekretu
+     zdejmuje oznaczenie. Skan jest heurystyką: nie zmienia faktu, że historia jest nieodwracalna.
+   - Plik albo katalog `.git` (bez względu na wielkość liter) gdziekolwiek w elemencie wyklucza go (`excluded-git-entry`),
+     tak samo jak dowiązanie, plik specjalny i przekroczenie limitów. Powód widać w Diagnostyce osobnym licznikiem.
    - Elementy `private` i `project` wchodzą dopiero po jawnej zgodzie `includePrivate` (pole w ustawieniach, domyślnie
      `false`). Włączenie zgody w interfejsie wymaga osobnego potwierdzenia: pole "Rozumiem, że treść elementów prywatnych
      trafi do historii Git i zostanie w niej, dopóki nie usunę repozytorium". Brak potwierdzenia daje błąd przy polu i fokus
-     na nim. Serwer sprawdza tylko kształt ustawień; potwierdzenie jest decyzją interfejsu, tak jak w kreatorze importu.
+     na nim. Main wymusza to samo: zgoda (włączone wersjonowanie z `includePrivate`, gdy jeszcze nie obowiązuje) wymaga
+     `acknowledged: true` i jednorazowego znacznika z odczytu stanu (`versioning:get`, ważny 5 minut, zużywany przy
+     każdej próbie). Bez nich zapis kończy się `consent-required` albo `consent-expired`, więc skompromitowany renderer
+     nie włączy prywatnych elementów jednym wywołaniem.
    - `item.json`, którego nie da się odczytać albo którego klasyfikacja ma nieznany kształt, jest wykluczony (`excluded-unreadable`):
      reguła zawodzi na zamknięciu. `libraryGitEligibility` w `core/model/library-git.ts` ma tę regułę w jednym miejscu.
    - Wykluczenie działa przy każdym przebiegu: element, który stał się prywatny albo dostał wykrycie sekretu, jest zdejmowany
@@ -101,8 +122,9 @@ sekundy, nie milisekundy.
    repozytorium, liczba commitów, ostatni commit, elementy w historii i wykluczone. Przy braku Git pola zostają aktywne, a
    próba włączenia kończy się komunikatem z main. "Otwórz w Finderze" nie ma. Wyłączenie zapisuje ustawienie i nie dotyka
    repozytorium.
-8. **IPC.** Dwa nowe kanały: `versioning:get` (stan) i `versioning:set` (`{ enabled, includePrivate }`, walidowane w main
-   tym samym kodem co odczyt pliku ustawień, oba pola typu logicznego). Żaden nie przyjmuje ścieżki, adresu ani tekstu
+8. **IPC.** Dwa nowe kanały: `versioning:get` (stan i znacznik zgody) i `versioning:set` (`{ enabled, includePrivate,
+   acknowledged?, nonce? }`; pola ustawień walidowane w main tym samym kodem co odczyt pliku, oba typu logicznego).
+   Przy wyłączonym wersjonowaniu odczyt stanu nie skanuje elementów (liczniki zerowe). Żaden nie przyjmuje ścieżki, adresu ani tekstu
    commita, a stan nie zawiera ścieżek. Kanały nie są w `WRITE_CHANNELS`: nie zapisują do content store ani do logu operacji
    (bezpieczeństwo retencji z ADR 0056 zostaje), a blokadę zapisu biorą same. Włączenie robi pierwszą synchronizację przed
    zapisem ustawień: gdy `git` zawiedzie, ustawienia zostają bez zmian, a użytkownik dostaje powód.
