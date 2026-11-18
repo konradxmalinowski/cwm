@@ -74,6 +74,9 @@ test('import: lokalizacje, skan, wybor, okno sekretu i zapis samą klawiaturą',
     await openViaNav(page, 'Import', 'import-heading');
 
     // 2. Lokalizacje: Tab po polach wyboru, Spacja odznacza, Enter skanuje.
+    // Lista lokalizacji renderuje sie po odpowiedzi import:detect; bez czekania Tab
+    // potrafi przejsc za koniec dokumentu i wrocic na skip-link.
+    await expect(page.locator('main input[type="checkbox"]').first()).toBeVisible();
     await resetFocusOrder(page);
     await tabTo(page, 'input[type="checkbox"]');
     const firstRoot = await page.evaluate(
