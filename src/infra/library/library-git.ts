@@ -164,7 +164,7 @@ export class FsLibraryGit implements LibraryGit {
     if (included.length > 0) {
       const added = await this.run(
         context,
-        ['add', '-A', '-f', '-q', '--pathspec-from-file=-', '--pathspec-file-nul'],
+        ['add', '-A', '-f', '--pathspec-from-file=-', '--pathspec-file-nul'],
         { input: `${included.map((id) => `items/${id}`).join('\0')}\0` },
       );
       if (added.code !== 0) return this.failure('add', added);
@@ -280,7 +280,7 @@ export class FsLibraryGit implements LibraryGit {
     const byId = new Map<string, LibraryGitEligibility>();
     const counts = { included: 0, excludedPrivate: 0, excludedSecrets: 0, excludedUnreadable: 0 };
     const root = join(this.options.libraryDir, 'items');
-    let names: string[] = [];
+    let names: string[];
     try {
       names = await readdir(root);
     } catch {
