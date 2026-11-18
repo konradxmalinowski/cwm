@@ -148,6 +148,88 @@
           </div>
         }
       }
+
+      <section
+        class="section import-git"
+        aria-labelledby="import-git-title"
+        data-testid="import-git"
+      >
+        <h2 class="section__title" id="import-git-title">Z repozytorium Git</h2>
+        <p class="view__sub import-git__lead">
+          Pobiera publiczne repozytorium przez https i skanuje je tak samo jak lokalizacje narzędzi.
+          Zawartość jest traktowana jak niezaufana: import niczego nie uruchamia, a kopia znika
+          zaraz po skanie. Komendy i agenci z repozytorium zaczną działać w narzędziu dopiero po
+          eksporcie, więc nic nie jest zaznaczone z góry, a hooki, serwery MCP i tryb uprawnień są
+          usuwane.
+        </p>
+        @if (gitError(); as message) {
+          <div class="notice" role="alert" data-testid="import-git-error">
+            <p class="notice__text"><span class="notice__label">Błąd.</span> {{ message }}</p>
+            <p class="notice__text">
+              Adres i ref zostały w polach. Możesz poprawić je i spróbować ponownie.
+            </p>
+          </div>
+        }
+        <form class="form" novalidate (submit)="startGitScan($event)" data-testid="import-git-form">
+          <div class="field">
+            <label class="field__label" for="git-url">Adres repozytorium (wymagane)</label>
+            <input
+              id="git-url"
+              class="control mono"
+              type="text"
+              inputmode="url"
+              autocomplete="off"
+              spellcheck="false"
+              aria-required="true"
+              data-testid="import-git-url"
+              [value]="gitUrl()"
+              [attr.aria-invalid]="gitUrlShown() !== null ? 'true' : null"
+              [attr.aria-describedby]="gitUrlShown() !== null ? 'git-url-error' : 'git-url-hint'"
+              (input)="onGitUrl($any($event.target).value)"
+            />
+            @if (gitUrlShown(); as message) {
+              <p class="field__error" id="git-url-error" data-testid="import-git-url-error">
+                <strong>Błąd:</strong> {{ message }}
+              </p>
+            } @else {
+              <p class="field__hint" id="git-url-hint">
+                Na przykład https://github.com/organizacja/repozytorium. Adresy z loginem i hasłem,
+                ssh i file są odrzucane.
+              </p>
+            }
+          </div>
+          <div class="field">
+            <label class="field__label" for="git-ref">Ref (opcjonalnie)</label>
+            <input
+              id="git-ref"
+              class="control mono"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              data-testid="import-git-ref"
+              [value]="gitRef()"
+              [attr.aria-invalid]="gitRefShown() !== null ? 'true' : null"
+              [attr.aria-describedby]="gitRefShown() !== null ? 'git-ref-error' : 'git-ref-hint'"
+              (input)="onGitRef($any($event.target).value)"
+            />
+            @if (gitRefShown(); as message) {
+              <p class="field__error" id="git-ref-error" data-testid="import-git-ref-error">
+                <strong>Błąd:</strong> {{ message }}
+              </p>
+            } @else {
+              <p class="field__hint" id="git-ref-hint">
+                Gałąź, tag albo pełny SHA. Puste pole to domyślna gałąź repozytorium.
+              </p>
+            }
+          </div>
+          <div class="row-actions">
+            <button type="submit" class="btn" data-testid="import-git-scan">
+              Pobierz i przeskanuj
+            </button>
+            <span class="view__sub">Wymaga programu git w PATH i połączenia z siecią.</span>
+          </div>
+        </form>
+      </section>
     }
 
     @case ('scanning') {
@@ -161,7 +243,12 @@
         }
       </div>
       <p role="status">
-        Czytam pliki z wybranych lokalizacji. Przy dużej konfiguracji może to chwilę potrwać.
+        @if (source() === 'git') {
+          Pobieram repozytorium i czytam jego pliki. Zajmuje to zwykle kilka sekund, a przy wolnym
+          łączu do kilku minut. Anulowanie odrzuca wynik, ale pobieranie w tle dokończy się samo.
+        } @else {
+          Czytam pliki z wybranych lokalizacji. Przy dużej konfiguracji może to chwilę potrwać.
+        }
       </p>
       <p class="row-actions">
         <button type="button" class="btn" (click)="cancelScan()">Anuluj skan</button>
@@ -179,12 +266,43 @@
         </div>
       }
 
+      @if (gitSource(); as repo) {
+        <div class="import-git__origin" data-testid="import-git-origin">
+          <p>
+            Z repozytorium <span class="mono">{{ repo.url }}</span>,
+            @if (repo.ref !== null) {
+              ref <span class="mono">{{ repo.ref }}</span>,
+            }
+            commit <span class="mono">{{ repo.commit.slice(0, 12) }}</span>. Adres i commit zostaną
+            zapisane przy zaimportowanych elementach. Nic nie jest zaznaczone z góry: wybierz tylko
+            to, czemu ufasz.
+          </p>
+          @if (repo.submodules > 0) {
+            <p class="view__sub">
+              <span class="notice__label">Uwaga.</span> Repozytorium ma
+              {{ repo.submodules }}
+              {{ plural(repo.submodules, 'submoduł', 'submoduły', 'submodułów') }}. Submoduły nie są
+              pobierane, więc nie wchodzą do importu.
+            </p>
+          }
+        </div>
+      }
+
       @if (candidates().length === 0) {
         <div class="empty" data-testid="import-no-candidates">
-          <p>
-            W wybranych lokalizacjach nie ma skilli, agentów ani komend, które da się odczytać.
-            Spróbuj wybrać inne lokalizacje.
-          </p>
+          @if (gitSource() !== null) {
+            <p>
+              W repozytorium nie ma skilli, agentów ani komend w znanym układzie: katalogu
+              <span class="mono">skills/</span>, <span class="mono">.claude/</span>,
+              <span class="mono">.codex/</span>, <span class="mono">.gemini/</span> albo pliku
+              <span class="mono">SKILL.md</span> w korzeniu. Wróć i podaj inne repozytorium.
+            </p>
+          } @else {
+            <p>
+              W wybranych lokalizacjach nie ma skilli, agentów ani komend, które da się odczytać.
+              Spróbuj wybrać inne lokalizacje.
+            </p>
+          }
         </div>
       } @else {
         <p class="hints">

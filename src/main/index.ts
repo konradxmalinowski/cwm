@@ -172,6 +172,8 @@ function start(): void {
   });
 
   app.on('before-quit', () => {
+    // Trwajace pobieranie z repozytorium Git nie ma przezyc aplikacji (ADR 0058).
+    importService?.abortGit();
     const store = indexState.store;
     indexState = { store: null, info: indexState.info };
     closeIndexOnQuit(store);
@@ -329,7 +331,7 @@ function start(): void {
     if (library.failure !== undefined)
       log().error('[cwm] biblioteka niedostepna:', library.failure);
     if (library.service !== null) {
-      importService = startImport(library.service, logImportError);
+      importService = startImport(library.service, userData, logImportError);
       void startExport(library.service, logExportError, {
         userDataDir: userData,
         indexStore: () => indexState.store,

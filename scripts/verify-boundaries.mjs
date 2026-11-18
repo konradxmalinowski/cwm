@@ -351,8 +351,9 @@ const allowedExecFiles = [
   'src/infra/cwm/engine-process.ts',
   'src/infra/cwm/gitignore.ts',
   'src/infra/cwm/git-fetch.ts',
-  // Jedyny importer git-fetch.ts: musi przechodzic lint, inaczej wyjatek bylby martwy.
+  // Jedyni importerzy git-fetch.ts: musza przechodzic lint, inaczej wyjatek bylby martwy.
   'src/cli/commands/plugin.ts',
+  'src/infra/git-import/git-import-source.ts',
 ];
 
 const control = {
@@ -432,11 +433,13 @@ try {
 }
 
 // Skan zrodel (omija lint, np. importy dynamiczne i `require`): `git-fetch` wolno wymienic tylko w
-// `cli/commands/plugin.ts`, a `child_process` tylko w trzech plikach z listy procesow.
-const gitFetchImporters = new Set(['src/cli/commands/plugin.ts']);
-const processFiles = new Set(
-  allowedExecFiles.filter((file) => file !== 'src/cli/commands/plugin.ts'),
-);
+// `cli/commands/plugin.ts` i `infra/git-import/git-import-source.ts`, a `child_process` tylko w trzech
+// plikach z listy procesow.
+const gitFetchImporters = new Set([
+  'src/cli/commands/plugin.ts',
+  'src/infra/git-import/git-import-source.ts',
+]);
+const processFiles = new Set(allowedExecFiles.filter((file) => !gitFetchImporters.has(file)));
 
 async function sourceFiles(dir) {
   const found = [];

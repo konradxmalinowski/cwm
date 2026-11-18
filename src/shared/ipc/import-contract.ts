@@ -24,6 +24,27 @@ export interface ImportScanRequest {
   rootIds: string[];
 }
 
+/**
+ * `import:scan-git` (ADR 0058). Adres https bez danych logowania i opcjonalny ref; odpowiedz to ten sam
+ * `ImportScanDto` co dla lokalizacji, z polem `git`. Renderer nie dostaje sciezki kopii, bo kopia
+ * powstaje i znika w main w czasie jednego wywolania.
+ */
+export interface ImportScanGitRequest {
+  url: string;
+  /** Galaz, tag albo pelny SHA; brak oznacza `HEAD` repozytorium. */
+  ref?: string;
+}
+
+export interface GitScanDto {
+  /** Adres bez danych logowania. */
+  url: string;
+  ref: string | null;
+  /** Pelny SHA pobranego commita: to on trafia do pochodzenia elementu. */
+  commit: string;
+  /** Liczba submoduli w repozytorium; nie sa pobierane. */
+  submodules: number;
+}
+
 export type CandidateStatus =
   /** Nie ma w bibliotece. */
   | 'new'
@@ -89,6 +110,8 @@ export interface LibrarySlugDto {
 export interface ImportScanDto {
   /** Token skanu; `apply` dziala tylko na kandydatach z tego skanu. */
   scanToken: string;
+  /** Tylko skan repozytorium Git: skad pochodza kandydaci. Brak pola to skan lokalizacji narzedzi. */
+  git?: GitScanDto;
   candidates: CandidateDto[];
   skipped: SkippedDto[];
   /** Nazwy zajete w bibliotece w chwili skanu, do zywej walidacji nowego sluga (ADR 0017). */

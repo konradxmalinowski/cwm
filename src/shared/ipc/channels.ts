@@ -15,6 +15,7 @@ export const IPC_CHANNELS = [
   'library:repair',
   'import:detect',
   'import:scan',
+  'import:scan-git',
   'import:apply',
   'export:plan',
   'export:apply',

@@ -2,6 +2,7 @@ import {
   ITEM_KINDS,
   TOOL_IDS,
   type Asset,
+  type GitOrigin,
   type ImportOrigin,
   type ItemAttributes,
   type ItemContent,
@@ -32,6 +33,12 @@ import {
   type ValidationIssue,
   type ValidationReason,
 } from '../../model/library-errors';
+import {
+  GIT_COMMIT_PATTERN,
+  gitRefProblem,
+  gitUrlProblem,
+  sanitizeGitUrl,
+} from '../../cwm/git-source';
 
 export const ITEM_FORMAT_VERSION = 1;
 
@@ -493,6 +500,28 @@ class ShapeReader {
   }
 }
 
+/**
+ * Pochodzenie z repozytorium Git (ADR 0058). Adres musi byc w formie, w jakiej CWM go zapisuje: https bez
+ * danych logowania, zapytania i fragmentu (albo http na petli zwrotnej w testach), wiec haslo wpisane przez
+ * pomylke w adresie nie przezyje zapisu do `item.json`. Commit to pelny SHA, ref przechodzi te sama kontrole co przy pobieraniu.
+ */
+function readGitOrigin(r: ShapeReader, raw: unknown): GitOrigin {
+  const g = r.object(raw, 'source.importedFrom.git');
+  const url = r.string(g['url'], 'source.importedFrom.git.url');
+  if (gitUrlProblem(url) !== null || sanitizeGitUrl(url) !== url) {
+    r.fail('source.importedFrom.git.url', 'musi być adresem repozytorium bez danych logowania');
+  }
+  const commit = r.string(g['commit'], 'source.importedFrom.git.commit');
+  if (!GIT_COMMIT_PATTERN.test(commit)) {
+    r.fail('source.importedFrom.git.commit', 'musi być pełnym skrótem commita');
+  }
+  const ref = r.stringOrNull(g['ref'], 'source.importedFrom.git.ref');
+  if (ref !== null && gitRefProblem(ref) !== null) {
+    r.fail('source.importedFrom.git.ref', 'musi być nazwą gałęzi, taga albo pełnym SHA');
+  }
+  return { url, commit, ref };
+}
+
 function readAttributes(r: ShapeReader, raw: unknown): ItemAttributes {
   const a = r.object(raw, 'attributes');
   const out: {
@@ -636,6 +665,7 @@ export function parseItemMeta(raw: unknown, expectedId: string, context: ShapeCo
       rootId: r.string(o['rootId'], 'source.importedFrom.rootId'),
       path: r.string(o['path'], 'source.importedFrom.path'),
       at: r.string(o['at'], 'source.importedFrom.at'),
+      ...(o['git'] === undefined ? {} : { git: readGitOrigin(r, o['git']) }),
     };
   }
 

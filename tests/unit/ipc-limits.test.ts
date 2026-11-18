@@ -5,7 +5,11 @@ vi.mock('electron', () => ({}));
 import { MAX_PLAN_ITEMS } from '../../src/core/services/export/export-service';
 import { MAX_PREVIEW_BYTES, previewText } from '../../src/main/ipc/handlers/export';
 import { parsePlanRequest } from '../../src/main/ipc/handlers/export-validation';
-import { parseApplyRequest, parseScanRequest } from '../../src/main/ipc/handlers/import-validation';
+import {
+  parseApplyRequest,
+  parseScanGitRequest,
+  parseScanRequest,
+} from '../../src/main/ipc/handlers/import-validation';
 import { parseListRequest } from '../../src/main/ipc/handlers/library-validation';
 import { exportHarness } from './export-fakes';
 
@@ -38,6 +42,16 @@ describe('limity ladunkow IPC: limit przechodzi, limit + 1 nie', () => {
     expect(parseApplyRequest({ scanToken: token, candidateIds: ids(5000) }).ok).toBe(true);
     expect(parseApplyRequest({ scanToken: token, candidateIds: ids(5001) }).ok).toBe(false);
     expect(parseApplyRequest({ scanToken: `${token}t`, candidateIds: [] }).ok).toBe(false);
+  });
+
+  it('import:scan-git: adres do 2048 znakow, ref do 128', () => {
+    const url = (length: number): string => `https://example.com/${'a'.repeat(length - 20)}`;
+    expect(url(2048)).toHaveLength(2048);
+    expect(parseScanGitRequest({ url: url(2048) }).ok).toBe(true);
+    expect(parseScanGitRequest({ url: url(2049) }).ok).toBe(false);
+    const base = { url: 'https://example.com/acme/skills.git' };
+    expect(parseScanGitRequest({ ...base, ref: 'a'.repeat(128) }).ok).toBe(true);
+    expect(parseScanGitRequest({ ...base, ref: 'a'.repeat(129) }).ok).toBe(false);
   });
 
   it('import:apply: renames tylko dla wybranych kandydatow, nazwa do 256 znakow', () => {

@@ -9,6 +9,17 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ### Added
 
+- Import z repozytorium Git (ADR 0058). W kreatorze importu, pod listą lokalizacji, nowe źródło "Z repozytorium Git":
+  adres https i opcjonalny ref (gałąź, tag albo pełny SHA). Aplikacja pobiera repozytorium tym samym, zahartowanym
+  kodem co `cwm plugin add git` (płytkie pobranie, limity czasu, liczby plików i rozmiaru, bez hooków, submodułów,
+  LFS, SSH i danych logowania), skanuje je jak niezaufaną treść i usuwa kopię zaraz po skanie. Nic z repozytorium nie jest zaznaczone z góry; hooki, serwery MCP i tryb uprawnień zadeklarowane we frontmatterze są usuwane z elementu przy imporcie (ostrzeżenie i wpis w Historii), a deklaracje narzędzi dostają ostrzeżenie, bo komendy i agenci działają w narzędziu po eksporcie. Adres musi być publicznym https (bez IP, `localhost`, `.local`, `.internal` i nazw bez kropki). Rozpoznaje katalogi
+  `skills/`, `.claude/`, `.codex/` i `.gemini/` (skille, agenci, komendy) oraz pojedynczy `SKILL.md` w korzeniu;
+  hooki i instrukcje globalne z cudzego repozytorium nie wchodzą. Podgląd pokazuje adres, ref i commit, a element
+  zapisuje adres (bez danych logowania) i pełny SHA, więc Historia mówi "z repozytorium X@sha". Wymaga programu
+  `git` w PATH; bez niego reszta aplikacji działa, a kreator podaje powód. Tylko publiczne repozytoria; repozytorium
+  z dowiązaniem symbolicznym w commicie jest odrzucane w całości. Nowy kanał IPC `import:scan-git` waliduje wejście
+  w main, a renderer nigdy nie dostaje ścieżek.
+
 - Limit i czyszczenie historii oraz content store (ADR 0056). Na ekranie Diagnostyka nowa sekcja "Retencja historii i content
   store": limity liczby wpisów, wieku wpisu (dni) i rozmiaru danych (MiB), każdy opcjonalny, domyślnie bez limitów. Akcja
   "Wyczyść teraz" najpierw pokazuje podgląd (ile wpisów i ile danych zniknie), a usuwa dopiero po potwierdzeniu. Obiekt jest

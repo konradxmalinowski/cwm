@@ -1,4 +1,5 @@
 import type {
+  GitOrigin,
   ItemDraft,
   ItemKind,
   LibraryItem,
@@ -17,9 +18,13 @@ import type {
   RootScan,
   ToolAdapter,
 } from '../../ports/tool-adapter';
+import type { GitSourceFailure, GitSourceProvider, GitSourceRequest } from '../../ports/git-source';
 import type { SourceReader } from '../../ports/source-reader';
 import type { LibraryService } from '../library/library-service';
 import { validateSlug } from '../library/validate';
+import { gitRefProblem, gitUrlProblem } from '../../cwm/git-source';
+import { gitRefInputProblem, gitUrlInputProblem } from './git-input';
+import { reviewGitCandidate } from './git-risk';
 import { sha256Bytes, sha256Text } from '../normalization/hash';
 import { normalizeToLf } from '../normalization/line-endings';
 import {
@@ -48,6 +53,8 @@ export interface ScannedCandidate {
   readonly duplicateOf: string | null;
   readonly secrets: readonly SecretHit[];
   readonly selectedByDefault: boolean;
+  /** Pola wykonawcze usuniete z elementu z repozytorium Git przy imporcie (ADR 0058); puste dla importu lokalnego. */
+  readonly dropped: readonly string[];
 }
 
 export interface ScannedSkip extends ImportSkip {
@@ -60,6 +67,8 @@ export interface LibrarySlug {
 }
 
 export interface ScanReport {
+  /** Repozytorium, z ktorego pochodzi skan; `null` dla skanu lokalizacji narzedzi. */
+  readonly git: (GitOrigin & { readonly submodules: number }) | null;
   readonly scanToken: string;
   readonly candidates: readonly ScannedCandidate[];
   readonly skipped: readonly ScannedSkip[];
@@ -99,7 +108,14 @@ export type ApplySkipReason =
   | 'slug-taken-in-this-import'
   | 'rename-not-allowed';
 
-export type ImportErrorCode = 'unknown-root' | 'unknown-scan';
+export type ImportErrorCode =
+  'unknown-root' | 'unknown-scan' | 'git-unavailable' | 'git-rejected' | 'git-failed' | 'git-busy';
+
+const GIT_ERROR_CODE: Readonly<Record<GitSourceFailure, ImportErrorCode>> = {
+  'git-unavailable': 'git-unavailable',
+  rejected: 'git-rejected',
+  'fetch-failed': 'git-failed',
+};
 
 export class ImportError extends Error {
   constructor(
@@ -115,6 +131,13 @@ export interface ImportServiceDeps {
   readonly catalog: LocationCatalog;
   readonly adapters: readonly ToolAdapter[];
   readonly reader: SourceReader;
+  /** Pobieranie z repozytorium Git (ADR 0058). Brak portu to `git-unavailable`: funkcja jest opcjonalna. */
+  readonly git?: GitSourceProvider;
+  /**
+   * Tylko testy: dopuszcza adres http na petli zwrotnej. Domyslnie `scanGit` przyjmuje wylacznie publiczny
+   * adres https, niezaleznie od tego, kto go wola (ADR 0058).
+   */
+  readonly allowLoopbackHttpForTests?: boolean;
   readonly library: Pick<LibraryService, 'list' | 'create' | 'update'>;
   readonly clock: Clock;
   readonly ttlMs?: number;
@@ -127,7 +150,16 @@ export const SCAN_TTL_MS = 30 * 60 * 1000;
 const MAX_SCAN_SESSIONS = 8;
 const GENERIC_FAILURE = 'Nie udało się zapisać elementu. Szczegóły są w logu aplikacji.';
 
+interface RawCandidate {
+  readonly candidate: ImportCandidate;
+  readonly rootLabel: string;
+  readonly secrets: SecretHit[];
+  readonly dropped: readonly string[];
+}
+
 interface ScanSession {
+  /** Pochodzenie z repozytorium Git; trafia do `importedFrom.git` i do notatki w historii. */
+  readonly git: GitOrigin | null;
   readonly expiresAt: number;
   readonly candidates: Map<string, ScannedCandidate>;
 }
@@ -265,11 +297,18 @@ export class ImportService {
   private readonly adapters: ReadonlyMap<ToolId, ToolAdapter>;
   private readonly ttlMs: number;
   private readonly newToken: () => string;
+  /** Jedno pobieranie naraz: katalog roboczy jest wspolny, a siec i dysk nie maja byc obciazane rownolegle. */
+  private gitBusy = false;
 
   constructor(private readonly deps: ImportServiceDeps) {
     this.adapters = new Map(deps.adapters.map((a) => [a.id, a]));
     this.ttlMs = deps.ttlMs ?? SCAN_TTL_MS;
     this.newToken = deps.newToken ?? defaultToken;
+  }
+
+  /** Zamykanie aplikacji: przerywa trwajace pobieranie z repozytorium Git. */
+  abortGit(): void {
+    this.deps.git?.abort?.();
   }
 
   detect(): Promise<readonly DetectedRoot[]> {
@@ -291,8 +330,58 @@ export class ImportService {
     });
     // Kolejnosc wykrywania jest kolejnoscia pierwszenstwa rootow przy duplikatach (ADR 0024).
     roots.sort((a, b) => detected.indexOf(a) - detected.indexOf(b));
+    return this.scanRoots(roots, this.deps.reader, null, 0);
+  }
 
-    const raw: { candidate: ImportCandidate; rootLabel: string; secrets: SecretHit[] }[] = [];
+  /**
+   * Skan repozytorium Git (ADR 0058). Port pobiera i weryfikuje kopie, tu idzie ten sam skan co dla
+   * lokalizacji narzedzi, na tych samych adapterach, a kopia znika po skanie: kandydaci zyja w pamieci,
+   * `apply` nie siega do dysku.
+   */
+  async scanGit(request: GitSourceRequest): Promise<ScanReport> {
+    const provider = this.deps.git;
+    if (provider === undefined) {
+      throw new ImportError(
+        'git-unavailable',
+        'Import z repozytorium Git jest niedostępny w tej instalacji.',
+      );
+    }
+    const problem =
+      this.deps.allowLoopbackHttpForTests === true
+        ? (gitUrlProblem(request.url) ?? (request.ref === null ? null : gitRefProblem(request.ref)))
+        : (gitUrlInputProblem(request.url) ??
+          (request.ref === null ? null : gitRefInputProblem(request.ref)));
+    if (problem !== null) throw new ImportError('git-rejected', problem);
+    if (this.gitBusy) {
+      throw new ImportError('git-busy', 'Trwa już pobieranie repozytorium. Poczekaj na wynik.');
+    }
+    this.gitBusy = true;
+    try {
+      const opened = await provider.open(request);
+      if (!opened.ok) throw new ImportError(GIT_ERROR_CODE[opened.code], opened.message);
+      const { source } = opened;
+      try {
+        return await this.scanRoots(
+          source.roots,
+          source.reader,
+          source.origin,
+          source.submodules.length,
+        );
+      } finally {
+        await source.release().catch((error: unknown) => this.deps.onUnexpected?.(error));
+      }
+    } finally {
+      this.gitBusy = false;
+    }
+  }
+
+  private async scanRoots(
+    roots: readonly DetectedRoot[],
+    reader: SourceReader,
+    git: GitOrigin | null,
+    submodules: number,
+  ): Promise<ScanReport> {
+    const raw: RawCandidate[] = [];
     const skipped: ScannedSkip[] = [];
     const scans: RootScan[] = [];
 
@@ -317,36 +406,72 @@ export class ImportService {
         continue;
       }
       try {
-        scans.push({ root, result: await adapter.scan(root, this.deps.reader) });
+        scans.push({ root, result: await adapter.scan(root, reader) });
       } catch (error: unknown) {
         this.deps.onUnexpected?.(error);
         skip('unreadable', `Nie udało się przeskanować lokalizacji ${root.label}.`);
       }
     }
 
-    for (const done of await this.finalizeScans(scans)) {
-      for (const candidate of done.result.candidates) {
-        raw.push({ candidate, rootLabel: done.root.label, secrets: this.classify(candidate) });
+    for (const done of await this.finalizeScans(scans, reader)) {
+      for (const found of done.result.candidates) {
+        if (git === null) {
+          raw.push({
+            candidate: found,
+            rootLabel: done.root.label,
+            secrets: this.classify(found),
+            dropped: [],
+          });
+          continue;
+        }
+        // Cudze repozytorium: pola wykonawcze usuwamy albo element pomijamy, zanim ktokolwiek je zobaczy.
+        const review = reviewGitCandidate(found);
+        if (review.candidate === null) {
+          skipped.push({
+            tool: found.tool,
+            rootId: found.rootId,
+            rootLabel: done.root.label,
+            relPath: found.relPath,
+            reason: 'unsupported',
+            message: review.rejection ?? 'Element z repozytorium nie jest importowany.',
+          });
+          continue;
+        }
+        raw.push({
+          candidate: review.candidate,
+          rootLabel: done.root.label,
+          secrets: this.classify(review.candidate),
+          dropped: review.dropped,
+        });
       }
       for (const s of done.result.skipped) skipped.push({ ...s, rootLabel: done.root.label });
     }
 
     const library = (await this.deps.library.list()).items;
-    const candidates = this.resolveStatuses(raw, library);
-    const scanToken = this.remember(candidates);
+    const candidates = this.resolveStatuses(raw, library, git !== null);
+    const scanToken = this.remember(candidates, git);
     const librarySlugs = library.map((item) => ({ kind: item.kind, slug: item.identity.slug }));
-    return { scanToken, candidates, skipped, librarySlugs };
+    return {
+      git: git === null ? null : { ...git, submodules },
+      scanToken,
+      candidates,
+      skipped,
+      librarySlugs,
+    };
   }
 
   /** Krok `finalize` adaptera po skanie rootow jednego narzedzia; blad adaptera nie psuje reszty. */
-  private async finalizeScans(scans: readonly RootScan[]): Promise<readonly RootScan[]> {
+  private async finalizeScans(
+    scans: readonly RootScan[],
+    reader: SourceReader,
+  ): Promise<readonly RootScan[]> {
     const out = [...scans];
     for (const tool of new Set(scans.map((s) => s.root.tool))) {
       const adapter = this.adapters.get(tool);
       if (adapter?.finalize === undefined) continue;
       const mine = scans.filter((s) => s.root.tool === tool);
       try {
-        const results = await adapter.finalize(mine, this.deps.reader);
+        const results = await adapter.finalize(mine, reader);
         if (results.length !== mine.length) continue;
         mine.forEach((scan, i) => {
           const at = out.indexOf(scan);
@@ -360,7 +485,7 @@ export class ImportService {
     return out;
   }
 
-  private remember(candidates: readonly ScannedCandidate[]): string {
+  private remember(candidates: readonly ScannedCandidate[], git: GitOrigin | null): string {
     const now = this.deps.clock.now().getTime();
     this.purge(now);
     while (this.sessions.size >= MAX_SCAN_SESSIONS) {
@@ -370,6 +495,7 @@ export class ImportService {
     }
     const token = this.newToken();
     this.sessions.set(token, {
+      git,
       expiresAt: now + this.ttlMs,
       candidates: new Map(candidates.map((c) => [c.candidateId, c])),
     });
@@ -387,8 +513,9 @@ export class ImportService {
   }
 
   private resolveStatuses(
-    raw: readonly { candidate: ImportCandidate; rootLabel: string; secrets: SecretHit[] }[],
+    raw: readonly RawCandidate[],
     library: readonly LibraryItem[],
+    fromGit: boolean,
   ): ScannedCandidate[] {
     const ids = raw.map((_, i) => `cand-${i + 1}`);
     const status: CandidateStatus[] = raw.map(() => 'new');
@@ -467,7 +594,7 @@ export class ImportService {
       }
     });
 
-    return raw.map(({ candidate, rootLabel, secrets }, i) => {
+    return raw.map(({ candidate, rootLabel, secrets, dropped }, i) => {
       const st = status[i] ?? 'new';
       return {
         candidateId: ids[i] ?? `cand-${i + 1}`,
@@ -478,7 +605,9 @@ export class ImportService {
         duplicateOf: duplicateOf[i] ?? null,
         secrets,
         // `changed` zostaje odznaczone: nadpisanie wersji w bibliotece wymaga swiadomego wyboru.
-        selectedByDefault: secrets.length === 0 && st === 'new',
+        // Z cudzego repozytorium nic nie jest zaznaczone z gory: uzytkownik wybiera swiadomie (ADR 0058).
+        selectedByDefault: !fromGit && secrets.length === 0 && st === 'new',
+        dropped,
       };
     });
   }
@@ -576,14 +705,18 @@ export class ImportService {
 
       try {
         const toSave = this.toDraft(scanned, session, newSlug);
-        const note =
-          newSlug !== undefined && newSlug !== draft.identity.slug
-            ? `slug-z=${draft.identity.slug}`
-            : undefined;
+        const noteParts = [
+          ...(newSlug !== undefined && newSlug !== draft.identity.slug
+            ? [`slug-z=${draft.identity.slug}`]
+            : []),
+          ...(session.git === null ? [] : [`git=${session.git.url}@${session.git.commit}`]),
+          ...(scanned.dropped.length === 0 ? [] : [`usunieto=${scanned.dropped.join(',')}`]),
+        ];
+        const options = noteParts.length === 0 ? undefined : { note: noteParts.join(' ') };
         const result =
           scanned.status === 'changed' && scanned.existingItemId !== null
-            ? await this.deps.library.update(scanned.existingItemId, toSave)
-            : await this.deps.library.create(toSave, note === undefined ? undefined : { note });
+            ? await this.deps.library.update(scanned.existingItemId, toSave, options)
+            : await this.deps.library.create(toSave, options);
         takenSlugs.add(slugKeyOfFinal);
         session.candidates.delete(candidateId);
         imported.push({
@@ -621,6 +754,7 @@ export class ImportService {
       rootId: candidate.rootId,
       path: candidate.relPath,
       at: this.deps.clock.now().toISOString(),
+      ...(session.git === null ? {} : { git: session.git }),
     };
     // Duplikat z innego narzedzia o tej samej tresci dolacza swoj snapshot (ADR 0023), zeby element
     // pamietal oba oryginaly. Duplikat z sekretem nie dolacza, bo nikt go nie potwierdzil.

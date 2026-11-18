@@ -89,11 +89,21 @@ export interface SourceSnapshot {
   readonly unmappedKeys: readonly { readonly path: string; readonly value: JsonValue }[];
 }
 
+/** Repozytorium Git, z ktorego pochodzi element (ADR 0058): adres bez danych logowania i pelny SHA commita. */
+export interface GitOrigin {
+  readonly url: string;
+  readonly commit: string;
+  /** Galaz, tag albo SHA podany przez uzytkownika; `null`, gdy import szedl z `HEAD` repozytorium. */
+  readonly ref: string | null;
+}
+
 export interface ImportOrigin {
   readonly tool: ToolId;
   readonly rootId: RootId;
   readonly path: string;
   readonly at: Timestamp;
+  /** Tylko import z repozytorium Git; `rootId` i `path` odnosza sie wtedy do kopii, ktorej juz nie ma. */
+  readonly git?: GitOrigin;
 }
 
 export interface ItemIdentity {

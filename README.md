@@ -62,7 +62,9 @@ Postęp prac i kryteria wydania: `docs/ROADMAP.md`. Licencja: [MIT](LICENSE).
 
 Aplikacja nie zbiera telemetrii, nie ma kont i nie łączy się z siecią z poziomu interfejsu:
 CSP ma `connect-src 'none'`, a żądania sieciowe okien są blokowane w procesie głównym
-(ADR 0008). Biblioteka i kopie zapasowe leżą w katalogu danych na twoim dysku. W CLI sieci
+(ADR 0008). Biblioteka i kopie zapasowe leżą w katalogu danych na twoim dysku. Jedyny wyjątek
+to import z repozytorium Git, który uruchamiasz sam w kreatorze importu: proces główny woła
+`git` dla podanego adresu https i nigdy nie robi tego w tle (ADR 0058). W CLI sieci
 używa tylko pobieranie pluginów z git (`cwm plugin add git`, `fetch`, `update`, ADR 0048);
 `start`, `run`, `diff`, `sync`, `lock` i `engine` mają ustawiony zakaz sieci (`denyNetwork`),
 a `cwm start` nie łączy się z siecią przy sprawdzaniu zatwierdzonych pluginów. Sam Claude Code,
@@ -120,7 +122,9 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
   tytule, opisie i treści. Usunięcie ma plan i wymaga potwierdzenia.
 - **Import.** Z `~/.claude`, `~/.codex` i wspólnego `~/.agents`: skille, agenci, komendy,
   instrukcje globalne i hooki. Podgląd wykrywa duplikaty i różnice, a elementy z potencjalnym
-  sekretem są domyślnie odznaczone. Źródło nie jest modyfikowane.
+  sekretem są domyślnie odznaczone. Źródło nie jest modyfikowane. Skille, agentów i komendy można
+  też pobrać z publicznego repozytorium Git (adres https i opcjonalny ref); aplikacja zapisuje
+  adres i commit, z którego pochodzi element, i niczego z repozytorium nie uruchamia przy imporcie; hooki, serwery MCP i tryb uprawnień są usuwane z elementów, a nic nie jest zaznaczone z góry (ADR 0058).
 - **Eksport.** Do Claude Code i Codeksa, z planem zapisu, podglądem różnic bez sekretów,
   ostrzeżeniami o utracie zgodności i potwierdzeniem. Przed zapisem powstaje kopia w `backups/`,
   po zapisie plik jest czytany z powrotem. Ten sam plan da się zapisać też jako archiwum ZIP
@@ -144,7 +148,7 @@ Zastrzeżenia, które warto znać przed pierwszym użyciem (szczegóły w `docs/
 - Serwery MCP i ustawienia narzędzi nie są ani importowane, ani eksportowane (ADR 0020).
 - Reguły (rules) nie są obsługiwane.
 - Nie ma jeszcze: porównywania i scalania wersji poza podglądem w planie eksportu, profili,
-  ustawień aplikacji, importu z ZIP, autoaktualizacji ani integracji z Gitem.
+  ustawień aplikacji, importu z ZIP, autoaktualizacji ani integracji z Gitem poza importem z publicznego repozytorium.
 
 ## Polecenie `cwm` (CLI)
 

@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { ImportError, ImportService } from '../../src/core/services/import/import-service';
 import { LibraryService } from '../../src/core/services/library/library-service';
-import { FakeAdapter, candidate, importHarness, root } from './import-fakes';
+import {
+  FakeAdapter,
+  FakeGitProvider,
+  GIT_COMMIT,
+  candidate,
+  importHarness,
+  root,
+} from './import-fakes';
 
 const claude = root('r-claude', 'claude-code');
 const codexMain = root('r-codex', 'codex');
@@ -729,5 +736,206 @@ describe('ImportService.apply: nowy slug dla konfliktu (ADR 0017, addendum)', ()
       renames: { 'cand-1': 'acme-secret-2' },
     });
     expect(blocked.skipped).toEqual([{ candidateId: 'cand-1', reason: 'secrets-not-confirmed' }]);
+  });
+});
+
+describe('ImportService.scanGit: import z repozytorium Git (ADR 0058)', () => {
+  const URL = 'https://example.com/acme/skills.git';
+  const gitRoot = root('git-root-1', 'claude-code', { label: 'skills' });
+
+  function gitSetup(
+    byRoot: Record<string, ReturnType<typeof candidate>[]>,
+    git = new FakeGitProvider([gitRoot]),
+  ) {
+    const adapters = [new FakeAdapter('claude-code', ['skills'], byRoot)];
+    return { git, ...importHarness([], adapters, { git }) };
+  }
+
+  it('skanuje rooty z portu tymi samymi adapterami i zwalnia kopie po skanie', async () => {
+    const h = gitSetup({ 'git-root-1': [candidate({ slug: 'acme-review', root: gitRoot })] });
+    const report = await h.service.scanGit({ url: URL, ref: 'main' });
+    expect(report.git).toEqual({ url: URL, ref: 'main', commit: GIT_COMMIT, submodules: 0 });
+    expect(report.candidates).toHaveLength(1);
+    expect(report.candidates[0]).toMatchObject({ status: 'new', rootLabel: 'skills' });
+    expect(h.git.requests).toEqual([{ url: URL, ref: 'main' }]);
+    expect(h.git.released).toBe(1);
+  });
+
+  it('zwykly skan nie ma pola git, a liczba submoduli jest w raporcie', async () => {
+    const h = gitSetup({ 'git-root-1': [] });
+    h.git.submodules = ['vendor/a', 'vendor/b'];
+    expect((await h.service.scanGit({ url: URL, ref: null })).git?.submodules).toBe(2);
+    const local = setup({ 'r-claude': [candidate({ slug: 'acme-x', root: claude })] });
+    expect((await local.service.scan(['r-claude'])).git).toBeNull();
+  });
+
+  it('zapisuje adres i commit w pochodzeniu oraz w notatce historii', async () => {
+    const h = gitSetup({ 'git-root-1': [candidate({ slug: 'acme-review', root: gitRoot })] });
+    const scan = await h.service.scanGit({ url: URL, ref: null });
+    const applied = await h.service.apply({ scanToken: scan.scanToken, candidateIds: ['cand-1'] });
+    expect(applied.imported).toHaveLength(1);
+    const origin = (await h.library.list()).items[0]?.source.importedFrom;
+    expect(origin?.git).toEqual({ url: URL, commit: GIT_COMMIT, ref: null });
+    expect(h.log.records.at(-1)).toMatchObject({
+      operation: 'create',
+      note: `git=${URL}@${GIT_COMMIT}`,
+    });
+  });
+
+  it('przemianowanie i zastapienie niosa notatke z repozytorium', async () => {
+    const h = gitSetup({
+      'git-root-1': [
+        candidate({ slug: 'Acme-Case', root: gitRoot, body: 'tresc konfliktu\n' }),
+        candidate({ slug: 'acme-diff', root: gitRoot, body: 'nowa tresc\n' }),
+      ],
+    });
+    await h.library.create(candidate({ slug: 'acme-case', root: gitRoot }).draft);
+    await h.library.create(candidate({ slug: 'acme-diff', root: gitRoot }).draft);
+    const scan = await h.service.scanGit({ url: URL, ref: null });
+    await h.service.apply({
+      scanToken: scan.scanToken,
+      candidateIds: ['cand-1', 'cand-2'],
+      renames: { 'cand-1': 'acme-case-2' },
+      replaceChanged: ['cand-2'],
+    });
+    const notes = h.log.records.slice(-2).map((r) => [r.operation, r.note]);
+    expect(notes).toEqual([
+      ['create', `slug-z=Acme-Case git=${URL}@${GIT_COMMIT}`],
+      ['update', `git=${URL}@${GIT_COMMIT}`],
+    ]);
+  });
+
+  it('odmowy portu to bledy z kodem, bez zwolnienia kopii, która nie powstała', async () => {
+    const h = gitSetup({});
+    for (const [code, expected] of [
+      ['git-unavailable', 'git-unavailable'],
+      ['rejected', 'git-rejected'],
+      ['fetch-failed', 'git-failed'],
+    ] as const) {
+      h.git.failure = { ok: false, code, message: `komunikat ${code}` };
+      await expect(h.service.scanGit({ url: URL, ref: null })).rejects.toMatchObject({
+        name: 'ImportError',
+        code: expected,
+        message: `komunikat ${code}`,
+      });
+    }
+    expect(h.git.released).toBe(0);
+  });
+
+  it('z cudzego repozytorium nic nie jest zaznaczone z gory, a zamykanie przerywa pobieranie', async () => {
+    const h = gitSetup({ 'git-root-1': [candidate({ slug: 'acme-review', root: gitRoot })] });
+    const report = await h.service.scanGit({ url: URL, ref: null });
+    expect(report.candidates[0]).toMatchObject({
+      status: 'new',
+      selectedByDefault: false,
+      dropped: [],
+    });
+    h.service.abortGit();
+    expect(h.git.aborted).toBe(1);
+  });
+
+  it('adres spoza publicznego https jest odrzucany w serwisie, przed portem', async () => {
+    const h = gitSetup({ 'git-root-1': [] });
+    for (const url of [
+      'http://example.com/acme/skills.git',
+      'http://127.0.0.1:8080/acme/skills.git',
+      'https://127.0.0.1/acme/skills.git',
+      'https://localhost/acme/skills.git',
+      'https://nas.local/acme/skills.git',
+      'https://gitserver/acme/skills.git',
+      'ssh://git@example.com/acme/skills.git',
+      'https://acme:haslo@example.com/acme/skills.git',
+    ]) {
+      await expect(h.service.scanGit({ url, ref: null }), url).rejects.toMatchObject({
+        code: 'git-rejected',
+      });
+    }
+    await expect(h.service.scanGit({ url: URL, ref: '-x' })).rejects.toMatchObject({
+      code: 'git-rejected',
+    });
+    expect(h.git.requests).toEqual([]);
+    // Wyjatek dla petli zwrotnej istnieje tylko za jawna opcja testowa.
+    const git = new FakeGitProvider([gitRoot]);
+    const open = importHarness([], [new FakeAdapter('claude-code', ['skills'], {})], {
+      git,
+      allowLoopbackHttpForTests: true,
+    });
+    await open.service.scanGit({ url: 'http://127.0.0.1:8080/acme/skills.git', ref: null });
+    expect(git.requests).toHaveLength(1);
+  });
+
+  it('pola wykonawcze z repozytorium: usuniete ze zrodla, ostrzezenie i notatka w historii', async () => {
+    const risky =
+      '---\nname: acme-risky\nhooks:\n  Stop: x\npermissionMode: bypassPermissions\n---\nTresc.\n';
+    const h = gitSetup({
+      'git-root-1': [
+        candidate({
+          slug: 'acme-risky',
+          root: gitRoot,
+          sourceFiles: [{ relPath: 'SKILL.md', text: risky }],
+        }),
+      ],
+    });
+    const scan = await h.service.scanGit({ url: URL, ref: null });
+    const [only] = scan.candidates;
+    expect(only?.dropped).toEqual(['hooks', 'permissionMode']);
+    expect(only?.selectedByDefault).toBe(false);
+    expect(only?.candidate.warnings.map((w) => w.code)).toContain('git-executable-fields-dropped');
+    await h.service.apply({ scanToken: scan.scanToken, candidateIds: ['cand-1'] });
+    expect(h.log.records.at(-1)?.note).toBe(
+      `git=${URL}@${GIT_COMMIT} usunieto=hooks,permissionMode`,
+    );
+  });
+
+  it('bez portu funkcja jest niedostepna, a aplikacja i skan lokalny dzialaja', async () => {
+    const h = setup({ 'r-claude': [candidate({ slug: 'acme-x', root: claude })] });
+    await expect(h.service.scanGit({ url: URL, ref: null })).rejects.toMatchObject({
+      code: 'git-unavailable',
+    });
+    expect((await h.service.scan(['r-claude'])).candidates).toHaveLength(1);
+  });
+
+  it('jedno pobieranie naraz, a po zakonczeniu mozna zaczac nastepne', async () => {
+    const git = new FakeGitProvider([gitRoot]);
+    let release = (): void => undefined;
+    git.gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = gitSetup({ 'git-root-1': [] }, git);
+    const first = h.service.scanGit({ url: URL, ref: null });
+    await expect(h.service.scanGit({ url: URL, ref: null })).rejects.toMatchObject({
+      code: 'git-busy',
+    });
+    release();
+    await first;
+    git.gate = null;
+    await expect(h.service.scanGit({ url: URL, ref: null })).resolves.toBeDefined();
+    expect(git.released).toBe(2);
+  });
+
+  it('kopia jest zwalniana takze wtedy, gdy skan sie wywroci', async () => {
+    const git = new FakeGitProvider([gitRoot]);
+    const adapters = [new FakeAdapter('claude-code', ['skills'], {})];
+    const h = importHarness([], adapters, {
+      git,
+      library: {
+        list: () => Promise.reject(new Error('biblioteka niedostepna')),
+        create: () => Promise.reject(new Error('nieuzywane')),
+        update: () => Promise.reject(new Error('nieuzywane')),
+      },
+    });
+    await expect(h.service.scanGit({ url: URL, ref: null })).rejects.toThrow(
+      'biblioteka niedostepna',
+    );
+    expect(git.released).toBe(1);
+    // Po bledzie flaga zajetosci jest czysta.
+    git.gate = null;
+    await expect(h.service.scanGit({ url: URL, ref: null })).rejects.toThrow(
+      'biblioteka niedostepna',
+    );
+  });
+
+  it('ImportError z portu ma nazwe klasy, zeby handler IPC go rozpoznal', () => {
+    expect(new ImportError('git-busy', 'x').name).toBe('ImportError');
   });
 });

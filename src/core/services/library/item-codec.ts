@@ -100,6 +100,15 @@ function metaObject(item: LibraryItem): object {
               rootId: item.source.importedFrom.rootId,
               path: item.source.importedFrom.path,
               at: item.source.importedFrom.at,
+              ...(item.source.importedFrom.git === undefined
+                ? {}
+                : {
+                    git: {
+                      url: item.source.importedFrom.git.url,
+                      commit: item.source.importedFrom.git.commit,
+                      ref: item.source.importedFrom.git.ref,
+                    },
+                  }),
             },
     },
     classification: {

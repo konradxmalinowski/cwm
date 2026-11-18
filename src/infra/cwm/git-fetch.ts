@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { realpath, statfs } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -48,8 +48,9 @@ import {
 
 /**
  * Jedyne miejsce w CWM, ktore siega do sieci i uruchamia `git` (ADR 0048). Wolane tylko z
- * `cwm plugin add git|fetch|update`; `cwm start`, `cwm diff` i `cwm sync` tego pliku nie importuja
- * (regula lintu i proba w `scripts/verify-boundaries.mjs`).
+ * `cwm plugin add git|fetch|update` i z importu z repozytorium Git w aplikacji (ADR 0058, jedyny
+ * importer to `infra/git-import/git-import-source.ts`); `cwm start`, `cwm diff` i `cwm sync` tego
+ * pliku nie importuja (regula lintu i proba w `scripts/verify-boundaries.mjs`).
  *
  * `git` idzie po sciezce bezwzglednej (po `realpath`, z kontrola wlasciciela i uprawnien jak plik
  * silnika), ze srodowiskiem od zera i opcjami `-c` z `core/cwm/git-source.ts`. Pobranie to `fetch
@@ -81,7 +82,14 @@ export type GitFetchResult =
       /** Kopia z tym commitem i ta sama trescia juz byla na dysku. */
       readonly reused: boolean;
     }
-  | { readonly ok: false; readonly message: string };
+  | { readonly ok: false; readonly message: string; readonly kind?: GitFetchFailureKind };
+
+/**
+ * Skad pochodzi odmowa: `git-missing` (brak uruchamialnego `git`), `process` (proces `git` zawiodl albo
+ * zostal przerwany, komunikat moze zawierac wyjscie serwera i sciezke katalogu roboczego) i `content`
+ * (kontrola CWM odrzucila adres, ref albo tresc commita; komunikat jest wlasny i bez sciezek). Brak pola to `content`.
+ */
+export type GitFetchFailureKind = 'git-missing' | 'process' | 'content';
 
 export interface GitFetchInput {
   readonly layout: CwmLayout;
@@ -165,6 +173,24 @@ async function directoryBytes(root: string, cap: number): Promise<number> {
   return total;
 }
 
+/** Trwajace procesy `git` tego procesu CWM; zamykanie aplikacji zabija ich grupy (`abortRunningGit`). */
+const running = new Set<ChildProcess>();
+
+/**
+ * Zabija grupy procesow wszystkich trwajacych polecen `git` (import z repozytorium w aplikacji przy
+ * `before-quit`). Bez tego `git-remote-https` przezylby aplikacje do limitu czasu. Kazde polecenie ma
+ * wlasne sprzatanie (`finish`), ktore zdejmuje tez nasluchiwacze sygnalow procesu.
+ */
+export function abortRunningGit(): void {
+  for (const child of running) {
+    try {
+      if (child.pid !== undefined) process.kill(-child.pid, 'SIGKILL');
+    } catch {
+      child.kill('SIGKILL');
+    }
+  }
+}
+
 function runGit(
   context: RunContext,
   args: readonly string[],
@@ -200,6 +226,7 @@ function runGit(
       // a katalog `.tmp-*` sprzata nastepne pobieranie (ADR 0048).
       detached: true,
     });
+    running.add(child);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let outBytes = 0;
@@ -252,6 +279,7 @@ function runGit(
       child.stdin.end(options.input);
     }
     const finish = (code: number | null, error: string | null): void => {
+      running.delete(child);
       clearTimeout(timer);
       if (meter !== null) clearInterval(meter);
       process.off('SIGINT', onSignal);
@@ -307,7 +335,7 @@ export async function fetchGitSource(input: GitFetchInput): Promise<GitFetchResu
     if (refProblem !== null) return fail(refProblem.replace(/\.$/, ''));
   }
   const git = await resolveGit();
-  if (!git.ok) return fail(git.reason);
+  if (!git.ok) return { ok: false, message: git.reason, kind: 'git-missing' };
 
   const scope = sourcesScope(input.layout.home, gitSourcesRoot(input.layout));
   await ensureScopedDirectory(scope, gitSourcesRoot(input.layout));
@@ -341,10 +369,11 @@ async function fetchInto(
   };
   const work = join(scratch, 'work');
 
-  const describe = (what: string, run: RunResult): GitFetchResult =>
-    fail(
-      `${what}: ${run.aborted ?? (tidy(run.stderr) || `git zakonczyl sie kodem ${run.code ?? '?'}`)}`,
-    );
+  const describe = (what: string, run: RunResult): GitFetchResult => ({
+    ok: false,
+    kind: 'process',
+    message: `${what}: ${run.aborted ?? (tidy(run.stderr) || `git zakonczyl sie kodem ${run.code ?? '?'}`)}`,
+  });
 
   // Format skrotow repozytorium roboczego musi byc taki jak na serwerze. Przypiety commit go wskazuje
   // (40 albo 64 znaki); bez niego proba SHA-1, a SHA-256 po komunikacie o niezgodnych algorytmach.

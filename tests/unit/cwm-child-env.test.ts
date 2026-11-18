@@ -435,6 +435,32 @@ describe('srodowisko i opcje procesu git (ADR 0048)', () => {
       });
     });
 
+    it('odrzuca sciezki rozniace sie tylko wielkoscia liter albo postacia unicode', () => {
+      const res = (raw: string) => checkGitTreeListing(raw, limits);
+      expect(
+        res(entry('100644', 'blob', '1', 'SKILL.md') + entry('100644', 'blob', '1', 'skill.md')),
+      ).toMatchObject({
+        ok: false,
+        message: expect.stringContaining('wielkoscia liter') as string,
+      });
+      // Katalog i plik o tej samej nazwie z dokladnoscia do wielkosci liter tez sie zderzaja.
+      expect(
+        res(entry('040000', 'tree', '-', 'Skills') + entry('100644', 'blob', '1', 'skills')),
+      ).toMatchObject({ ok: false });
+      expect(
+        res(
+          entry('100644', 'blob', '1', 'caf\u00e9.md') +
+            entry('100644', 'blob', '1', 'cafe\u0301.md'),
+        ),
+      ).toMatchObject({ ok: false });
+      // Rozne nazwy i ta sama nazwa w roznych katalogach przechodza.
+      expect(
+        res(
+          entry('100644', 'blob', '1', 'a/SKILL.md') + entry('100644', 'blob', '1', 'b/SKILL.md'),
+        ),
+      ).toMatchObject({ ok: true });
+    });
+
     it('odrzuca dowiazanie, skladnik .git, limity i pusty commit', () => {
       const bad = (raw: string): boolean => !checkGitTreeListing(raw, limits).ok;
       expect(bad(entry('120000', 'blob', '5', 'link'))).toBe(true);
