@@ -100,7 +100,7 @@ export function mcpCredentialProblem(spec: McpServerSpec): string | null {
     if (tokenLike(arg)) return `argument ${i + 1} zawiera token (ciąg szesnastkowy albo UUID).`;
   }
   if (spec.url !== null) {
-    let parsed: URL | null = null;
+    let parsed: URL | null;
     try {
       parsed = new URL(spec.url);
     } catch {
