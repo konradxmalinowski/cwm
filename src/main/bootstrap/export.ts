@@ -139,6 +139,10 @@ export async function startExport(
         (loaded) => isMcpServerItem(loaded.item),
         () => false,
       ),
+    // Root serwerow MCP (ADR 0062): `settings.json` Gemini CLI nie rozpoznaje sie po nazwie pliku.
+    mcpRoot: async (rootId) =>
+      projects?.kindOf(rootId) === 'mcp' ||
+      (await catalog.detect()).some((r) => r.rootId === rootId && r.kind === 'mcp'),
   });
   const zip = new ZipExportService({
     catalog,

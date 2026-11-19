@@ -10,6 +10,7 @@ import type {
   ToolExporter,
 } from '../../core/ports/tool-adapter';
 import { addHookCandidates, isRecord } from '../shared/hooks';
+import { scanGeminiMcp } from '../shared/mcp-scan';
 import { scanInstructionFile } from '../shared/instructions';
 import { scanMarkdownDirectory } from '../shared/markdown-dir';
 import { ScanContext, unsupportedRootKind } from '../shared/scan-context';
@@ -30,6 +31,7 @@ export class GeminiCliAdapter implements ToolAdapter, ToolExporter {
     'commands',
     'global-instructions',
     'hooks',
+    'mcp',
   ];
 
   capabilities(item: LibraryItem): CompatibilityVerdict {
@@ -62,6 +64,10 @@ export class GeminiCliAdapter implements ToolAdapter, ToolExporter {
         break;
       case 'hooks':
         await scanHooks(ctx);
+        break;
+      case 'mcp':
+        // Ten sam settings.json co hooki, ale osobny root: czytany jest tylko klucz mcpServers (ADR 0062).
+        await scanGeminiMcp(ctx);
         break;
       default:
         return unsupportedRootKind(this.id, root, NAME);

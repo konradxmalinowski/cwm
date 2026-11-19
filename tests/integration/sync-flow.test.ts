@@ -1,4 +1,11 @@
-import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 
 import { afterAll, describe, expect, it } from 'vitest';
@@ -84,6 +91,64 @@ describe('synchronizacja na plikach', () => {
       env: { ACME_TOKEN: '${ACME_TOKEN}' },
     });
 
+    const entry = (await s.history.list()).find((e) => e.itemIds.includes(item.id));
+    await expect(s.history.rollback(entry?.operationId ?? '')).rejects.toMatchObject({
+      code: 'not-revertible',
+    });
+    s.index.close();
+  });
+
+  it('serwer MCP do ~/.gemini/settings.json (ADR 0062): odniesienie w naglowku, reszta pliku zostaje, cofniecie zablokowane', async () => {
+    const s = makeSyncStack();
+    mkdirSync(join(s.home, '.gemini'), { recursive: true });
+    const file = join(s.home, '.gemini', 'settings.json');
+    const original = {
+      ui: { theme: 'acme' },
+      hooks: { BeforeTool: [] },
+      mcpServers: { other: { command: 'other-mcp', trust: true } },
+    };
+    writeFileSync(file, `${JSON.stringify(original, null, 2)}\n`);
+    const { item } = await s.lib.service.create(
+      draft({
+        kind: 'tool-setting',
+        slug: 'mcp-api',
+        body: '',
+        attributes: {
+          toolSetting: {
+            tool: 'claude-code',
+            key: 'mcpServers.api',
+            value: {
+              transport: 'http',
+              command: null,
+              args: [],
+              url: 'https://mcp.acme.test/v1',
+              env: [],
+              headers: [{ name: 'Authorization', ref: 'ACME_API_KEY', scheme: 'Bearer' }],
+            },
+          },
+        },
+      }),
+    );
+    const first = await s.exports.plan('gemini-cli', [item.id]);
+    expect(first.mcp?.map((m) => m.headers)).toEqual([['Authorization: Bearer ${ACME_API_KEY}']]);
+    await expect(s.exports.apply(first.planId, true)).rejects.toMatchObject({
+      code: 'mcp-confirmation-required',
+    });
+    const plan = await s.exports.plan('gemini-cli', [item.id]);
+    const applied = await s.exports.apply(plan.planId, true, { mcpConfirmed: true });
+    expect(applied.verified).toBe(true);
+    const written = JSON.parse(readFileSync(file, 'utf8')) as typeof original & {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(written.ui).toEqual(original.ui);
+    expect(written.hooks).toEqual(original.hooks);
+    expect(written.mcpServers['other']).toEqual(original.mcpServers.other);
+    expect(written.mcpServers['api']).toEqual({
+      httpUrl: 'https://mcp.acme.test/v1',
+      headers: { Authorization: 'Bearer ${ACME_API_KEY}' },
+    });
+
+    // Fixture nie zna elementow MCP (brak `mcpItem`): blokuje sam root rodzaju mcp.
     const entry = (await s.history.list()).find((e) => e.itemIds.includes(item.id));
     await expect(s.history.rollback(entry?.operationId ?? '')).rejects.toMatchObject({
       code: 'not-revertible',

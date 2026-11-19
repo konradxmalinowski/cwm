@@ -149,17 +149,18 @@ Dla deweloperów: `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/adr/` i dalsz
 
 Zastrzeżenia, które warto znać przed pierwszym użyciem (szczegóły w `docs/OGRANICZENIA.md`):
 
-- Projekty tylko dla Claude Code (`.claude/`, `CLAUDE.md` i `.mcp.json`, ADR 0059, 0061). `AGENTS.md`,
-  `GEMINI.md`, `.codex/`, `.gemini/` i hooki z `.claude/settings.json` w repozytoriach nie trafiają do
-  biblioteki. Zapis do projektu zmienia pliki w repozytorium Git; aplikacja nie dotyka `.gitignore` i
+- Projekty dla Claude Code (`.claude/`, `CLAUDE.md` i `.mcp.json`, ADR 0059, 0061) i dla serwerów MCP
+  Gemini CLI (`mcpServers` w `.gemini/settings.json`, ADR 0062). `AGENTS.md`, `GEMINI.md`, `.codex/`,
+  reszta `.gemini/` i hooki z `.claude/settings.json` w repozytoriach nie trafiają do biblioteki. Zapis do projektu zmienia pliki w repozytorium Git; aplikacja nie dotyka `.gitignore` i
   niczego nie commituje. Synchronizacja obejmuje tylko katalogi globalne.
 - Eksport działa tylko do narzędzia, którego katalog główny (`~/.claude`, `~/.codex`) istnieje
   (ADR 0033).
 - Aplikacja nie usuwa plików w narzędziach (ADR 0034). Usunięcie elementu z biblioteki zostawia
   jego plik w narzędziu. Jedyne usunięcie to cofnięcie własnego zapisu z widoku Historia.
-- Serwery MCP między Claude Code i Codeksem tylko jawnym eksportem z potwierdzeniem: bez wartości
-  zmiennych i nagłówków, bez synchronizacji, archiwum ZIP i Gemini CLI (ADR 0061). Inne ustawienia
-  narzędzi nie są ani importowane, ani eksportowane (ADR 0020).
+- Serwery MCP między Claude Code, Codeksem i Gemini CLI tylko jawnym eksportem z potwierdzeniem:
+  zmienne i nagłówki HTTP jako odniesienia, bez wartości, bez `trust` Gemini CLI, bez synchronizacji
+  i archiwum ZIP (ADR 0061, 0062). Inne ustawienia narzędzi nie są ani importowane, ani eksportowane
+  (ADR 0020).
 - Reguły (rules) nie są obsługiwane.
 - Nie ma jeszcze: porównywania i scalania wersji poza podglądem w planie eksportu, profili,
   ustawień aplikacji, importu z ZIP, autoaktualizacji ani integracji z Gitem poza importem z publicznego repozytorium.

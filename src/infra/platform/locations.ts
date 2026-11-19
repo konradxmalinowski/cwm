@@ -107,14 +107,24 @@ export const CANDIDATES: readonly CandidateSpec[] = [
     segments: ['settings.json'],
     entry: 'file',
   },
+  // Serwery MCP Gemini CLI (ADR 0062): ten sam plik co hooki, osobny root. Z pliku czytany i zmieniany
+  // jest tylko klucz `mcpServers`, a jeden plan nie zapisuje hookow i serwerow MCP naraz.
+  {
+    tool: 'gemini-cli',
+    kind: 'mcp',
+    base: 'gemini',
+    segments: ['settings.json'],
+    entry: 'file',
+  },
 ];
 
 /**
  * Rooty wzgledne do katalogu projektu z rejestru (ADR 0059). Ta sama tabela co wyzej, tylko z baza
  * w katalogu projektu zamiast w katalogu domowym; adaptery i eksportery nie widza roznicy, bo format
- * plikow jest ten sam. Na razie tylko Claude Code: `.claude/`, `CLAUDE.md` i `.mcp.json` (serwery MCP
- * projektu, ADR 0061) w korzeniu projektu. `.claude/settings.json` (hooki) celowo nie jest rootem: ten plik
- * trzyma tez uprawnienia projektu.
+ * plikow jest ten sam. Claude Code: `.claude/`, `CLAUDE.md` i `.mcp.json` (serwery MCP projektu, ADR 0061)
+ * w korzeniu projektu. `.claude/settings.json` (hooki) celowo nie jest rootem: ten plik trzyma tez
+ * uprawnienia projektu. Gemini CLI: tylko `.gemini/settings.json` jako root serwerow MCP (ADR 0062), z
+ * ktorego czytany i zmieniany jest wylacznie klucz `mcpServers`.
  */
 export interface ProjectCandidateSpec {
   readonly tool: ToolId;
@@ -129,6 +139,7 @@ export const PROJECT_CANDIDATES: readonly ProjectCandidateSpec[] = [
   { tool: 'claude-code', kind: 'commands', segments: ['.claude', 'commands'], entry: 'directory' },
   { tool: 'claude-code', kind: 'global-instructions', segments: ['CLAUDE.md'], entry: 'file' },
   { tool: 'claude-code', kind: 'mcp', segments: ['.mcp.json'], entry: 'file' },
+  { tool: 'gemini-cli', kind: 'mcp', segments: ['.gemini', 'settings.json'], entry: 'file' },
 ];
 
 const BASE_DIR: Record<

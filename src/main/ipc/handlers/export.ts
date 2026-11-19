@@ -275,6 +275,7 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
             transport: s.transport,
             launch: redactSecrets(s.launch, 'mcp').text,
             env: [...s.env],
+            headers: s.headers.map((h) => redactSecrets(h, 'mcp').text),
             warnings: s.warnings.map((w) => redactPaths(redactSecrets(w, 'mcp').text)),
             globalToProject: s.globalToProject === true,
           })),

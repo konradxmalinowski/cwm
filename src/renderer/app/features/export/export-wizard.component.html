@@ -103,12 +103,24 @@
                   type="radio"
                   name="export-tool"
                   [value]="'project:' + project.projectId"
-                  [checked]="projectTarget() === project.projectId"
+                  [checked]="projectTarget() === project.projectId && tool() === 'claude-code'"
                   data-testid="export-tool-project"
                   [attr.data-project]="project.projectId"
                   (change)="onProject(project.projectId)"
                 />
                 <span>Projekt „{{ project.name }}” (Claude Code)</span>
+              </label>
+              <label class="export-tool__option">
+                <input
+                  type="radio"
+                  name="export-tool"
+                  [value]="'project-gemini:' + project.projectId"
+                  [checked]="projectTarget() === project.projectId && tool() === 'gemini-cli'"
+                  data-testid="export-tool-project-gemini"
+                  [attr.data-project]="project.projectId"
+                  (change)="onProject(project.projectId, 'gemini-cli')"
+                />
+                <span>Projekt „{{ project.name }}” (Gemini CLI, serwery MCP)</span>
               </label>
             }
             <label class="export-tool__option">
@@ -128,12 +140,18 @@
         @if (projectTarget() !== null) {
           <div class="export-tool" data-testid="export-project-target">
             <p class="view__sub">
-              Pliki trafią do <span class="mono">.claude/</span>,
-              <span class="mono">CLAUDE.md</span> i <span class="mono">.mcp.json</span> w
-              repozytorium projektu, więc Git zobaczy je jako zmiany. Aplikacja nie zmienia
-              <span class="mono">.gitignore</span> i niczego nie commituje. Do projektu zawsze idzie
-              kopia plików, bez dowiązań, a przed zapisem powstaje kopia zapasowa jak przy każdym
-              eksporcie. Elementy innych projektów są odmawiane.
+              @if (tool() === 'gemini-cli') {
+                Serwery MCP trafią do <span class="mono">.gemini/settings.json</span> w repozytorium
+                projektu (inne elementy Gemini CLI nie mają tu miejsca i zostaną odmówione), więc
+                Git zobaczy je jako zmiany.
+              } @else {
+                Pliki trafią do <span class="mono">.claude/</span>,
+                <span class="mono">CLAUDE.md</span> i <span class="mono">.mcp.json</span> w
+                repozytorium projektu, więc Git zobaczy je jako zmiany.
+              }
+              Aplikacja nie zmienia <span class="mono">.gitignore</span> i niczego nie commituje. Do
+              projektu zawsze idzie kopia plików, bez dowiązań, a przed zapisem powstaje kopia
+              zapasowa jak przy każdym eksporcie. Elementy innych projektów są odmawiane.
             </p>
             <label class="check">
               <input
@@ -568,8 +586,9 @@
                 </h2>
                 <p class="view__sub">
                   Narzędzie uruchomi te serwery przy starcie sesji. Wartości zmiennych
-                  środowiskowych nie są kopiowane: plik dostaje tylko odniesienia, a serwer weźmie
-                  wartości ze środowiska. Sprawdź polecenia i adresy, zanim zapiszesz.
+                  środowiskowych i nagłówków HTTP nie są kopiowane: plik dostaje tylko odniesienia,
+                  a serwer weźmie wartości ze środowiska. Sprawdź polecenia i adresy, zanim
+                  zapiszesz.
                 </p>
                 <ul class="cands">
                   @for (server of mcp.servers; track server.itemId) {
@@ -589,6 +608,12 @@
                           <p class="cand__desc">
                             Zmienne ze środowiska:
                             <span class="mono">{{ server.env.join(', ') }}</span>
+                          </p>
+                        }
+                        @if (server.headers.length > 0) {
+                          <p class="cand__desc">
+                            Nagłówki HTTP z wartością ze środowiska:
+                            <span class="mono">{{ server.headers.join(', ') }}</span>
                           </p>
                         }
                       </div>
@@ -637,8 +662,12 @@
                     <span>Rozumiem, że globalny serwer MCP trafi do repozytorium projektu</span>
                   </label>
                   <p class="field__hint" id="export-mcp-project-hint">
-                    Plik <span class="mono">.mcp.json</span> trafia do Gita razem z poleceniem
-                    serwera i nazwami zmiennych. Wartości zmiennych zostają na tym komputerze.
+                    Plik
+                    <span class="mono">{{
+                      tool() === 'gemini-cli' ? '.gemini/settings.json' : '.mcp.json'
+                    }}</span>
+                    trafia do Gita razem z poleceniem serwera i nazwami zmiennych. Wartości
+                    zmiennych zostają na tym komputerze.
                   </p>
                   @if (mcpProjectError()) {
                     <p class="field__error" role="alert" id="export-mcp-project-error">

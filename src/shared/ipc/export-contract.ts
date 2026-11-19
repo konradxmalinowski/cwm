@@ -77,6 +77,8 @@ export interface McpServerPreviewDto {
   launch: string;
   /** Zmienne, ktore serwer wezmie ze srodowiska uzytkownika. */
   env: string[];
+  /** Naglowki HTTP jako `Nazwa: Bearer ${ZMIENNA}`: nazwa i odniesienie, nigdy wartosc (ADR 0062). */
+  headers: string[];
   warnings: string[];
   /** Serwer globalny trafia do repozytorium projektu: zapis wymaga `mcpGlobalToProject: true`. */
   globalToProject: boolean;

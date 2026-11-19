@@ -589,7 +589,7 @@ poziom się porusza, a kolumna ostatnia mówi, co go przesuwa.
 | Instrukcja globalna | partial | partial | Jeden plik na narzędzie (`CLAUDE.md`, `AGENTS.md`), więc zarządzany jest blok między markerami aplikacji, nie plik. Treść poza blokiem nie jest eksportowana ani kontrolowana (ADR 0025) |
 | Instrukcja projektowa | unsupported | unsupported | Rodzaj `project-instruction` jest nieużywany. `CLAUDE.md` projektu wchodzi jako `global-instruction` z zakresem `project` i wraca tylko do swojego projektu (ADR 0059) |
 | Hook | full | partial | Codex jest zawsze `partial`: czyta tylko `hooks.<Zdarzenie>` i po cichu pomija nieznane zdarzenia. Dla zdarzenia spoza listy znanych Codeksowi adapter dodaje ostrzeżenie |
-| Serwer MCP (`tool-setting`) | partial albo unsupported | partial albo unsupported | Tylko jawny eksport z potwierdzeniem (ADR 0061). `partial`: wartości zmiennych i nagłówków nie są kopiowane, tylko odniesienia, a pola bez odpowiednika giną. `unsupported`: niekompletny opis, adres bez https, nagłówki, `$` albo tekst wyglądający na sekret, sse w Codeksie; Gemini CLI zawsze. Synchronizacja i ZIP: zawsze odmowa |
+| Serwer MCP (`tool-setting`) | partial albo unsupported | partial albo unsupported | Tylko jawny eksport z potwierdzeniem (ADR 0061, 0062), także do Gemini CLI (`mcpServers` w `settings.json`, globalnie i w projekcie). `partial`: wartości zmiennych i nagłówków nie są kopiowane, tylko odniesienia, a pola bez odpowiednika (w tym `trust` Gemini CLI) giną. `unsupported`: niekompletny opis, adres bez https, nagłówek bez odniesienia albo z zabronioną nazwą lub zmienną, `$` albo tekst wyglądający na sekret, sse oraz `Basic` w Codeksie. Synchronizacja i ZIP: zawsze odmowa |
 | Pliki pomocnicze skilla | w poziomie skilla | w poziomie skilla | Kopiowane razem z elementem, nie mają własnego werdyktu (`reference-asset` jest `unsupported` jako samodzielny element) |
 | Pozostałe ustawienia narzędzia | unsupported | unsupported | Poza MVP |
 
@@ -1620,7 +1620,7 @@ przeniesione do ADR-ów. Otwarte zostaje jedno, z zapisem, który etap blokuje.
 | 12 modułów | Sekcja 6 |
 | Model kanoniczny i poziomy zgodności | Sekcja 4 |
 | Bezpieczeństwo (16 punktów) | Sekcja 8 |
-| Brak automatycznej synchronizacji MCP | ADR 0020, reguły jawnego eksportu w ADR 0061 |
+| Brak automatycznej synchronizacji MCP | ADR 0020, reguły jawnego eksportu w ADR 0061, Gemini CLI i nagłówki HTTP w ADR 0062 |
 | Interfejs i widoki | Sekcja 13 |
 | Centralna biblioteka: instrukcje globalne i projektowe | Sekcja 4.3, ADR 0025 |
 | Etapy 0 do 10 | `docs/ROADMAP.md` |

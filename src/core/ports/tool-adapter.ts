@@ -22,7 +22,10 @@ export type RootKind =
   | 'global-instructions'
   | 'hooks'
   | 'agent-registry'
-  /** Plik z serwerami MCP Claude Code: `~/.claude.json` albo `.mcp.json` projektu (ADR 0061). */
+  /**
+   * Plik z serwerami MCP: Claude Code `~/.claude.json` albo `.mcp.json` projektu (ADR 0061), Gemini CLI
+   * `settings.json` globalny albo `.gemini/settings.json` projektu (ADR 0062).
+   */
   | 'mcp';
 
 export interface DetectedRoot {

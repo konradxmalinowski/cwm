@@ -54,6 +54,10 @@ describe('FsLocationCatalog na podstawionym katalogu domowym', () => {
       kind: 'mcp',
       exists: false,
     });
+    // Serwery MCP Gemini CLI (ADR 0062): ten sam settings.json co hooki, osobny root rodzaju mcp.
+    const geminiSettings = roots.filter((r) => r.label === '~/.gemini/settings.json');
+    expect(geminiSettings.map((r) => r.kind).sort()).toEqual(['hooks', 'mcp']);
+    expect(new Set(geminiSettings.map((r) => r.rootId)).size).toBe(2);
   });
 
   it('drugi root skilli Codeksa: raz nie istnieje, raz istnieje i jest aktywny (ADR 0024)', async () => {
@@ -401,6 +405,11 @@ describe('rejestr i rooty projektu (ADR 0059)', () => {
       projectId: t.added.id,
       label: 'acme-app: .claude/skills',
     });
+    // Serwery MCP Gemini CLI w projekcie (ADR 0062): root rodzaju mcp, rozpoznawany przez Historie.
+    const geminiMcp = byLabel.get('acme-app: .gemini/settings.json');
+    expect(geminiMcp).toMatchObject({ tool: 'gemini-cli', kind: 'mcp', exists: false });
+    expect(t.catalog.kindOf(geminiMcp?.rootId ?? '')).toBe('mcp');
+    expect(t.catalog.kindOf('root-nieznany')).toBeNull();
     // Ten sam rejestr i sol po restarcie daja te same identyfikatory.
     const again = await new FsProjectCatalog(t.registry, SALT_PROMISE).roots(t.added.id);
     expect(again.ok && again.roots.map((r) => r.rootId)).toEqual(found.roots.map((r) => r.rootId));
@@ -418,6 +427,7 @@ describe('rejestr i rooty projektu (ADR 0059)', () => {
     expect(found.ok && found.roots.map((r) => r.label)).toEqual([
       'acme-app: CLAUDE.md',
       'acme-app: .mcp.json',
+      'acme-app: .gemini/settings.json',
     ]);
 
     const before = await new FsProjectCatalog(t.registry, SALT_PROMISE).roots(t.added.id);

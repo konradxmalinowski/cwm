@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createClaudeCodeAdapter } from '../../src/adapters/claude-code';
+import { createGeminiCliAdapter } from '../../src/adapters/gemini-cli';
 import { parseFrontmatter } from '../../src/adapters/shared/frontmatter';
 import type { ItemDraft, LoadedItem } from '../../src/core/model/item';
 import type { ExportContext, ToolAdapter, ToolExporter } from '../../src/core/ports/tool-adapter';
@@ -629,5 +630,314 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
         'unsupported',
       );
     }
+  });
+  it('naglowki HTTP (ADR 0062): zapis odniesienia "Bearer ${NAZWA}", odmowy bez wartosci w powodzie', async () => {
+    const reader = target();
+    reader.file(MCP_ROOT.rootId, '.claude.json', '{}');
+    const http = { ...stdio(), transport: 'http', command: null, url: 'https://mcp.acme.test/v1' };
+    const items = [
+      server('bearer', {
+        ...http,
+        headers: [
+          { name: 'Authorization', ref: 'ACME_API_KEY', scheme: 'Bearer' },
+          { name: 'X-Acme-Tenant', ref: 'ACME_TENANT', scheme: null },
+        ],
+      }),
+      server('literal', {
+        ...http,
+        headers: [{ name: 'Authorization', ref: null, scheme: null }],
+      }),
+      server('engine', {
+        ...http,
+        headers: [{ name: 'Authorization', ref: 'ANTHROPIC_API_KEY', scheme: 'Bearer' }],
+      }),
+      server('cloud', {
+        ...http,
+        headers: [{ name: 'X-Key', ref: 'GEMINI_API_KEY', scheme: null }],
+      }),
+      server('hostname', { ...http, headers: [{ name: 'Host', ref: 'ACME_HOST', scheme: null }] }),
+      server('badname', {
+        ...http,
+        headers: [{ name: 'X-Acme\r\nX-Evil', ref: 'ACME_KEY', scheme: null }],
+      }),
+      server('twice', {
+        ...http,
+        headers: [
+          { name: 'X-Key', ref: 'ACME_A', scheme: null },
+          { name: 'x-key', ref: 'ACME_B', scheme: null },
+        ],
+      }),
+    ];
+    const plan = await adapter.plan(items, mcpCtx(reader));
+    const reasons = new Map(plan.refusals.map((r) => [r.slug, r.reason]));
+    expect(reasons.has('mcp-bearer')).toBe(false);
+    expect(reasons.get('mcp-literal')).toMatch(/bez odniesienia/);
+    expect(reasons.get('mcp-engine')).toMatch(/ANTHROPIC_API_KEY/);
+    expect(reasons.get('mcp-cloud')).toMatch(/dane logowania/);
+    expect(reasons.get('mcp-hostname')).toMatch(/Host/);
+    expect(reasons.get('mcp-badname')).toMatch(/tokenu HTTP/);
+    expect(reasons.get('mcp-twice')).toMatch(/więcej niż raz/);
+    const e = entryFor(plan, MCP_ROOT.rootId, '.claude.json')!;
+    const written = JSON.parse(text(e.content)) as { mcpServers: Record<string, unknown> };
+    expect(Object.keys(written.mcpServers)).toEqual(['bearer']);
+    expect(written.mcpServers['bearer']).toEqual({
+      type: 'http',
+      url: 'https://mcp.acme.test/v1',
+      headers: { Authorization: 'Bearer ${ACME_API_KEY}', 'X-Acme-Tenant': '${ACME_TENANT}' },
+    });
+    // Podglad pokazuje odniesienia, bo nie sa wartosciami.
+    expect(e.preview?.after).toContain('Bearer ${ACME_API_KEY}');
+    expect(e.warnings.join(' ')).toMatch(/Authorization: Bearer \$\{ACME_API_KEY\}/);
+
+    reader.apply(plan);
+    const again = await adapter.plan([items[0]!], mcpCtx(reader));
+    expect(entryFor(again, MCP_ROOT.rootId, '.claude.json')?.action).toBe('unchanged');
+  });
+
+  it('import naglowkow (ADR 0062): odniesienie zostaje, wartosc wpisana wprost nie trafia do biblioteki', async () => {
+    const literal = filler(48, 91);
+    const reader = new MemoryReader();
+    reader.file(
+      MCP_ROOT.rootId,
+      '.claude.json',
+      JSON.stringify({
+        mcpServers: {
+          api: {
+            type: 'http',
+            url: 'https://mcp.acme.test/v1',
+            headers: {
+              Authorization: 'Bearer ${ACME_API_KEY}',
+              'X-Static': literal,
+              'X-Default': `\${ACME_X:-${literal}}`,
+            },
+          },
+          broken: {
+            type: 'http',
+            url: 'https://mcp.acme.test/v2',
+            headers: { 'X-Bad Name': '${ACME_KEY}' },
+          },
+        },
+      }),
+    );
+    const result = await adapter.scan(MCP_ROOT, reader);
+    const dump = JSON.stringify(result, (_k, v: unknown) =>
+      v instanceof Uint8Array ? new TextDecoder().decode(v) : v,
+    );
+    expect(dump).not.toContain(literal);
+    expect(result.candidates.map((c) => c.draft.identity.slug)).toEqual(['mcp-api']);
+    const value = result.candidates[0]!.draft.attributes?.toolSetting?.value as {
+      headers: unknown;
+    };
+    expect(value.headers).toEqual([
+      { name: 'Authorization', ref: 'ACME_API_KEY', scheme: 'Bearer' },
+      { name: 'X-Static', ref: null, scheme: null },
+      { name: 'X-Default', ref: null, scheme: null },
+    ]);
+    expect(result.candidates[0]!.warnings.map((w) => w.message).join(' ')).toMatch(
+      /X-Static, X-Default/,
+    );
+    expect(result.skipped.find((s) => s.relPath.endsWith('/broken'))?.reason).toBe('unsupported');
+  });
+});
+
+describe('eksport Gemini CLI: serwery MCP i naglowki (ADR 0062)', () => {
+  const gemini = createGeminiCliAdapter() as ToolAdapter & ToolExporter;
+  const GLOBAL = { ...detectedRoot('gemini-cli', 'mcp', 20), label: '~/.gemini/settings.json' };
+  const PROJECT = {
+    ...detectedRoot('gemini-cli', 'mcp', 21),
+    label: 'acme-app: .gemini/settings.json',
+  };
+  const HOOKS = { ...detectedRoot('gemini-cli', 'hooks', 22), label: '~/.gemini/settings.json' };
+  const server = (name: string, value: object): LoadedItem =>
+    toLoaded(
+      draft('tool-setting', `mcp-${name}`, {
+        attributes: {
+          toolSetting: { tool: 'claude-code', key: `mcpServers.${name}`, value: value as never },
+        },
+      }),
+    );
+  const stdio = {
+    transport: 'stdio',
+    command: 'acme-mcp',
+    args: ['--serve'],
+    url: null,
+    env: [{ name: 'ACME_TOKEN', ref: 'ACME_TOKEN' }],
+    headers: [],
+  };
+  const http = {
+    ...stdio,
+    transport: 'http',
+    command: null,
+    url: 'https://mcp.acme.test/v1',
+    env: [],
+    headers: [{ name: 'Authorization', ref: 'ACME_API_KEY', scheme: 'Bearer' }],
+  };
+  const geminiCtx = (reader: MemoryReader, root = GLOBAL, extra: object = {}): ExportContext => ({
+    roots: [root],
+    reader,
+    materialization: { directory: 'copy', file: 'copy' },
+    ...extra,
+  });
+
+  it('zapisuje mcpServers w settings.json: command/env, httpUrl/headers, bez trust; reszta pliku bez zmian', async () => {
+    const before = {
+      security: { auth: { selectedType: 'oauth-personal' } },
+      hooks: { BeforeTool: [] },
+      mcpServers: { other: { command: 'other-mcp', trust: true } },
+    };
+    const reader = new MemoryReader();
+    reader.file(GLOBAL.rootId, 'settings.json', `${JSON.stringify(before, null, 2)}\n`);
+    const items = [
+      server('local', stdio),
+      server('api', http),
+      server('stream', { ...http, transport: 'sse', url: 'https://mcp.acme.test/sse' }),
+    ];
+    const plan = await gemini.plan(items, geminiCtx(reader));
+    expect(plan.refusals).toEqual([]);
+    const e = entryFor(plan, GLOBAL.rootId, 'settings.json')!;
+    expect([e.action, e.scope]).toEqual(['modify', 'json-key']);
+    const after = JSON.parse(text(e.content)) as typeof before & {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(after.security).toEqual(before.security);
+    expect(after.hooks).toEqual(before.hooks);
+    expect(after.mcpServers['other']).toEqual(before.mcpServers.other);
+    expect(after.mcpServers['local']).toEqual({
+      command: 'acme-mcp',
+      args: ['--serve'],
+      env: { ACME_TOKEN: '${ACME_TOKEN}' },
+    });
+    expect(after.mcpServers['api']).toEqual({
+      httpUrl: 'https://mcp.acme.test/v1',
+      headers: { Authorization: 'Bearer ${ACME_API_KEY}' },
+    });
+    expect(after.mcpServers['stream']).toEqual({
+      url: 'https://mcp.acme.test/sse',
+      headers: { Authorization: 'Bearer ${ACME_API_KEY}' },
+    });
+    for (const name of ['local', 'api', 'stream']) {
+      expect(JSON.stringify(after.mcpServers[name])).not.toContain('trust');
+    }
+    expect(e.preview?.after).not.toContain('security');
+
+    reader.apply(plan);
+    const again = await gemini.plan(items, geminiCtx(reader));
+    expect(entryFor(again, GLOBAL.rootId, 'settings.json')?.action).toBe('unchanged');
+  });
+
+  it('projekt: brak .gemini/settings.json tworzy plik z samym kluczem mcpServers', async () => {
+    const reader = new MemoryReader();
+    reader.file(PROJECT.rootId, 'settings.json', null);
+    const plan = await gemini.plan([server('api', http)], geminiCtx(reader, PROJECT));
+    const e = entryFor(plan, PROJECT.rootId, 'settings.json')!;
+    expect(e.action).toBe('create');
+    expect(Object.keys(JSON.parse(text(e.content)) as object)).toEqual(['mcpServers']);
+  });
+
+  it('zastapienie serwera z trust: true usuwa trust z ostrzezeniem; hooki i MCP w jednym planie to odmowa MCP', async () => {
+    const reader = new MemoryReader();
+    reader.file(
+      GLOBAL.rootId,
+      'settings.json',
+      JSON.stringify({ mcpServers: { local: { command: 'old-mcp', trust: true } } }),
+    );
+    const item = server('local', stdio);
+    const conflict = await gemini.plan([item], geminiCtx(reader));
+    expect(conflict.conflicts[0]?.options?.map((o) => o.id)).toEqual(['replace-server']);
+    const decided = await gemini.plan(
+      [item],
+      geminiCtx(reader, GLOBAL, {
+        decisions: [
+          { itemId: item.item.id, relPath: 'settings.json', resolution: 'replace-server' },
+        ],
+      }),
+    );
+    const e = entryFor(decided, GLOBAL.rootId, 'settings.json')!;
+    const after = JSON.parse(text(e.content)) as { mcpServers: { local: object } };
+    expect(after.mcpServers.local).not.toHaveProperty('trust');
+    expect(e.warnings.join(' ')).toMatch(/trust: true/);
+
+    const hook = toLoaded(
+      draft('hook', 'BeforeTool-1', {
+        attributes: {
+          hook: {
+            event: 'BeforeTool',
+            matcher: null,
+            command: '/opt/acme/check.sh',
+            pathStyle: 'absolute',
+            timeoutSeconds: 5,
+          },
+        },
+      }),
+    );
+    const both = new MemoryReader();
+    both.file(GLOBAL.rootId, 'settings.json', '{}');
+    both.file(HOOKS.rootId, 'settings.json', '{}');
+    const mixed = await gemini.plan([hook, item], {
+      ...geminiCtx(both),
+      roots: [GLOBAL, HOOKS],
+    });
+    expect(mixed.refusals.map((r) => r.slug)).toEqual(['mcp-local']);
+    expect(mixed.refusals[0]?.reason).toMatch(/osobnym planem/);
+    expect(mixed.entries.map((x) => x.rootId)).toEqual([HOOKS.rootId]);
+  });
+
+  it('import z settings.json: tylko mcpServers, $NAZWA i ${NAZWA} jako odniesienia, trust nigdy', async () => {
+    const literal = filler(40, 55);
+    const reader = new MemoryReader();
+    reader.file(
+      GLOBAL.rootId,
+      'settings.json',
+      JSON.stringify({
+        security: { auth: { apiKey: SECRETS.openai } },
+        mcpServers: {
+          local: {
+            command: 'acme-mcp',
+            args: ['--serve'],
+            env: { ACME_TOKEN: '$ACME_TOKEN', ACME_URL: '${ACME_BASE}', ACME_RAW: literal },
+            cwd: './srv',
+            trust: true,
+          },
+          api: {
+            httpUrl: 'https://mcp.acme.test/v1',
+            headers: { Authorization: 'Bearer $ACME_API_KEY', 'X-Raw': literal },
+            timeout: 5000,
+          },
+          both: { command: 'acme-mcp', url: 'https://mcp.acme.test/sse' },
+        },
+      }),
+    );
+    const result = await gemini.scan(GLOBAL, reader);
+    const dump = JSON.stringify(result, (_k, v: unknown) =>
+      v instanceof Uint8Array ? new TextDecoder().decode(v) : v,
+    );
+    for (const forbidden of [literal, SECRETS.openai, 'security']) {
+      expect(dump).not.toContain(forbidden);
+    }
+    const bySlug = new Map(result.candidates.map((c) => [c.draft.identity.slug, c]));
+    expect([...bySlug.keys()].sort()).toEqual(['mcp-api', 'mcp-local']);
+    const local = bySlug.get('mcp-local')!;
+    expect(local.draft.attributes?.toolSetting?.key).toBe('mcpServers.local');
+    expect(local.draft.attributes?.toolSetting?.value).toMatchObject({
+      transport: 'stdio',
+      env: [
+        { name: 'ACME_TOKEN', ref: 'ACME_TOKEN' },
+        { name: 'ACME_URL', ref: 'ACME_BASE' },
+        { name: 'ACME_RAW', ref: 'ACME_RAW' },
+      ],
+    });
+    expect(local.draft.source?.snapshots[0]?.unmappedKeys).toEqual([
+      { path: 'server.cwd', value: null },
+    ]);
+    expect(local.warnings.map((w) => w.message).join(' ')).toMatch(/trust: true/);
+    expect(bySlug.get('mcp-api')!.draft.attributes?.toolSetting?.value).toMatchObject({
+      transport: 'http',
+      url: 'https://mcp.acme.test/v1',
+      headers: [
+        { name: 'Authorization', ref: 'ACME_API_KEY', scheme: 'Bearer' },
+        { name: 'X-Raw', ref: null, scheme: null },
+      ],
+    });
+    expect(result.skipped.find((s) => s.relPath.endsWith('/both'))?.reason).toBe('unsupported');
   });
 });

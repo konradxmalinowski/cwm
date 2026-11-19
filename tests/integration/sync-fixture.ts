@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { createClaudeCodeAdapter } from '../../src/adapters/claude-code';
 import { createCodexAdapter } from '../../src/adapters/codex';
+import { createGeminiCliAdapter } from '../../src/adapters/gemini-cli';
 import { systemClock, type Clock } from '../../src/core/ports/clock';
 import { ExportService } from '../../src/core/services/export/export-service';
 import { HistoryService } from '../../src/core/services/history/history-service';
@@ -61,7 +62,7 @@ export function makeSyncStack(options: SyncStackOptions = {}) {
     ...(options.atomicOps === undefined ? {} : { atomicOps: options.atomicOps }),
     ...(options.gateClock === undefined ? {} : { clock: options.gateClock }),
   });
-  const adapters = [createClaudeCodeAdapter(), createCodexAdapter()];
+  const adapters = [createClaudeCodeAdapter(), createCodexAdapter(), createGeminiCliAdapter()];
   const exporters = createExporters(adapters);
   const exports = new ExportService({
     catalog,
@@ -90,6 +91,9 @@ export function makeSyncStack(options: SyncStackOptions = {}) {
     reader,
     exports,
     clock: systemClock,
+    // Jak w main (ADR 0062): settings.json Gemini CLI rozpoznawany po rodzaju roota, nie po nazwie.
+    mcpRoot: async (rootId) =>
+      (await catalog.detect()).some((r) => r.rootId === rootId && r.kind === 'mcp'),
   });
   return {
     tree,

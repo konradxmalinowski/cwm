@@ -16,7 +16,13 @@ import {
   withSourceEol,
   type MarkdownSource,
 } from '../shared/export/markdown-export';
+import {
+  GEMINI_HOOKS_AND_MCP_REFUSAL,
+  mcpCapabilities,
+  planGeminiMcp,
+} from '../shared/export/mcp-export';
 import { PlanBuilder, encode, pickRoot } from '../shared/export/plan-support';
+import { isMcpServerItem } from '../../core/services/mcp/mcp-server';
 import {
   foreignUnmapped,
   requiredFieldAdditions,
@@ -154,6 +160,8 @@ export function geminiCapabilities(item: LibraryItem): CompatibilityVerdict {
       }
       return reasons.length === 0 ? verdict('full') : verdict('partial', reasons);
     }
+    case 'tool-setting':
+      return isMcpServerItem(item) ? mcpCapabilities(item, TOOL) : unsupportedKind(item);
     default:
       return unsupportedKind(item);
   }
@@ -228,6 +236,7 @@ export async function planGemini(
   const b = new PlanBuilder(TOOL);
   const instructions: LoadedItem[] = [];
   const hooks: LoadedItem[] = [];
+  const mcp: LoadedItem[] = [];
   const listings = new Map<string, RootListing>();
   const listingFor = async (root: Parameters<typeof listRoot>[1]): Promise<RootListing> => {
     const cached = listings.get(root.rootId);
@@ -315,9 +324,19 @@ export async function planGemini(
       case 'hook':
         hooks.push(loaded);
         break;
+      case 'tool-setting':
+        mcp.push(loaded);
+        break;
       default:
         break;
     }
+  }
+
+  // Hooki i serwery MCP globalnie leza w tym samym settings.json: dwa wpisy jednego pliku w jednym
+  // planie nadpisalyby sie nawzajem, wiec serwery MCP ida wtedy osobnym planem (ADR 0062).
+  if (hooks.length > 0 && mcp.length > 0 && pickRoot(ctx, TOOL, 'hooks').root !== null) {
+    for (const l of mcp) b.refuse(l.item, GEMINI_HOOKS_AND_MCP_REFUSAL);
+    mcp.length = 0;
   }
 
   await planInstructions(
@@ -341,5 +360,6 @@ export async function planGemini(
     },
     hooks,
   );
+  await planGeminiMcp(b, ctx, mcp);
   return b.build();
 }
