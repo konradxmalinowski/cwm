@@ -679,7 +679,16 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
       }),
       server('forge', {
         ...http,
-        headers: [{ name: 'Authorization', ref: 'GITHUB_TOKEN', scheme: 'Bearer' }],
+        url: 'https://api.githubcopilot.test/mcp/',
+        headers: [
+          { name: 'X-Forge', ref: 'GITHUB_PERSONAL_ACCESS_TOKEN', scheme: null },
+          // Nazwa bez czesci sekretu: zdanie o hoscie wynika z samego prefiksu uslugi.
+          { name: 'X-Npm-User', ref: 'NPM_REGISTRY_USER', scheme: null },
+        ],
+      }),
+      server('engineauth', {
+        ...http,
+        headers: [{ name: 'X-Key', ref: 'OPENAI_KEY_COPY', scheme: null }],
       }),
     ];
     const plan = await adapter.plan(items, mcpCtx(reader));
@@ -693,14 +702,24 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
     expect(reasons.get('mcp-twice')).toMatch(/więcej niż raz/);
     expect(reasons.get('mcp-pastedgh')).toMatch(/wygląda na token/);
     expect(reasons.get('mcp-pastedhex')).toMatch(/wygląda na token/);
-    expect(reasons.get('mcp-forge')).toMatch(/GITHUB_TOKEN/);
+    // Token uslugi (np. GitHub) przechodzi z jawnym zdaniem o hoscie, dane logowania silnika nie.
+    expect(reasons.has('mcp-forge')).toBe(false);
+    expect(reasons.get('mcp-engineauth')).toMatch(/OPENAI_KEY_COPY/);
+    const forge = mcpPreview(
+      items.find((i) => i.item.identity.slug === 'mcp-forge')!.item,
+      'claude-code',
+    );
+    expect(forge?.headerNotices).toEqual([
+      expect.stringMatching(/GITHUB_PERSONAL_ACCESS_TOKEN.*do hosta api\.githubcopilot\.test/),
+      expect.stringMatching(/NPM_REGISTRY_USER.*do hosta api\.githubcopilot\.test/),
+    ]);
     for (const reason of reasons.values()) {
       expect(reason).not.toContain(SECRETS.github);
       expect(reason).not.toContain(HEX);
     }
     const e = entryFor(plan, MCP_ROOT.rootId, '.claude.json')!;
     const written = JSON.parse(text(e.content)) as { mcpServers: Record<string, unknown> };
-    expect(Object.keys(written.mcpServers)).toEqual(['bearer']);
+    expect(Object.keys(written.mcpServers).sort()).toEqual(['bearer', 'forge']);
     expect(written.mcpServers['bearer']).toEqual({
       type: 'http',
       url: 'https://mcp.acme.test/v1',

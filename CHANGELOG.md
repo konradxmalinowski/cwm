@@ -19,9 +19,9 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
   z danymi logowania narzędzi i chmury oraz `Basic` do Codeksa. Plan pokazuje nagłówki jako nazwę i zmienną. Kreator
   eksportu ma cel "Projekt (Gemini CLI, serwery MCP)", a cofnięcie z Historii zapisu do `settings.json` Gemini CLI
   (serwerów MCP i hooków, bo to ten sam plik) jest zablokowane. Odniesienie, które samo wygląda na token (wklejona
-  wartość zamiast nazwy zmiennej), nie trafia do biblioteki ani do pliku; zmienne tokenów popularnych usług
-  (`GITHUB_*`, `NPM_*`, `SLACK_*` i inne) są odmawiane w nagłówkach, a nagłówek ze zmienną o nazwie sekretu ma w
-  podglądzie zdanie, do którego hosta trafi wartość. `trust: true` przy tej samej definicji daje ostrzeżenie, a
+  wartość zamiast nazwy zmiennej), nie trafia do biblioteki ani do pliku, a nagłówek ze zmienną o nazwie sekretu albo
+  z tokenem popularnej usługi (`GITHUB_*`, `NPM_*`, `SLACK_*` i inne) ma w podglądzie zdanie, do którego hosta trafi
+  wartość. `trust: true` przy tej samej definicji daje ostrzeżenie, a
   `includeTools` i `excludeTools` zostają po zastąpieniu serwera.
 
 - Reguły bezpieczeństwa i zakresów MCP (ADR 0061, częściowo zastępuje ADR 0020). Serwery MCP są importowane z

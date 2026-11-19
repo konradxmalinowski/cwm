@@ -82,12 +82,18 @@ const FORBIDDEN_HEADERS = new Set([
   'proxy-connection',
 ]);
 /**
- * Zmienne z danymi logowania samych narzedzi, dostawcow chmury i popularnych uslug (forge, rejestry
- * pakietow, czaty, platnosci). Naglowek wysyla wartosc pod adres serwera, wiec odniesienie do nich
- * byloby wyciekiem tokenu do innej uslugi (Claude Code czyta swoje w naglowkach jako puste).
+ * Zmienne z danymi logowania samych narzedzi i dostawcow chmury. Naglowek wysyla wartosc pod adres
+ * serwera, wiec odniesienie do nich byloby wyciekiem (Claude Code czyta je w naglowkach jako puste).
  */
 const HEADER_REF_DENIED =
-  /^(?:ANTHROPIC_|CLAUDE_|OPENAI_|CODEX_|GEMINI_|GOOGLE_|GCLOUD_|AWS_|AZURE_|GITHUB_|GH_|GITLAB_|NPM_|HF_|HUGGING_FACE_|SLACK_|DOCKER_|DIGITALOCEAN_|CLOUDFLARE_|CF_|STRIPE_|TWILIO_|SENTRY_)/i;
+  /^(?:ANTHROPIC_|CLAUDE_|OPENAI_|CODEX_|GEMINI_|GOOGLE_|GCLOUD_|AWS_|AZURE_)/i;
+/**
+ * Tokeny popularnych uslug (forge, rejestry pakietow, czaty, platnosci). Typowe serwery MCP ich uzywaja
+ * (np. GitHub: `Authorization: Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}`), wiec to nie odmowa, tylko zawsze
+ * jawne zdanie w podgladzie potwierdzenia, do jakiego hosta trafi wartosc (ADR 0062).
+ */
+const HEADER_REF_SERVICE_TOKEN =
+  /^(?:GITHUB_|GH_|GITLAB_|NPM_|HF_|HUGGING_FACE_|SLACK_|DOCKER_|DIGITALOCEAN_|CLOUDFLARE_|CF_|STRIPE_|TWILIO_|SENTRY_)/i;
 const MAX_HEADERS = 32;
 // eslint-disable-next-line no-control-regex -- kontrolujemy dokladnie znaki sterujace
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
@@ -489,7 +495,9 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
       );
     }
     for (const h of headers) {
-      if (h.ref === null || !nameLooksSecret(h.ref)) continue;
+      if (h.ref === null || !(nameLooksSecret(h.ref) || HEADER_REF_SERVICE_TOKEN.test(h.ref))) {
+        continue;
+      }
       headerNotices.push(
         `Nagłówek ${h.name} wyśle wartość zmiennej ${h.ref}, która wygląda na dane logowania, do hosta ${parsed.host}. Zapisz ten serwer tylko, jeśli ufasz temu hostowi.`,
       );

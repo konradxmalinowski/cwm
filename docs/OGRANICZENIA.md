@@ -168,12 +168,12 @@ nagłówki jako `"Bearer ${NAZWA}"` (Claude Code, Gemini CLI) albo `bearer_token
   odniesienie do zmiennej: nagłówek z wartością wpisaną wprost (np. token w `Authorization`) blokuje
   eksport serwera, bo serwer bez niego nie zadziała. Popraw go w narzędziu źródłowym na
   `"Bearer ${NAZWA}"` i zaimportuj ponownie. Odmową są też nagłówki `Host`, `Cookie` i inne
-  sterujące połączeniem, odniesienia do zmiennych z danymi logowania narzędzi, chmury i popularnych
-  usług (`ANTHROPIC_*`, `GEMINI_*`, `OPENAI_*`, `AWS_*`, `GITHUB_*`, `GH_*`, `NPM_*`, `SLACK_*`,
-  `STRIPE_*` itd.; użyj własnej nazwy zmiennej) oraz odniesienia, które same wyglądają na token
-  (wklejona wartość zamiast nazwy zmiennej; taki tekst nie trafia też do biblioteki przy imporcie).
-  Nagłówek ze zmienną o nazwie sekretu (np. `ACME_API_KEY`) przechodzi, ale plan mówi wprost, do
-  którego hosta trafi jej wartość. Codex nie obsługuje transportu sse ani schematu `Basic` w nagłówku.
+  sterujące połączeniem, odniesienia do zmiennych z danymi logowania samych narzędzi i chmury
+  (`ANTHROPIC_*`, `GEMINI_*`, `OPENAI_*`, `AWS_*` itd.) oraz odniesienia, które same wyglądają na
+  token (wklejona wartość zamiast nazwy zmiennej; taki tekst nie trafia też do biblioteki przy
+  imporcie). Nagłówek ze zmienną o nazwie sekretu (np. `ACME_API_KEY`) albo z tokenem popularnej
+  usługi (`GITHUB_*`, `GH_*`, `NPM_*`, `SLACK_*`, `STRIPE_*` itd.) przechodzi, ale plan mówi wprost,
+  do którego hosta trafi jej wartość. Codex nie obsługuje transportu sse ani schematu `Basic` w nagłówku.
 - `trust: true` z Gemini CLI (pomijanie potwierdzeń wywołań narzędzi) nie jest importowany ani
   eksportowany. Zastąpienie serwera, który go ma, usuwa to pole; gdy definicja jest taka sama,
   aplikacja niczego nie zapisuje, ale plan ostrzega, że serwer ma `trust: true`. `includeTools` i

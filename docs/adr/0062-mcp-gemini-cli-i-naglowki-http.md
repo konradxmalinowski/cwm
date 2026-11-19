@@ -69,13 +69,15 @@ użytkownik poprawia w narzędziu źródłowym i importuje ponownie.
    sterujące połączeniem albo niosące sesję (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Keep-Alive`,
    `Upgrade`, `TE`, `Trailer`, `Expect`, `Cookie`, `Proxy-Authorization`, `Proxy-Connection`), `ref` o niepoprawnej
    nazwie, wyglądający na token (`refLooksLikeToken`, powód bez wartości), z listy `isSettingsEnvNameDenied` albo z
-   prefiksem danych logowania narzędzi, chmury i popularnych usług (`ANTHROPIC_`, `CLAUDE_`, `OPENAI_`, `CODEX_`,
-   `GEMINI_`, `GOOGLE_`, `GCLOUD_`, `AWS_`, `AZURE_`, `GITHUB_`, `GH_`, `GITLAB_`, `NPM_`, `HF_`, `HUGGING_FACE_`,
-   `SLACK_`, `DOCKER_`, `DIGITALOCEAN_`, `CLOUDFLARE_`, `CF_`, `STRIPE_`, `TWILIO_`, `SENTRY_`). Ta reguła rozszerza
-   ochronę Claude Code: nagłówek wysyła wartość pod adres serwera, więc odniesienie do tokenu innej usługi byłoby
-   wyciekiem. Nagłówek, którego zmienna ma nazwę sekretu (`nameLooksSecret`, np. `ACME_API_KEY`), przechodzi, ale
-   podgląd potwierdzenia ma przy serwerze osobne zdanie "Nagłówek X wyśle wartość zmiennej Y, która wygląda na dane
-   logowania, do hosta H" (`headerNotices`), oznaczone jako dane logowania. Zapis:
+   prefiksem danych logowania samych narzędzi i chmury (`ANTHROPIC_`, `CLAUDE_`, `OPENAI_`, `CODEX_`, `GEMINI_`,
+   `GOOGLE_`, `GCLOUD_`, `AWS_`, `AZURE_`). Ta reguła powtarza ochronę Claude Code: nagłówek wysyła wartość pod adres
+   serwera, więc odniesienie do klucza samego narzędzia albo konta chmury byłoby wyciekiem. Tokeny popularnych usług
+   (`GITHUB_`, `GH_`, `GITLAB_`, `NPM_`, `HF_`, `HUGGING_FACE_`, `SLACK_`, `DOCKER_`, `DIGITALOCEAN_`, `CLOUDFLARE_`,
+   `CF_`, `STRIPE_`, `TWILIO_`, `SENTRY_`) **nie** są odmową, bo typowe serwery MCP ich potrzebują (np. GitHub:
+   `Authorization: Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}`). Nagłówek z takim prefiksem albo ze zmienną o nazwie
+   sekretu (`nameLooksSecret`, np. `ACME_API_KEY`) przechodzi, ale podgląd potwierdzenia ma przy serwerze zawsze
+   osobne zdanie "Nagłówek X wyśle wartość zmiennej Y, która wygląda na dane logowania, do hosta H"
+   (`headerNotices`), oznaczone jako dane logowania. Zapis:
    - Claude Code i Gemini CLI: `"Nazwa": "${REF}"` albo `"Nazwa": "Bearer ${REF}"` (`Basic` tak samo).
    - Codex: `Authorization` ze schematem `Bearer` to `bearer_token_env_var = "REF"`, nagłówek bez schematu to wpis w
      `env_http_headers`. `Basic` i `Bearer` w innym nagłówku niż `Authorization` to odmowa, bo Codex nie ma odniesienia
@@ -137,9 +139,10 @@ Koszty, na które się godzimy:
   formularza edycji serwera.
 - `Basic` do Codeksa jest odmową. Kto potrzebuje, może wpisać do zmiennej całą wartość `Basic ...` i użyć nagłówka bez
   schematu.
-- Zmienne z danymi logowania narzędzi, chmury i popularnych usług (np. `GITHUB_TOKEN`) nie przechodzą do nagłówków,
-  także gdy użytkownik celowo ich używa (serwer MCP GitHuba z `GITHUB_TOKEN` też); obejście to własna nazwa zmiennej
-  z tą samą wartością.
+- Zmienne z danymi logowania samych narzędzi i chmury (`ANTHROPIC_*`, `AWS_*` itd.) nie przechodzą do nagłówków, także
+  gdy użytkownik celowo ich używa.
+- Tokeny popularnych usług przechodzą; ochroną jest tylko jawne zdanie o hoście w podglądzie i potwierdzenie planu,
+  więc użytkownik musi sam ocenić, czy ufa adresowi serwera.
 - Hooki i serwery MCP Gemini CLI wymagają osobnych planów.
 - Zapisu hooków Gemini CLI nie da się już cofnąć z Historii (ten sam `settings.json` co serwery MCP); kopia zapasowa
   pliku jest w katalogu danych aplikacji, a hooki zmienia się w narzędziu albo kolejnym eksportem.
