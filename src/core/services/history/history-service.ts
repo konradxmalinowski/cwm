@@ -46,7 +46,15 @@ export interface HistoryServiceDeps {
   readonly reader: SourceReader;
   readonly exports: Pick<ExportService, 'adopt'>;
   readonly clock: Clock;
+  /** Czy element jest serwerem MCP (ADR 0061); brak portu: rozpoznanie tylko po pliku MCP w kopii. */
+  readonly mcpItem?: (itemId: string) => Promise<boolean>;
 }
+
+/** Pliki, ktore zapisuje wylacznie eksport MCP (ADR 0061). */
+const MCP_FILES = new Set(['.claude.json', '.mcp.json']);
+
+export const MCP_ROLLBACK_REFUSAL =
+  'Tej operacji nie da się cofnąć z Historii: zapisała serwer MCP do pliku, który zmienia też samo narzędzie, a cofnięcie przywróciłoby cały plik. Zmień albo usuń serwer w narzędziu ręcznie; kopia zapasowa pliku jest w katalogu danych aplikacji (ADR 0061).';
 
 const DEFAULT_LIMIT = 50;
 export const MAX_HISTORY_LIMIT = 200;
@@ -210,6 +218,16 @@ export class HistoryService {
     }
 
     const itemIds = [...new Set(group.rows.map((r) => r.itemId))] as ItemId[];
+    // Cofniecie przywraca caly plik z kopii, a nie sam klucz `mcpServers.<nazwa>`: dla zapisu MCP to
+    // zbyt szeroko (plik zmienia tez dzialajace narzedzie), wiec jest zablokowane (ADR 0061).
+    if (manifest.entries.some((m) => MCP_FILES.has(m.relPath.split('/').pop() ?? ''))) {
+      throw new HistoryError('not-revertible', MCP_ROLLBACK_REFUSAL);
+    }
+    for (const id of itemIds) {
+      if ((await this.deps.mcpItem?.(id)) === true) {
+        throw new HistoryError('not-revertible', MCP_ROLLBACK_REFUSAL);
+      }
+    }
     const entries: WritePlanEntry[] = [];
     const conflicts: PlanConflict[] = [];
     for (const m of manifest.entries) {

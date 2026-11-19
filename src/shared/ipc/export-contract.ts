@@ -55,7 +55,10 @@ export interface PlanEntryDto {
   scope: 'whole-file' | 'marker-block' | 'toml-segment' | 'json-key';
   materialization: MaterializationModeDto | null;
   itemIds: string[];
-  /** Tekst przed i po dla podgladu diffu; null dla plikow binarnych albo zbyt duzych. */
+  /**
+   * Tekst przed i po dla podgladu diffu; null dla plikow binarnych albo zbyt duzych. Dla wpisu z serwerem
+   * MCP to wycinek ze zmienianymi serwerami (i rejestracjami agentow z tego planu), nie caly plik.
+   */
   before: string | null;
   after: string | null;
   /** Lista plikow wpisu katalogowego, sciezki wzgledem `relPath`. */
@@ -75,6 +78,8 @@ export interface McpServerPreviewDto {
   /** Zmienne, ktore serwer wezmie ze srodowiska uzytkownika. */
   env: string[];
   warnings: string[];
+  /** Serwer globalny trafia do repozytorium projektu: zapis wymaga `mcpGlobalToProject: true`. */
+  globalToProject: boolean;
 }
 
 export interface ExportPlanDto {
@@ -110,6 +115,8 @@ export interface ExportApplyRequest {
   approved: true;
   /** Znacznik `mcp.confirmation` z planu: uzytkownik potwierdzil podglad serwerow MCP (ADR 0061). */
   mcpConfirmation?: string;
+  /** Osobne potwierdzenie zapisu globalnego serwera MCP do repozytorium projektu. */
+  mcpGlobalToProject?: true;
 }
 
 export interface ExportApplyDto {

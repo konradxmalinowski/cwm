@@ -29,6 +29,68 @@ const statusOf = async (s: Awaited<ReturnType<typeof exported>>) =>
   (await s.sync.status([...TOOL])).items.find((i) => i.itemId === s.item.id)?.status;
 
 describe('synchronizacja na plikach', () => {
+  it('serwer MCP: zapis do ~/.claude.json tylko z potwierdzeniem, zmienia sam mcpServers, a cofniecie jest zablokowane (ADR 0061)', async () => {
+    const s = makeSyncStack();
+    const file = join(s.home, '.claude.json');
+    writeFileSync(
+      file,
+      `${JSON.stringify({ numStartups: 2, mcpServers: { other: { command: 'other-mcp' } } }, null, 2)}\n`,
+    );
+    const { item } = await s.lib.service.create(
+      draft({
+        kind: 'tool-setting',
+        slug: 'mcp-acme',
+        body: '',
+        attributes: {
+          toolSetting: {
+            tool: 'codex',
+            key: 'mcp_servers.acme',
+            value: {
+              transport: 'stdio',
+              command: 'acme-mcp',
+              args: ['--serve'],
+              url: null,
+              env: [{ name: 'ACME_TOKEN', ref: 'ACME_TOKEN' }],
+              headers: [],
+            },
+          },
+        },
+      }),
+    );
+    const first = await s.exports.plan('claude-code', [item.id]);
+    expect(first.mcp?.map((m) => m.name)).toEqual(['acme']);
+    await expect(s.exports.apply(first.planId, true)).rejects.toMatchObject({
+      code: 'mcp-confirmation-required',
+    });
+    const before = readFileSync(file, 'utf8');
+    expect(JSON.parse(before)).toEqual({
+      numStartups: 2,
+      mcpServers: { other: { command: 'other-mcp' } },
+    });
+
+    const plan = await s.exports.plan('claude-code', [item.id]);
+    const applied = await s.exports.apply(plan.planId, true, { mcpConfirmed: true });
+    expect(applied.verified).toBe(true);
+    const written = JSON.parse(readFileSync(file, 'utf8')) as {
+      numStartups: number;
+      mcpServers: Record<string, unknown>;
+    };
+    expect(written.numStartups).toBe(2);
+    expect(written.mcpServers['other']).toEqual({ command: 'other-mcp' });
+    expect(written.mcpServers['acme']).toEqual({
+      type: 'stdio',
+      command: 'acme-mcp',
+      args: ['--serve'],
+      env: { ACME_TOKEN: '${ACME_TOKEN}' },
+    });
+
+    const entry = (await s.history.list()).find((e) => e.itemIds.includes(item.id));
+    await expect(s.history.rollback(entry?.operationId ?? '')).rejects.toMatchObject({
+      code: 'not-revertible',
+    });
+    s.index.close();
+  });
+
   it('eksport, in-sync i idempotencja: ponowny plan jest pusty i bez kopii', async () => {
     const s = await exported();
     expect(await statusOf(s)).toBe('in-sync');

@@ -120,7 +120,7 @@ export function editMcpSegments(text: string, segments: readonly McpSegment[]): 
     const desired: Tree = Object.fromEntries(
       segment.fields.map(([k, v]) => [k, typeof v === 'string' ? v : [...v]]),
     );
-    const existing = servers[segment.name];
+    const existing = Object.hasOwn(servers, segment.name) ? servers[segment.name] : undefined;
     if (existing === undefined) {
       appended.push(segment);
       expected[segment.name] = desired;

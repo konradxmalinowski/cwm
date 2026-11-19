@@ -519,6 +519,44 @@ describe('WriteGate.apply: atomowosc i rollback', () => {
     expect(report.rolledBack).toBe(true);
     expect(existsSync(join(g.skillsRoot, 'acme', 'SKILL.md'))).toBe(false);
   });
+
+  it('plik zmieniony przez inny program tuz przed zamiana: zapis przerwany, obca tresc zostaje (ADR 0061)', async () => {
+    let target = '';
+    let raced = false;
+    const g = makeFixture({
+      atomicOps: {
+        readFile: async (path) => {
+          // Odczyt kontrolny pliku tymczasowego: w tej chwili drugi program zapisuje cel.
+          if (!raced && target !== '' && path.startsWith(join(g.tree, 'tool', '.CLAUDE.md.'))) {
+            raced = true;
+            writeFileSync(target, 'obca tresc\n');
+          }
+          const { readFile } = await import('node:fs/promises');
+          return readFile(path);
+        },
+      },
+    });
+    mkdirSync(join(g.tree, 'tool'), { recursive: true });
+    writeFileSync(g.instructionsFile, 'stare\n');
+    target = g.instructionsFile;
+    const probed = await approved(
+      g,
+      makePlan([
+        entry({
+          rootId: 'r-file',
+          relPath: '',
+          action: 'modify',
+          previous: text('stare\n'),
+          content: text('nowe\n'),
+        }),
+      ]),
+    );
+    const report = await g.gate.apply(probed, { planId: probed.planId });
+    expect(raced).toBe(true);
+    expect(report.entries[0]?.outcome).toBe('failed');
+    expect(report.entries[0]?.message).toContain('zmienił się w trakcie zapisu');
+    expect(read(g.instructionsFile)).toBe('obca tresc\n');
+  });
 });
 
 describe('WriteGate: bezpiecznik sciezek (ARCHITECTURE 12.5), obie kolumny', () => {

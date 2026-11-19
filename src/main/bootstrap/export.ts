@@ -25,6 +25,7 @@ import { createExporters } from './exporters';
 import { indexBackedOperationLog } from './library';
 import { indexBackedLogReader, indexBackedSyncState } from './sync';
 import { objectsRoot } from './paths';
+import { isMcpServerItem } from '../../core/services/mcp/mcp-server';
 
 export type RootPathResolver = (rootId: string) => string | null;
 
@@ -132,6 +133,12 @@ export async function startExport(
     reader,
     exports,
     clock: systemClock,
+    // Cofniecie zapisu serwera MCP jest zablokowane (ADR 0061); usuniety element nie blokuje.
+    mcpItem: (itemId) =>
+      library.get(itemId).then(
+        (loaded) => isMcpServerItem(loaded.item),
+        () => false,
+      ),
   });
   const zip = new ZipExportService({
     catalog,

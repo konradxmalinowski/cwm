@@ -327,6 +327,10 @@ describe('eksport Codeksa: hooki i serwery MCP', () => {
     expect(tree['model']).toBe('acme');
     // ACME_URL bierze wartosc z innej zmiennej, czego Codex nie wyrazi: pominieta z ostrzezeniem.
     expect(cfg.warnings.join(' ')).toMatch(/ACME_URL.*pominięta/);
+    // Podglad dla renderera: tylko tabela serwera, bez reszty config.toml.
+    expect(cfg.preview?.before).toBe('');
+    expect(cfg.preview?.after).toContain('[mcp_servers.acme]');
+    expect(cfg.preview?.after).not.toContain('model');
 
     const reader = target(config);
     reader.apply(plan);

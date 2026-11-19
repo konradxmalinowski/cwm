@@ -390,6 +390,74 @@ describe('export:plan z celem projektu (ADR 0059)', () => {
     );
   });
 
+  it('globalny serwer MCP do projektu wymaga osobnego potwierdzenia poza znacznikiem (ADR 0061)', async () => {
+    const projects = new FakeProjectCatalog({
+      [PROJECT_A]: { name: 'acme-app', roots: [projectRoot] },
+    });
+    const h = await exportHarness({
+      overrides: { projects },
+      build: (items) =>
+        emptyPlan({
+          entries: [entry({ rootId: 'r-proj-a', itemIds: items.map((i) => i.item.id) })],
+        }),
+    });
+    const mcp = await h.library.create(
+      draft({
+        kind: 'tool-setting',
+        slug: 'mcp-acme',
+        body: '',
+        classification: { scope: 'public', secretFindings: [] },
+        attributes: {
+          toolSetting: {
+            tool: 'claude-code',
+            key: 'mcpServers.acme',
+            value: {
+              transport: 'http',
+              command: null,
+              args: [],
+              url: 'https://mcp.acme.test/v1',
+              env: [],
+              headers: [],
+            },
+          },
+        },
+      }),
+    );
+    const owner = (rootId: string): string | null => projects.ownerOf(rootId)?.projectId ?? null;
+    const { call } = wire(h.service, null, owner);
+    const plan = async (): Promise<ExportPlanDto> => {
+      const r = await call<ExportPlanDto>('export:plan', {
+        tool: 'claude-code',
+        itemIds: [mcp.item.id],
+        projectId: PROJECT_A,
+        includeGlobal: true,
+      });
+      if (!r.ok) throw new Error('plan nie powiodl sie');
+      return r.value;
+    };
+    const first = await plan();
+    expect(first.mcp?.servers[0]?.globalToProject).toBe(true);
+    expect(
+      await call('export:apply', {
+        planId: first.planId,
+        approved: true,
+        mcpConfirmation: first.mcp?.confirmation,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'mcp-confirmation-required' } });
+    expect(
+      await call('export:apply', { planId: 'p', approved: true, mcpGlobalToProject: false }),
+    ).toMatchObject({ ok: false, error: { code: 'invalid-request' } });
+    const second = await plan();
+    const applied = await call<ExportApplyDto>('export:apply', {
+      planId: second.planId,
+      approved: true,
+      mcpConfirmation: second.mcp?.confirmation,
+      mcpGlobalToProject: true,
+    });
+    expect(applied.ok).toBe(true);
+    expect(h.gate.applies).toHaveLength(1);
+  });
+
   it('plan do projektu idzie przez kontrole w main, DTO niesie projekt bez sciezki', async () => {
     const projects = new FakeProjectCatalog({
       [PROJECT_A]: { name: 'acme-app', roots: [projectRoot] },

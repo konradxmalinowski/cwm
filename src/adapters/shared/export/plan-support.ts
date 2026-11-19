@@ -27,6 +27,7 @@ export interface EntryInput {
   readonly previous?: Uint8Array | null;
   readonly materialization?: WritePlanEntry['materialization'];
   readonly warnings?: readonly string[];
+  readonly preview?: WritePlanEntry['preview'];
 }
 
 export class PlanBuilder {
@@ -73,6 +74,7 @@ export class PlanBuilder {
       previous: input.previous ?? null,
       materialization: input.materialization ?? null,
       warnings: input.warnings ?? [],
+      ...(input.preview === undefined ? {} : { preview: input.preview }),
       recoverability: null,
     });
   }

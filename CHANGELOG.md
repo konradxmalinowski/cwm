@@ -22,7 +22,10 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
   `$` i tekst wyglądający na sekret to odmowa. W `~/.claude.json` i `.mcp.json` zmieniany jest tylko klucz `mcpServers`, a w
   `config.toml` tylko bloki `[mcp_servers.<nazwa>]`, z weryfikacją, że reszta pliku się nie zmieniła. Serwer o tej samej
   nazwie i innej definicji jest zastępowany tylko po decyzji "Zastąp istniejący serwer" w planie. Synchronizacja, archiwum
-  ZIP i Gemini CLI nadal pomijają serwery MCP z powodem.
+  ZIP i Gemini CLI nadal pomijają serwery MCP z powodem. Tokeny szesnastkowe, UUID, flagi i nagłówki z danymi
+  logowania oraz niewidoczne znaki w poleceniu albo adresie blokują import i eksport serwera; globalny serwer do projektu
+  wymaga osobnego potwierdzenia; podgląd pokazuje tylko zmieniane serwery, nie cały plik; zapis jest przerywany, gdy
+  narzędzie zmieni plik tuż przed zamianą, a cofnięcie zapisu MCP z Historii jest zablokowane.
 
 - Wersjonowanie biblioteki w lokalnym Git (ADR 0060). W Diagnostyce nowa sekcja "Wersjonowanie biblioteki w Git": pole
   wyboru włącza opcjonalne repozytorium w katalogu danych aplikacji (osobny magazyn obiektów obok `library/`, bez zdalnego

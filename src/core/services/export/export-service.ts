@@ -144,6 +144,8 @@ export interface ExportPlanReport {
 export interface ExportApplyOptions {
   /** Main sprawdzil jednorazowy znacznik z podgladu serwerow MCP tego planu. */
   readonly mcpConfirmed?: boolean;
+  /** Osobne potwierdzenie zapisu globalnego serwera MCP do repozytorium projektu. */
+  readonly mcpGlobalToProject?: boolean;
 }
 
 export interface ExportApplyReport {
@@ -331,7 +333,7 @@ export class ExportService {
       items,
       rootLabels,
       entryIds: plan.entries.map((_e, i) => `e${i + 1}`),
-      mcp: mcpWrites(plan, loaded, tool),
+      mcp: mcpWrites(plan, loaded, tool, planTarget.kind === 'project'),
     };
     return report;
   }
@@ -409,10 +411,17 @@ export class ExportService {
     }
     // Druga kontrola niezalezna od kanalu: plan z serwerem MCP bez potwierdzenia nie zapisuje niczego,
     // takze wtedy, gdy wola go synchronizacja, ktora MCP i tak pomija (ADR 0061).
-    if ((stored.report.mcp?.length ?? 0) > 0 && options.mcpConfirmed !== true) {
+    const servers = stored.report.mcp ?? [];
+    if (servers.length > 0 && options.mcpConfirmed !== true) {
       throw new ExportError(
         'mcp-confirmation-required',
         'Plan zapisuje serwer MCP. Potwierdź podgląd serwerów i przygotuj plan jeszcze raz.',
+      );
+    }
+    if (servers.some((s) => s.globalToProject === true) && options.mcpGlobalToProject !== true) {
+      throw new ExportError(
+        'mcp-confirmation-required',
+        'Plan zapisuje globalny serwer MCP do repozytorium projektu. Potwierdź to osobno i przygotuj plan jeszcze raz.',
       );
     }
 
@@ -508,6 +517,7 @@ function mcpWrites(
   plan: WritePlan,
   loaded: readonly LoadedItem[],
   tool: ToolId,
+  toProject: boolean,
 ): readonly McpPreview[] {
   const writing = new Set<string>();
   for (const entry of plan.entries) {
@@ -518,7 +528,10 @@ function mcpWrites(
   for (const { item } of loaded) {
     if (!writing.has(item.id) || !isMcpServerItem(item)) continue;
     const preview = mcpPreview(item, tool);
-    if (preview !== null) out.push(preview);
+    if (preview === null) continue;
+    out.push(
+      toProject && boundProject(item) === null ? { ...preview, globalToProject: true } : preview,
+    );
   }
   return out;
 }

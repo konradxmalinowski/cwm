@@ -161,7 +161,12 @@ trafiają odniesienia: `"${NAZWA}"` w Claude Code, `env_vars = ["NAZWA"]` w Code
   projekcie, więc eksport do projektu w Codeksie jest odmową. Gemini CLI nie jest jeszcze obsługiwany.
 - Serwer HTTP tylko przez `https` (albo `http` na `localhost`) i bez nagłówków: ich wartości to
   zwykle dane logowania, których aplikacja nie kopiuje. Codex nie obsługuje transportu sse.
-- Polecenie, argument albo adres ze znakiem `$` albo wyglądające na sekret są odmową.
+- Polecenie, argument albo adres ze znakiem `$`, wyglądające na sekret, z tokenem szesnastkowym albo UUID, z flagą
+  przekazującą dane logowania (np. `--api-key`, `--header`), z nagłówkiem autoryzacji albo z niewidocznym znakiem
+  kierunku tekstu są odmową, przy imporcie i przy eksporcie.
+- Serwer globalny zapisywany do `.mcp.json` projektu wymaga osobnego potwierdzenia.
+- Zapisu serwera MCP nie da się cofnąć z widoku Historia: cofnięcie przywróciłoby cały plik. Kopia zapasowa pliku
+  jest w katalogu danych aplikacji.
 - Zmienna biorąca wartość z innej zmiennej (`"TOKEN": "${INNY}"`) nie przejdzie do Codeksa, który
   przekazuje zmienną tylko pod tą samą nazwą: zostaje pominięta z ostrzeżeniem.
 - Serwer o tej samej nazwie i innej definicji jest zastępowany tylko po Twojej decyzji w planie.

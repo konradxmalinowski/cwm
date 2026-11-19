@@ -79,6 +79,11 @@ export interface WritePlanEntry {
   /** Dla `restore-link`: cel dowiazania zapisany w MANIFEST kopii. */
   readonly linkTarget?: string;
   readonly warnings: readonly string[];
+  /**
+   * Podglad zamiast calego pliku (ADR 0061): wycinek z samymi kluczami, ktore wpis zmienia (np.
+   * `mcpServers.<nazwa>`), z ukrytymi wartosciami zmiennych. Renderer dostaje tylko to, nie plik wspolny.
+   */
+  readonly preview?: { readonly before: string; readonly after: string };
   /** Ustawiane przez `WriteGate.probe`; adapter zostawia null. */
   readonly recoverability: RecoverabilityVerdict | null;
 }

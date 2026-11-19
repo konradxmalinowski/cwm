@@ -1,4 +1,5 @@
-import { MCP_ENV_DENYLIST, textHasSecret } from '../../cwm/env-policy';
+import { isSettingsEnvNameDenied, nameLooksSecret, textHasSecret } from '../../cwm/env-policy';
+import { redactSecrets } from '../security/secret-redactor';
 import type { ItemId, JsonValue, LibraryItem, ToolId } from '../../model/item';
 
 /**
@@ -47,6 +48,96 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 const MAX_TEXT = 4096;
 const MAX_ARGS = 128;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+/** Znaki kierunku tekstu i zerowej szerokosci: polecenie wyglada w podgladzie inaczej, niz sie wykona. */
+const INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/;
+/** Nazwy z `Object.prototype` (np. `__proto__`, `constructor`) nie sa nazwami serwerow. */
+const PROTOTYPE_NAMES = new Set([...Object.getOwnPropertyNames(Object.prototype), 'prototype']);
+
+/** Powod odmowy nazwy serwera albo `null`. */
+export function mcpNameProblem(name: string): string | null {
+  if (!MCP_NAME_PATTERN.test(name)) {
+    return `Nazwa serwera MCP „${name.slice(0, 64)}” ma znaki spoza liter, cyfr, - i _. Zmień ją w narzędziu źródłowym.`;
+  }
+  if (PROTOTYPE_NAMES.has(name)) {
+    return `Nazwa serwera MCP „${name}” jest zastrzeżona (nazwa wbudowana JavaScriptu). Zmień ją w narzędziu źródłowym.`;
+  }
+  return null;
+}
+
+// --- dane logowania w argumentach i adresie (ADR 0061, punkt 3) ---
+
+/** Flagi, ktorych nazwa zawiera fragment nazwy sekretu, ale to zwykle nie sa dane logowania. */
+const SECRET_FLAG_EXEMPT = new Set(['PATH', 'PATHS', 'PATTERN', 'PATTERNS', 'PATCH']);
+const AUTH_TEXT = /\b(?:bearer|basic)\s|authorization|\bx-[a-z0-9-]*key\s*:/i;
+const HEX_RUN = /[0-9a-f]{32,}/i;
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const SECRET_QUERY = new Set(['key', 'sig', 'code', 'token']);
+
+function flagCarriesSecret(arg: string): boolean {
+  if (arg === '-H' || arg === '--header' || arg.startsWith('--header=')) return true;
+  const match = /^--?([A-Za-z][A-Za-z0-9_-]*)(?:=|$)/.exec(arg);
+  if (match === null) return false;
+  const name = (match[1] ?? '').replace(/-/g, '_').toUpperCase();
+  return !SECRET_FLAG_EXEMPT.has(name) && nameLooksSecret(name);
+}
+
+function tokenLike(text: string): boolean {
+  return HEX_RUN.test(text) || UUID.test(text);
+}
+
+/**
+ * Dane logowania, ktorych `textHasSecret` nie widzi (heksadecymalne tokeny i UUID maja niska entropie):
+ * wartosc po fladze o nazwie sekretu albo po `-H`/`--header`, naglowek autoryzacji w argumencie, parametr
+ * adresu o nazwie sekretu, ciag szesnastkowy od 32 znakow albo UUID. Powod nie zawiera wartosci.
+ */
+export function mcpCredentialProblem(spec: McpServerSpec): string | null {
+  for (let i = 0; i < spec.args.length; i++) {
+    const arg = spec.args[i] ?? '';
+    if (flagCarriesSecret(arg) && (arg.includes('=') || i + 1 < spec.args.length)) {
+      return `argument ${i + 1} jest flagą, która przekazuje dane logowania.`;
+    }
+    if (AUTH_TEXT.test(arg)) return `argument ${i + 1} zawiera nagłówek autoryzacji.`;
+    if (tokenLike(arg)) return `argument ${i + 1} zawiera token (ciąg szesnastkowy albo UUID).`;
+  }
+  if (spec.url !== null) {
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(spec.url);
+    } catch {
+      parsed = null;
+    }
+    if (parsed !== null) {
+      for (const key of parsed.searchParams.keys()) {
+        if (SECRET_QUERY.has(key.toLowerCase()) || nameLooksSecret(key)) {
+          return 'adres ma parametr, który przekazuje dane logowania.';
+        }
+      }
+      if (tokenLike(parsed.pathname) || tokenLike(parsed.search)) {
+        return 'adres zawiera token (ciąg szesnastkowy albo UUID).';
+      }
+    }
+  }
+  return null;
+}
+
+/** Wspolna dla importu i eksportu: tekst serwera nie moze niesc sekretu ani byc maskowany w podgladzie. */
+export function mcpSecretProblem(spec: McpServerSpec): string | null {
+  const texts = [spec.command, spec.url, ...spec.args].filter((t): t is string => t !== null);
+  if (texts.some((t) => INVISIBLE.test(t))) {
+    return 'polecenie, argument albo adres zawiera niewidoczny znak (kierunek tekstu albo zerowa szerokość).';
+  }
+  if (texts.some((t) => textHasSecret(t))) {
+    return 'polecenie, argument albo adres wygląda na sekret.';
+  }
+  const credential = mcpCredentialProblem(spec);
+  if (credential !== null) return credential;
+  // Podglad przechodzi redakcje; gdyby ja zmienila, uzytkownik potwierdzalby zamaskowane polecenie.
+  const launch = describeLaunch(spec);
+  if (redactSecrets(launch).text !== launch) {
+    return 'polecenie albo adres zawiera fragment, który podgląd musiałby zamaskować.';
+  }
+  return null;
+}
 
 export function mcpSettingKey(tool: ToolId, name: string): string {
   return `${MCP_KEY_PREFIX[tool]}.${name}`;
@@ -137,6 +228,8 @@ export function readMcpServer(item: LibraryItem): McpRead {
 export interface McpExportCheck {
   /** Powod odmowy; `null`, gdy serwer moze trafic do narzedzia. */
   readonly refusal: string | null;
+  /** Adres po normalizacji (`URL.href`); to on trafia do pliku. `null` dla stdio. */
+  readonly url: string | null;
   /** Zmienne, ktore trafia do pliku jako odniesienia. */
   readonly env: readonly McpEnvRef[];
   /** Ostrzezenia dla planu, po polsku, bez wartosci. */
@@ -144,12 +237,15 @@ export interface McpExportCheck {
 }
 
 function refuse(reason: string): McpExportCheck {
-  return { refusal: reason, env: [], warnings: [] };
+  return { refusal: reason, url: null, env: [], warnings: [] };
 }
 
 function textProblem(label: string, text: string): string | null {
   if (text.length === 0 || text.length > MAX_TEXT || CONTROL_CHARS.test(text)) {
     return `${label} jest puste, za długie albo zawiera znak sterujący.`;
+  }
+  if (INVISIBLE.test(text)) {
+    return `${label} zawiera niewidoczny znak (kierunek tekstu albo zerowa szerokość).`;
   }
   if (text.includes('$')) {
     return `${label} zawiera znak $. Narzędzia rozwijają zmienne w różny sposób, więc eksport przenosi zmienne wyłącznie przez env.`;
@@ -178,20 +274,38 @@ export function mcpUrlProblem(url: string): string | null {
   return 'Adres serwera musi używać https (http jest dozwolone tylko dla localhost).';
 }
 
+/** Adres IP w sieci prywatnej, petli zwrotnej albo link-local (dla ostrzezenia przy https). */
+function privateHost(hostname: string): boolean {
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(hostname);
+  if (v4 !== null) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    return (
+      a === 10 ||
+      a === 127 ||
+      a === 0 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    );
+  }
+  if (!hostname.startsWith('[')) return false;
+  const v6 = hostname.slice(1, -1).toLowerCase();
+  return v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6) || v6.startsWith('::ffff:');
+}
+
 /**
  * Reguly eksportu jednego serwera do jednego narzedzia (ADR 0061, punkty 2 i 3). Zakres (projekt czy
  * katalog globalny) sprawdza wczesniej `project-scope.ts`, a wybor pliku adapter.
  */
 export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportCheck {
-  if (!MCP_NAME_PATTERN.test(spec.name)) {
-    return refuse(
-      `Nazwa serwera MCP „${spec.name.slice(0, 64)}” ma znaki spoza liter, cyfr, - i _. Zmień ją w narzędziu źródłowym.`,
-    );
-  }
+  const nameProblem = mcpNameProblem(spec.name);
+  if (nameProblem !== null) return refuse(nameProblem);
   if (tool === 'gemini-cli') {
     return refuse('Eksport serwerów MCP do Gemini CLI nie jest jeszcze dostępny (ADR 0061).');
   }
   const warnings: string[] = [];
+  let url: string | null = null;
   if (spec.transport === 'stdio') {
     const command = spec.command ?? '';
     const problem =
@@ -211,13 +325,22 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
     }
     const problem = mcpUrlProblem(spec.url ?? '');
     if (problem !== null) return refuse(`Serwer MCP „${spec.name}”: ${problem}`);
+    const parsed = new URL(spec.url ?? '');
+    url = parsed.href;
+    if (parsed.protocol === 'https:' && privateHost(parsed.hostname)) {
+      warnings.push(
+        `Serwer MCP „${spec.name}” ma adres w sieci prywatnej, pętli zwrotnej albo link-local. Sprawdź, czy to ten serwer, którego się spodziewasz.`,
+      );
+    }
     if (spec.headers.length > 0) {
       return refuse(
         `Serwer MCP „${spec.name}” ma nagłówki HTTP (${spec.headers.join(', ')}). Ich wartości to zwykle dane logowania, których eksport nie kopiuje, a serwer bez nich nie zadziała.`,
       );
     }
-    warnings.push(`Serwer MCP „${spec.name}” łączy się z adresem: ${spec.url ?? ''}`);
+    warnings.push(`Serwer MCP „${spec.name}” łączy się z adresem: ${url}`);
   }
+  const secret = mcpSecretProblem({ ...spec, url });
+  if (secret !== null) return refuse(`Serwer MCP „${spec.name}”: ${secret}`);
   const env: McpEnvRef[] = [];
   for (const entry of spec.env) {
     if (!ENV_NAME.test(entry.name) || !ENV_NAME.test(entry.ref)) {
@@ -226,7 +349,7 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
       );
       continue;
     }
-    if (MCP_ENV_DENYLIST.test(entry.name) || MCP_ENV_DENYLIST.test(entry.ref)) {
+    if (isSettingsEnvNameDenied(entry.name) || isSettingsEnvNameDenied(entry.ref)) {
       warnings.push(
         `Zmienna ${entry.name} zmienia sposób uruchamiania procesu albo ruch sieciowy i zostanie pominięta.`,
       );
@@ -249,7 +372,7 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
       `Wartości zmiennych nie są kopiowane. Serwer weźmie je ze środowiska: ${env.map((e) => e.ref).join(', ')}.`,
     );
   }
-  return { refusal: null, env, warnings };
+  return { refusal: null, url, env, warnings };
 }
 
 /** Polecenie w calosci, do podgladu: argumenty ze spacja albo cudzyslowem w cudzyslowach JSON. */
@@ -259,6 +382,15 @@ export function describeLaunch(spec: McpServerSpec): string {
   return [spec.command ?? '', ...spec.args].map(quote).join(' ');
 }
 
+function normalUrl(url: string | null): string | null {
+  if (url === null) return null;
+  try {
+    return new URL(url).href;
+  } catch {
+    return url;
+  }
+}
+
 /** Te same pola po obu stronach: nazwa, transport, polecenie, argumenty, adres, zmienne i naglowki. */
 export function sameMcpServer(a: McpServerSpec, b: McpServerSpec): boolean {
   const key = (s: McpServerSpec): string =>
@@ -266,7 +398,7 @@ export function sameMcpServer(a: McpServerSpec, b: McpServerSpec): boolean {
       s.transport,
       s.command,
       s.args,
-      s.url,
+      normalUrl(s.url),
       [...s.env].map((e) => `${e.name}=${e.ref}`).sort(),
       [...s.headers].sort(),
     ]);
@@ -300,11 +432,14 @@ export interface NativeRead {
 export type NativeResult =
   ({ readonly ok: true } & NativeRead) | { readonly ok: false; readonly reason: string };
 
+/** Odmowa importu: do biblioteki nie trafia nic z tego serwera, takze opis ani snapshot. */
 function nativeTextProblem(spec: McpServerSpec): string | null {
-  const texts = [spec.command, spec.url, ...spec.args].filter((t): t is string => t !== null);
-  return texts.some((t) => textHasSecret(t))
-    ? 'Polecenie, argument albo adres serwera wygląda na sekret, więc serwer nie jest importowany (wartość nie może trafić do biblioteki).'
-    : null;
+  const name = mcpNameProblem(spec.name);
+  if (name !== null) return name;
+  const problem = mcpSecretProblem(spec);
+  return problem === null
+    ? null
+    : `${problem.charAt(0).toUpperCase()}${problem.slice(1)} Serwer nie jest importowany, żeby wartość nie trafiła do biblioteki.`;
 }
 
 /**
@@ -482,6 +617,8 @@ export interface McpPreview {
   readonly launch: string;
   readonly env: readonly string[];
   readonly warnings: readonly string[];
+  /** Serwer globalny zapisywany do repozytorium projektu: osobne, jawne potwierdzenie (ADR 0061). */
+  readonly globalToProject?: boolean;
 }
 
 export function mcpPreview(item: LibraryItem, tool: ToolId): McpPreview | null {
@@ -492,7 +629,7 @@ export function mcpPreview(item: LibraryItem, tool: ToolId): McpPreview | null {
     itemId: item.id,
     name: read.spec.name,
     transport: read.spec.transport,
-    launch: describeLaunch(read.spec),
+    launch: read.spec.transport === 'stdio' ? describeLaunch(read.spec) : (check.url ?? ''),
     env: check.env.map((e) => e.ref),
     warnings: check.warnings,
   };

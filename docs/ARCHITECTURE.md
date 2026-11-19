@@ -755,7 +755,7 @@ Kanały z handlerem:
 | `import:scan-project` | `{ projectId }` | jak `import:scan`, plus `project` (identyfikator i nazwa); kandydaci zostaną przypięci do projektu (ADR 0059) |
 | `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged?, renames? }` | zaimportowane, pominięte z powodem, błędy |
 | `export:plan` | `{ tool, itemIds, resolutions?, projectId?, includeGlobal? }` | `planId`, `toolMissing`, `project` przy celu projektowym, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy (w tym odmowy zakresu), konflikty, sieroty, `applicable`; plan łamiący zakres to `scope-violation` (ADR 0059); plan zapisujący serwer MCP ma `mcp` z podglądem serwerów i jednorazowym znacznikiem `confirmation` (ADR 0061) |
-| `export:apply` | `{ planId, approved: true, mcpConfirmation? }` | raport per wpis, `backupId`, `verified`, `rolledBack`; plan z serwerem MCP bez znacznika z `export:plan` to `mcp-confirmation-required` (ADR 0061) |
+| `export:apply` | `{ planId, approved: true, mcpConfirmation?, mcpGlobalToProject? }` | raport per wpis, `backupId`, `verified`, `rolledBack`; plan z serwerem MCP bez znacznika z `export:plan` to `mcp-confirmation-required` (ADR 0061) |
 | `export:zip-plan` | `{ tool, itemIds, confirmedItemIds? }` | jak `export:plan` (układ plików wybranego narzędzia, wpisy `create`) plus `zip`: `fileName`, `fileCount`, `sizeBytes` i `held` (elementy prywatne, z sekretem i projektowe z `confirmed`); archiwum jest budowane w main (ADR 0054) |
 | `export:zip-save` | `{ planId, approved: true }` | `{ status: 'saved', fileName, fileCount }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
 | `sync:status` | `{ tools? }` | `missingTools`, stan per element i narzędzie, sieroty |

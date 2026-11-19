@@ -85,7 +85,9 @@ function prepare(
       b.refuse(loaded.item, check.refusal);
       continue;
     }
-    out.push({ loaded, spec: read.spec, env: check.env, warnings: check.warnings });
+    // Adres po normalizacji (`URL.href`), nie surowy tekst ze zrodla (ADR 0061).
+    const spec = check.url === null ? read.spec : { ...read.spec, url: check.url };
+    out.push({ loaded, spec, env: check.env, warnings: check.warnings });
   }
   const byName = new Map<string, Prepared[]>();
   for (const p of out) byName.set(p.spec.name, [...(byName.get(p.spec.name) ?? []), p]);
@@ -198,7 +200,7 @@ export async function planClaudeMcp(
   const used: Prepared[] = [];
   let changed = false;
   for (const p of prepared) {
-    const raw = servers[p.spec.name];
+    const raw = Object.hasOwn(servers, p.spec.name) ? servers[p.spec.name] : undefined;
     const read = raw === undefined ? null : fromClaudeServer(p.spec.name, raw);
     const state = compare(
       b,
@@ -217,6 +219,11 @@ export async function planClaudeMcp(
   if (used.length === 0) return;
   const ids = used.map((p) => p.loaded.item.id);
   const warnings = used.flatMap((p) => p.warnings);
+  const names = used.map((p) => p.spec.name);
+  const preview = {
+    before: renderJsonExcerpt(isJsonRecord(existing) ? existing : {}, names),
+    after: renderJsonExcerpt(servers, names),
+  };
 
   if (previous === null) {
     b.entry({
@@ -228,6 +235,7 @@ export async function planClaudeMcp(
       content: encodeUtf8(`${JSON.stringify({ mcpServers: servers }, null, 2)}\n`),
       previous: null,
       warnings,
+      preview,
     });
     return;
   }
@@ -241,6 +249,7 @@ export async function planClaudeMcp(
       content: previous,
       previous,
       warnings,
+      preview,
     });
     return;
   }
@@ -274,6 +283,7 @@ export async function planClaudeMcp(
     content: encodeUtf8(edited.text),
     previous,
     warnings,
+    preview,
   });
 }
 
@@ -289,6 +299,9 @@ export interface CodexConfigState {
   readonly changed: boolean;
   readonly itemIds: readonly ItemId[];
   readonly warnings: readonly string[];
+  /** Nazwy `[agents.<nazwa>]` i `[mcp_servers.<nazwa>]`, ktore plan zmienia: z nich powstaje podglad. */
+  readonly agentNames: readonly string[];
+  readonly mcpNames: readonly string[];
 }
 
 export const CODEX_PROJECT_REFUSAL =
@@ -346,7 +359,7 @@ export async function planCodexMcp(
   const segments: McpSegment[] = [];
   const used: Prepared[] = [];
   for (const p of prepared) {
-    const raw = servers[p.spec.name];
+    const raw = Object.hasOwn(servers, p.spec.name) ? servers[p.spec.name] : undefined;
     const read = raw === undefined ? null : fromCodexServer(p.spec.name, raw);
     const state = compare(
       b,
@@ -378,12 +391,26 @@ export async function planCodexMcp(
     changed: (base?.changed ?? false) || edit.changed,
     itemIds: [...(base?.itemIds ?? []), ...used.map((p) => p.loaded.item.id)],
     warnings: [...(base?.warnings ?? []), ...used.flatMap((p) => p.warnings)],
+    agentNames: base?.agentNames ?? [],
+    mcpNames: [...(base?.mcpNames ?? []), ...used.map((p) => p.spec.name)],
   };
 }
 
 /** Jeden wpis `config.toml` dla agentow i serwerow MCP z tego samego planu. */
 export function emitCodexConfig(b: PlanBuilder, state: CodexConfigState | null): void {
   if (state === null || state.itemIds.length === 0) return;
+  // Z serwerem MCP renderer dostaje wycinek ze zmienianymi tabelami, nie caly config.toml (ADR 0061).
+  let preview: { before: string; after: string } | undefined;
+  if (state.mcpNames.length > 0) {
+    const beforeTree = state.previous === null ? {} : parseTree(decodeRaw(state.previous));
+    const afterTree = parseTree(state.text);
+    if (typeof beforeTree !== 'string' && typeof afterTree !== 'string') {
+      preview = {
+        before: renderTomlExcerpt(beforeTree, state.agentNames, state.mcpNames),
+        after: renderTomlExcerpt(afterTree, state.agentNames, state.mcpNames),
+      };
+    }
+  }
   b.entry({
     rootId: state.rootId,
     relPath: 'config.toml',
@@ -394,5 +421,64 @@ export function emitCodexConfig(b: PlanBuilder, state: CodexConfigState | null):
       state.changed || state.previous === null ? encodeUtf8(state.text) : (state.previous ?? null),
     previous: state.previous,
     warnings: state.warnings,
+    ...(preview === undefined ? {} : { preview }),
   });
+}
+
+// --- podglad wycinka (ADR 0061): tylko zmieniane serwery, wartosci zmiennych ukryte ---
+
+const HIDDEN = '<wartość pominięta>';
+const VALUE_TABLES = new Set(['env', 'headers', 'http_headers', 'env_http_headers']);
+const REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+
+/** Kopia serwera z ukrytymi wartosciami `env` i naglowkow; odniesienia `${NAZWA}` zostaja. */
+function masked(server: unknown): unknown {
+  if (!isJsonRecord(server)) return server;
+  const out: JsonRecord = {};
+  for (const [key, value] of Object.entries(server)) {
+    if (VALUE_TABLES.has(key) && isJsonRecord(value)) {
+      out[key] = Object.fromEntries(
+        Object.entries(value).map(([k, v]) => [
+          k,
+          typeof v === 'string' && REFERENCE.test(v) ? v : HIDDEN,
+        ]),
+      );
+    } else out[key] = value;
+  }
+  return out;
+}
+
+function pick(area: unknown, names: readonly string[]): JsonRecord {
+  const out: JsonRecord = {};
+  if (!isJsonRecord(area)) return out;
+  for (const name of names) {
+    if (Object.hasOwn(area, name)) out[name] = masked(area[name]);
+  }
+  return out;
+}
+
+function renderJsonExcerpt(servers: JsonRecord, names: readonly string[]): string {
+  return `${JSON.stringify({ mcpServers: pick(servers, names) }, null, 2)}\n`;
+}
+
+function renderTomlExcerpt(
+  tree: Record<string, unknown>,
+  agentNames: readonly string[],
+  mcpNames: readonly string[],
+): string {
+  const lines: string[] = [];
+  const table = (area: string, names: readonly string[]): void => {
+    for (const [name, value] of Object.entries(pick(tree[area], names))) {
+      lines.push(`[${area}.${name}]`);
+      if (isJsonRecord(value)) {
+        for (const [key, field] of Object.entries(value)) {
+          lines.push(`${key} = ${JSON.stringify(field)}`);
+        }
+      }
+      lines.push('');
+    }
+  };
+  table('agents', agentNames);
+  table('mcp_servers', mcpNames);
+  return lines.join('\n');
 }

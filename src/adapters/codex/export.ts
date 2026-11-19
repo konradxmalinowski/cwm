@@ -434,6 +434,8 @@ async function planAgents(
     changed: edit.changed,
     itemIds: prepared.map((p) => p.loaded.item.id),
     warnings: [],
+    agentNames: prepared.map((p) => p.registration.name),
+    mcpNames: [],
   };
 }
 

@@ -101,8 +101,19 @@ function toEntryDto(entry: WritePlanEntry, entryId: string, rootLabel: string): 
     scope: entry.scope,
     materialization: entry.materialization,
     itemIds: [...entry.itemIds],
-    before: isDirectory ? null : redactedPreview(entry.previous, entry.relPath),
-    after: isDirectory ? null : redactedPreview(entry.content, entry.relPath),
+    // Wpis MCP niesie wycinek zamiast calego pliku wspolnego (`~/.claude.json`, `config.toml`, ADR 0061).
+    before:
+      entry.preview !== undefined
+        ? redactSecrets(entry.preview.before, entry.relPath).text
+        : isDirectory
+          ? null
+          : redactedPreview(entry.previous, entry.relPath),
+    after:
+      entry.preview !== undefined
+        ? redactSecrets(entry.preview.after, entry.relPath).text
+        : isDirectory
+          ? null
+          : redactedPreview(entry.content, entry.relPath),
     files: (entry.files ?? []).map((f) => f.relPath),
     recoverability: entry.recoverability?.status ?? 'blocked',
     blockedReason:
@@ -111,7 +122,7 @@ function toEntryDto(entry: WritePlanEntry, entryId: string, rootLabel: string): 
         : entry.recoverability.status === 'blocked'
           ? redactPaths(entry.recoverability.reason ?? 'Wpis jest zablokowany.')
           : null,
-    warnings: entry.warnings.map(redactPaths),
+    warnings: entry.warnings.map((w) => redactPaths(redactSecrets(w).text)),
   };
 }
 
@@ -151,12 +162,12 @@ export function toPlanDto(report: ExportPlanReport): ExportPlanDto {
       itemId: r.itemId,
       kind: r.kind,
       slug: r.slug,
-      reason: r.reason,
+      reason: redactSecrets(r.reason).text,
     })),
     conflicts: plan.conflicts.map((c) => ({
       itemIds: [...c.itemIds],
       relPath: c.relPath,
-      reason: c.reason,
+      reason: redactPaths(redactSecrets(c.reason).text),
       ...(c.options === undefined
         ? {}
         : { options: c.options.map((o) => ({ id: o.id, label: o.label })) }),
@@ -265,6 +276,7 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
             launch: redactSecrets(s.launch, 'mcp').text,
             env: [...s.env],
             warnings: s.warnings.map((w) => redactPaths(redactSecrets(w, 'mcp').text)),
+            globalToProject: s.globalToProject === true,
           })),
         };
       }
@@ -277,7 +289,12 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
     guarded(parseExportApplyRequest, async (service, request) => {
       const mcpConfirmed = confirmations.take(request.planId, request.mcpConfirmation);
       return ok(
-        toApplyDto(await service.apply(request.planId, request.approved, { mcpConfirmed })),
+        toApplyDto(
+          await service.apply(request.planId, request.approved, {
+            mcpConfirmed,
+            mcpGlobalToProject: request.mcpGlobalToProject === true,
+          }),
+        ),
       );
     }),
   );

@@ -54,6 +54,19 @@ export interface AtomicWriteOptions {
   /** Tryb pliku (POSIX). Bez niego: tryb istniejacego pliku, a dla nowego 0600 (ADR 0018). */
   readonly mode?: number;
   readonly ops?: Partial<AtomicOps>;
+  /**
+   * Kontrola tuz przed rename (ADR 0061): rzuca `AtomicPreconditionError`, gdy cel zmienil sie od analizy,
+   * np. zapisal go inny program. Plik tymczasowy jest wtedy sprzatany, a cel zostaje nietkniety.
+   */
+  readonly beforeRename?: () => Promise<void>;
+}
+
+/** Cel zmienil sie miedzy analiza a zamiana pliku; blad przechodzi bez klasyfikacji errno. */
+export class AtomicPreconditionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AtomicPreconditionError';
+  }
 }
 
 export const DEFAULT_OPS: AtomicOps = {
@@ -252,12 +265,17 @@ export async function writeFileAtomic(
       );
     }
 
+    await options.beforeRename?.();
     await renameWithRetry(tmp, target, ops).catch((error: unknown) => {
       throw classify(error, target, ops.platform, 'replace');
     });
     tmpExists = false;
     await syncDirectory(dirname(target), ops.platform);
   } catch (error: unknown) {
+    if (error instanceof AtomicPreconditionError) {
+      if (tmpExists) await ops.rm(tmp).catch(() => undefined);
+      throw error;
+    }
     const failure = classify(error, target, ops.platform);
     if (tmpExists) {
       // Plik tymczasowy ma pelna tresc, wiec nieudane sprzatanie idzie dalej w bledzie, nie przepada.

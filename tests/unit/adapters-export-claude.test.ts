@@ -380,6 +380,11 @@ describe('eksport Claude Code: werdykt agenta zapowiada dopisane pola', () => {
 });
 
 describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
+  // Tokeny skladane w czasie testu (gitleaks skanuje historie): ciag szesnastkowy i UUID.
+  const hexToken = (length: number, seed: number): string =>
+    Array.from({ length }, (_v, i) => '0123456789abcdef'.charAt((i * 7 + seed) % 16)).join('');
+  const HEX = hexToken(40, 3);
+  const UUID_TOKEN = [8, 4, 4, 4, 12].map((n, i) => hexToken(n, i + 5)).join('-');
   const MCP_ROOT = { ...detectedRoot('claude-code', 'mcp', 9), label: '~/.claude.json' };
   const PROJECT_ROOT = { ...detectedRoot('claude-code', 'mcp', 10), label: 'acme-app: .mcp.json' };
   const stdio = (env: { name: string; ref: string }[] = []) => ({
@@ -437,6 +442,13 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
       env: { ACME_TOKEN: '${ACME_TOKEN}' },
     });
     expect(e.warnings.join(' ')).toMatch(/uruchamia program na tym komputerze: acme-mcp --serve/);
+    // Renderer dostaje wycinek z samym zmienianym serwerem, nie caly plik (projekty, cudze serwery).
+    expect(JSON.parse(e.preview!.before)).toEqual({ mcpServers: {} });
+    expect(JSON.parse(e.preview!.after)).toEqual({
+      mcpServers: { acme: after.mcpServers['acme'] },
+    });
+    expect(e.preview!.after).not.toContain('projects');
+    expect(e.preview!.after).not.toContain(foreign);
     expect(e.warnings.join(' ')).toMatch(/ACME_TOKEN/);
 
     // Drugi plan na zapisanym pliku nic nie zmienia.
@@ -506,6 +518,22 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
       server('leaky', { ...stdio(), args: ['--token', SECRETS.openai] }),
       server('dollar', { ...stdio(), args: ['${HOME}/x'] }),
       server('broken', {}),
+      server('remote', {
+        ...stdio(),
+        command: 'npx',
+        args: [
+          '-y',
+          'mcp-remote',
+          'https://mcp.acme.test/sse',
+          '--header',
+          `Authorization:Bearer ${HEX}`,
+        ],
+      }),
+      server('apikey', { ...stdio(), args: ['--api-key', UUID_TOKEN] }),
+      server('pathtoken', { ...http, url: `https://mcp.acme.test/${HEX}/sse` }),
+      server('query', { ...http, url: 'https://mcp.acme.test/sse?sig=abc' }),
+      server('bidi', { ...stdio(), args: ['--name', 'acme\u202Etxt'] }),
+      server('constructor', stdio()),
     ];
     const plan = await adapter.plan(items, mcpCtx(reader));
     const reasons = new Map(plan.refusals.map((r) => [r.slug, r.reason]));
@@ -515,8 +543,19 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
     expect(reasons.get('mcp-leaky')).toMatch(/sekret/);
     expect(reasons.get('mcp-dollar')).toMatch(/\$/);
     expect(reasons.get('mcp-broken')).toMatch(/MCP/);
+    expect(reasons.get('mcp-remote')).toMatch(/dane logowania|autoryzacji|sekret/);
+    expect(reasons.get('mcp-apikey')).toMatch(/dane logowania|token|sekret/);
+    expect(reasons.get('mcp-pathtoken')).toMatch(/token|sekret/);
+    expect(reasons.get('mcp-query')).toMatch(/parametr/);
+    expect(reasons.get('mcp-bidi')).toMatch(/niewidoczny znak/);
+    expect(reasons.get('mcp-constructor')).toMatch(/zastrzeżona/);
+    for (const reason of reasons.values()) {
+      expect(reason).not.toContain(HEX);
+      expect(reason).not.toContain(UUID_TOKEN);
+    }
     const written = text(entryFor(plan, MCP_ROOT.rootId, '.claude.json')?.content);
     expect(written).not.toContain(SECRETS.openai);
+    expect(written).not.toContain(HEX);
     expect(Object.keys((JSON.parse(written) as { mcpServers: object }).mcpServers)).toEqual([
       'local',
     ]);
@@ -538,6 +577,19 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
             timeout: 30,
           },
           leaky: { command: 'leaky-mcp', args: [`--key=${SECRETS.openai}`] },
+          remote: {
+            command: 'npx',
+            args: [
+              '-y',
+              'mcp-remote',
+              'https://mcp.acme.test/sse',
+              '--header',
+              `Authorization:Bearer ${HEX}`,
+            ],
+          },
+          keyed: { command: 'acme-mcp', args: ['--api-key', UUID_TOKEN] },
+          hexurl: { type: 'http', url: `https://mcp.acme.test/${HEX}/sse` },
+          constructor: { command: 'acme-mcp' },
         },
       }),
     );
@@ -545,7 +597,14 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
     const dump = JSON.stringify(result, (_k, v: unknown) =>
       v instanceof Uint8Array ? new TextDecoder().decode(v) : v,
     );
-    for (const forbidden of [literal, SECRETS.github, SECRETS.openai, 'oauthAccount']) {
+    for (const forbidden of [
+      literal,
+      SECRETS.github,
+      SECRETS.openai,
+      HEX,
+      UUID_TOKEN,
+      'oauthAccount',
+    ]) {
       expect(dump).not.toContain(forbidden);
     }
     expect(result.candidates.map((c) => c.draft.identity.slug)).toEqual(['mcp-acme']);
@@ -565,6 +624,10 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
     expect(result.candidates[0]!.draft.source?.snapshots[0]?.unmappedKeys).toEqual([
       { path: 'server.timeout', value: null },
     ]);
-    expect(result.skipped.find((s) => s.relPath.endsWith('/leaky'))?.reason).toBe('unsupported');
+    for (const name of ['leaky', 'remote', 'keyed', 'hexurl', 'constructor']) {
+      expect(result.skipped.find((s) => s.relPath.endsWith(`/${name}`))?.reason).toBe(
+        'unsupported',
+      );
+    }
   });
 });

@@ -619,6 +619,33 @@
                     Zaznacz potwierdzenie serwerów MCP, żeby zapisać plan.
                   </p>
                 }
+                @if (mcpToProject()) {
+                  <label class="check">
+                    <input
+                      type="checkbox"
+                      id="export-mcp-project-ack"
+                      data-testid="export-mcp-project-ack"
+                      [checked]="mcpProjectAck()"
+                      [attr.aria-invalid]="mcpProjectError() ? 'true' : null"
+                      [attr.aria-describedby]="
+                        mcpProjectError()
+                          ? 'export-mcp-project-hint export-mcp-project-error'
+                          : 'export-mcp-project-hint'
+                      "
+                      (change)="onMcpProjectAck($any($event.target).checked)"
+                    />
+                    <span>Rozumiem, że globalny serwer MCP trafi do repozytorium projektu</span>
+                  </label>
+                  <p class="field__hint" id="export-mcp-project-hint">
+                    Plik <span class="mono">.mcp.json</span> trafia do Gita razem z poleceniem
+                    serwera i nazwami zmiennych. Wartości zmiennych zostają na tym komputerze.
+                  </p>
+                  @if (mcpProjectError()) {
+                    <p class="field__error" role="alert" id="export-mcp-project-error">
+                      Zaznacz osobne potwierdzenie zapisu globalnego serwera do projektu.
+                    </p>
+                  }
+                }
               </section>
             }
             <div class="import-total" data-testid="export-total">

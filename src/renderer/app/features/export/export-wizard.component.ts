@@ -116,6 +116,18 @@ export class ExportWizardComponent {
   protected readonly mcpAckError = computed(
     () => this.mcpToken() !== null && this.mcpAckErrorFor() === this.mcpToken(),
   );
+  /** Globalny serwer MCP do repozytorium projektu: drugie, osobne potwierdzenie (ADR 0061). */
+  protected readonly mcpToProject = computed(
+    () => this.plan()?.mcp?.servers.some((s) => s.globalToProject) === true,
+  );
+  private readonly mcpProjectAckFor = signal<string | null>(null);
+  private readonly mcpProjectErrorFor = signal<string | null>(null);
+  protected readonly mcpProjectAck = computed(
+    () => this.mcpToken() !== null && this.mcpProjectAckFor() === this.mcpToken(),
+  );
+  protected readonly mcpProjectError = computed(
+    () => this.mcpToken() !== null && this.mcpProjectErrorFor() === this.mcpToken(),
+  );
 
   /** Wybory uzytkownika dla konfliktow z opcjami, po `decisionKey`. */
   private readonly choices = signal<ReadonlyMap<string, ConflictResolutionDto>>(new Map());
@@ -622,6 +634,11 @@ export class ExportWizardComponent {
     if (checked) this.mcpAckErrorFor.set(null);
   }
 
+  protected onMcpProjectAck(checked: boolean): void {
+    this.mcpProjectAckFor.set(checked ? this.mcpToken() : null);
+    if (checked) this.mcpProjectErrorFor.set(null);
+  }
+
   protected openConfirm(): void {
     const plan = this.plan();
     if (plan === null || !plan.applicable || this.phase() !== 'plan' || this.replanning()) return;
@@ -629,6 +646,11 @@ export class ExportWizardComponent {
     if (plan.mcp !== undefined && !this.mcpAck()) {
       this.mcpAckErrorFor.set(plan.mcp.confirmation);
       setTimeout(() => document.getElementById('export-mcp-ack')?.focus(), 0);
+      return;
+    }
+    if (plan.mcp !== undefined && this.mcpToProject() && !this.mcpProjectAck()) {
+      this.mcpProjectErrorFor.set(plan.mcp.confirmation);
+      setTimeout(() => document.getElementById('export-mcp-project-ack')?.focus(), 0);
       return;
     }
     this.confirming.set(true);
@@ -650,6 +672,9 @@ export class ExportWizardComponent {
       approved: true,
       ...(plan.mcp !== undefined && this.mcpAck()
         ? { mcpConfirmation: plan.mcp.confirmation }
+        : {}),
+      ...(plan.mcp !== undefined && this.mcpToProject() && this.mcpProjectAck()
+        ? { mcpGlobalToProject: true as const }
         : {}),
     });
     if (seq !== this.seq) return;

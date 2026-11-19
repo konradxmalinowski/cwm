@@ -85,12 +85,20 @@ export function parseExportApplyRequest(payload: unknown): Parsed<ExportApplyReq
     return fail('planId');
   }
   if (approved !== true) return fail('approved');
+  const value: ExportApplyRequest = { planId, approved };
   const confirmation = payload['mcpConfirmation'];
-  if (confirmation === undefined) return { ok: true, value: { planId, approved } };
-  if (typeof confirmation !== 'string' || !/^[0-9a-f]{16,128}$/.test(confirmation)) {
-    return fail('mcpConfirmation');
+  if (confirmation !== undefined) {
+    if (typeof confirmation !== 'string' || !/^[0-9a-f]{16,128}$/.test(confirmation)) {
+      return fail('mcpConfirmation');
+    }
+    value.mcpConfirmation = confirmation;
   }
-  return { ok: true, value: { planId, approved, mcpConfirmation: confirmation } };
+  const toProject = payload['mcpGlobalToProject'];
+  if (toProject !== undefined) {
+    if (toProject !== true) return fail('mcpGlobalToProject');
+    value.mcpGlobalToProject = true;
+  }
+  return { ok: true, value };
 }
 
 /**
