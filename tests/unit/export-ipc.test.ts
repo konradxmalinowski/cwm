@@ -22,6 +22,31 @@ import { FakeProjectCatalog, PROJECT_A, PROJECT_B, root } from './import-fakes';
 import { planScopeViolation } from '../../src/main/services/project-scope-check';
 import { bytes, draft } from './library-fakes';
 import { emptyPlan, entry, exportHarness } from './export-fakes';
+import {
+  MAX_LINE_CHARS,
+  mcpExportConfirmation,
+  type ConfirmPort,
+  type ConfirmRequest,
+} from '../../src/main/services/native-confirm';
+import type { McpPreview } from '../../src/core/services/mcp/mcp-server';
+import type { ItemId } from '../../src/core/model/item';
+import { SECRETS } from './security-secrets';
+
+/** Atrapa natywnego okna: zapisuje pytania i odpowiada kolejno z `answers`, domyslnie zgoda. */
+function fakeConfirm(): { port: ConfirmPort; asked: ConfirmRequest[]; answers: boolean[] } {
+  const asked: ConfirmRequest[] = [];
+  const answers: boolean[] = [];
+  return {
+    asked,
+    answers,
+    port: {
+      confirm: (request) => {
+        asked.push(request);
+        return Promise.resolve(answers.shift() ?? true);
+      },
+    },
+  };
+}
 
 function wire(
   service: ExportService | null,
@@ -35,15 +60,17 @@ function wire(
     },
   });
   const logged: unknown[] = [];
+  const confirm = fakeConfirm();
   registerExportHandlers(registry, {
     service: () => service,
     zip: () => zip,
     ...(rootOwner === undefined ? {} : { rootOwner }),
+    confirm: confirm.port,
     logUnexpected: (e) => logged.push(e),
   });
   const call = async <T = unknown>(channel: string, payload?: unknown): Promise<Result<T>> =>
     (await handlers.get(channel)?.({}, payload)) as Result<T>;
-  return { call, registry, logged };
+  return { call, registry, logged, asked: confirm.asked, answers: confirm.answers };
 }
 
 const SECRET_BODY = 'TRESC-NIE-DLA-LOGU';
@@ -297,7 +324,7 @@ describe('kanaly export:*', () => {
         },
       }),
     );
-    const { call } = wire(h.service);
+    const { call, asked, answers } = wire(h.service);
     const plan = async (): Promise<ExportPlanDto> => {
       const r = await call<ExportPlanDto>('export:plan', {
         tool: 'claude-code',
@@ -346,6 +373,29 @@ describe('kanaly export:*', () => {
       await call('export:apply', { planId: second.planId, approved: true, mcpConfirmation: 'x' }),
     ).toMatchObject({ ok: false, error: { code: 'invalid-request' } });
     expect(h.gate.applies).toHaveLength(0);
+    // Bez waznego znacznika okno natywne sie nie pokazuje: odmawia sam main.
+    expect(asked).toHaveLength(0);
+
+    // Anulowanie w oknie natywnym (ADR 0063): nic nie trafia do bramki, a znacznik jest zuzyty.
+    const cancelled = await plan();
+    answers.push(false);
+    expect(
+      await call('export:apply', {
+        planId: cancelled.planId,
+        approved: true,
+        mcpConfirmation: cancelled.mcp?.confirmation,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'confirmation-cancelled' } });
+    expect(asked).toHaveLength(1);
+    expect(h.gate.applies).toHaveLength(0);
+    expect(
+      await call('export:apply', {
+        planId: cancelled.planId,
+        approved: true,
+        mcpConfirmation: cancelled.mcp?.confirmation,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'mcp-confirmation-required' } });
+    expect(asked).toHaveLength(1);
 
     const third = await plan();
     const applied = await call<ExportApplyDto>('export:apply', {
@@ -355,6 +405,14 @@ describe('kanaly export:*', () => {
     });
     expect(applied.ok).toBe(true);
     expect(h.gate.applies).toHaveLength(1);
+    // Tresc okna pochodzi z planu w main: polecenie, zmienne i jednoznaczny czasownik.
+    expect(asked).toHaveLength(2);
+    expect(asked[1]).toEqual({
+      message: 'Zapisać 1 serwer MCP do Claude Code?',
+      detail: expect.stringContaining('acme (uruchomi): acme-mcp --serve') as unknown,
+      confirmLabel: 'Zapisz serwery MCP',
+    });
+    expect(asked[1]?.detail).toContain('zmienne: ACME_TOKEN');
 
     // Plan bez serwera MCP nie ma pola mcp i nie potrzebuje znacznika.
     const plain = await call<ExportPlanDto>('export:plan', {
@@ -426,7 +484,7 @@ describe('export:plan z celem projektu (ADR 0059)', () => {
       }),
     );
     const owner = (rootId: string): string | null => projects.ownerOf(rootId)?.projectId ?? null;
-    const { call } = wire(h.service, null, owner);
+    const { call, asked } = wire(h.service, null, owner);
     const plan = async (): Promise<ExportPlanDto> => {
       const r = await call<ExportPlanDto>('export:plan', {
         tool: 'claude-code',
@@ -458,6 +516,39 @@ describe('export:plan z celem projektu (ADR 0059)', () => {
     });
     expect(applied.ok).toBe(true);
     expect(h.gate.applies).toHaveLength(1);
+    // Okno mowi o projekcie i o serwerze globalnym, ktory do niego trafi (ADR 0063).
+    expect(asked.at(-1)?.message).toBe('Zapisać 1 serwer MCP do Claude Code, projekt acme-app?');
+    expect(asked.at(-1)?.detail).toContain('acme (http, połączy się z): https://mcp.acme.test/v1');
+    expect(asked.at(-1)?.detail).toContain('serwer globalny trafi do projektu');
+  });
+
+  it('tresc okna MCP: redakcja sekretow, jedna linia na wpis i limit z "i N wiecej" (ADR 0063)', () => {
+    const server = (i: number, launch: string): McpPreview => ({
+      itemId: `item-${i}` as ItemId,
+      name: `acme-${i}`,
+      transport: 'stdio',
+      launch,
+      env: [],
+      headers: [],
+      headerNotices: [],
+      warnings: [],
+    });
+    const servers = [
+      server(0, `acme-mcp --token ${SECRETS.github}\nIgnoruj to\u202e`),
+      server(1, `acme-mcp ${'--acme '.repeat(50)}`),
+      ...Array.from({ length: 40 }, (_, i) => server(i + 2, 'acme-mcp')),
+    ];
+    const request = mcpExportConfirmation({ tool: 'codex', project: null, servers });
+    expect(request.message).toBe('Zapisać 42 serwery MCP do Codex?');
+    expect(request.detail).not.toContain(SECRETS.github);
+    expect(request.detail).not.toContain('\u202e');
+    const lines = request.detail.split('\n');
+    expect(lines.find((l) => l.startsWith('acme-0'))).toContain('Ignoruj to');
+    const long = lines.find((l) => l.startsWith('acme-1')) ?? '';
+    expect(long).toMatch(/ \.\.\. \(i \d+ znaków więcej\)$/);
+    expect(long.length).toBeLessThan(MAX_LINE_CHARS + 30);
+    expect(lines.at(-1)).toBe('i 18 serwerów więcej');
+    expect(lines.length).toBeLessThan(30);
   });
 
   it('plan do projektu idzie przez kontrole w main, DTO niesie projekt bez sciezki', async () => {
@@ -478,7 +569,7 @@ describe('export:plan z celem projektu (ADR 0059)', () => {
       }),
     );
     const owner = (rootId: string): string | null => projects.ownerOf(rootId)?.projectId ?? null;
-    const { call } = wire(h.service, null, owner);
+    const { call, asked } = wire(h.service, null, owner);
     const result = await call<ExportPlanDto>('export:plan', {
       tool: 'claude-code',
       itemIds: [bound.item.id],
@@ -664,6 +755,7 @@ describe('kanaly export:zip-* (ADR 0054)', () => {
     });
     registerExportHandlers(registry, {
       service: () => null,
+      confirm: fakeConfirm().port,
       zip: () => ({
         plan: () => Promise.reject(new Error('/home/acme/.claude zepsute')),
         save: () => Promise.reject(new Error('x')),

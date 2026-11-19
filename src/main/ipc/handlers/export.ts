@@ -21,6 +21,11 @@ import type {
 import type { Result } from '../../../shared/ipc/library-contract';
 import type { IpcRegistry } from '../registry';
 import { McpConfirmations } from '../../services/mcp-confirmation';
+import {
+  CONFIRM_CANCELLED_CODE,
+  mcpExportConfirmation,
+  type ConfirmPort,
+} from '../../services/native-confirm';
 import { planScopeViolation, type RootOwner } from '../../services/project-scope-check';
 import {
   parseExportApplyRequest,
@@ -33,6 +38,8 @@ import type { Parsed } from './library-validation';
 const UNAVAILABLE_MESSAGE =
   'Eksport jest niedostępny: biblioteka lub zapis do narzędzi nie zostały przygotowane. Uruchom aplikację ponownie.';
 const INTERNAL_MESSAGE = 'Wystąpił nieoczekiwany błąd eksportu. Szczegóły są w logu aplikacji.';
+const MCP_CANCELLED_MESSAGE =
+  'Zapis serwerów MCP anulowany w oknie potwierdzenia. Nic nie zostało zapisane. Przygotuj plan ponownie, żeby spróbować jeszcze raz.';
 
 /** Podglad diffu tylko dla tekstu UTF-8 do tego rozmiaru; reszta idzie jako null. */
 export const MAX_PREVIEW_BYTES = 256 * 1024;
@@ -56,6 +63,8 @@ export interface ExportHandlerDeps {
   readonly rootOwner?: RootOwner;
   /** Znaczniki potwierdzenia serwerow MCP (ADR 0061); domyslnie wlasna instancja. */
   readonly mcpConfirmations?: McpConfirmations;
+  /** Natywne okno potwierdzenia zapisu serwerow MCP (ADR 0063), z trescia z planu w main. */
+  readonly confirm: ConfirmPort;
   readonly logUnexpected?: (error: unknown) => void;
 }
 
@@ -268,7 +277,11 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
       const servers = report.mcp ?? [];
       if (servers.length > 0 && !report.toolMissing) {
         dto.mcp = {
-          confirmation: confirmations.issue(report.planId),
+          confirmation: confirmations.issue(report.planId, {
+            tool: report.tool,
+            project: report.target.kind === 'project' ? report.target.name : null,
+            servers,
+          }),
           servers: servers.map((s) => ({
             itemId: s.itemId,
             name: s.name,
@@ -289,7 +302,12 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
   registry.register(
     'export:apply',
     guarded(parseExportApplyRequest, async (service, request) => {
-      const mcpConfirmed = confirmations.take(request.planId, request.mcpConfirmation);
+      const summary = confirmations.take(request.planId, request.mcpConfirmation);
+      // Pole w rendererze jest pierwszym krokiem; autorytatywne jest okno z trescia z planu w main.
+      if (summary !== null && !(await deps.confirm.confirm(mcpExportConfirmation(summary)))) {
+        return err(CONFIRM_CANCELLED_CODE, MCP_CANCELLED_MESSAGE);
+      }
+      const mcpConfirmed = summary !== null;
       return ok(
         toApplyDto(
           await service.apply(request.planId, request.approved, {

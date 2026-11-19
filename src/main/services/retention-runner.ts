@@ -12,6 +12,12 @@ import type { RetentionService } from '../../core/services/retention/retention-s
 import type { Result } from '../../shared/ipc/library-contract';
 import type { RetentionReportDto, RetentionStateDto } from '../../shared/ipc/retention-contract';
 import type { OperationLock } from './write-lock';
+import {
+  CONFIRM_CANCELLED_CODE,
+  retentionCleanConfirmation,
+  retentionTightenConfirmation,
+  type ConfirmPort,
+} from './native-confirm';
 
 /**
  * Brama retencji w main (ADR 0056): zapis ustawien, podglad i wykonanie pod blokada wylaczna oraz
@@ -23,6 +29,8 @@ export interface RetentionRunnerDeps {
   /** `null`, gdy biblioteka albo indeks nie sa otwarte: wtedy nie ma na czym liczyc osiagalnosci. */
   readonly service: () => RetentionService | null;
   readonly lock: OperationLock;
+  /** Natywne okno w main (ADR 0063): autorytatywne potwierdzenie usuniecia i zaostrzenia limitu. */
+  readonly confirm: ConfirmPort;
   readonly logUnexpected?: (error: unknown) => void;
   readonly logInfo?: (message: string) => void;
   readonly now?: () => number;
@@ -34,6 +42,7 @@ const UNAVAILABLE_MESSAGE =
   'Czyszczenie historii jest niedostępne: biblioteka albo indeks nie zostały otwarte przy starcie.';
 const INTERNAL_MESSAGE =
   'Wystąpił nieoczekiwany błąd czyszczenia historii. Szczegóły są w logu aplikacji.';
+const CANCELLED_MESSAGE = 'Anulowano w oknie potwierdzenia. Nic nie zostało zmienione.';
 
 function ok<T>(value: T): Result<T> {
   return { ok: true, value };
@@ -66,6 +75,7 @@ interface PendingPreview {
   readonly expiresAt: number;
   readonly entries: number;
   readonly objects: number;
+  readonly bytes: number;
   readonly settings: RetentionSettings;
 }
 
@@ -123,11 +133,18 @@ export class RetentionRunner {
       (payload as { confirmed?: unknown }).confirmed === true;
     try {
       const current = await this.deps.settings.load();
-      if (isTightening(current, parsed.value) && !confirmed) {
-        return err(
-          'confirmation-required',
-          'Włączenie albo zaostrzenie limitu wymaga potwierdzenia po obejrzeniu podglądu, bo kolejne czyszczenie usunie wpisy historii.',
+      if (isTightening(current, parsed.value)) {
+        if (!confirmed) {
+          return err(
+            'confirmation-required',
+            'Włączenie albo zaostrzenie limitu wymaga potwierdzenia po obejrzeniu podglądu, bo kolejne czyszczenie usunie wpisy historii.',
+          );
+        }
+        // Przebieg przy starcie usuwa bez pytania, wiec to okno jest ostatnim potwierdzeniem (ADR 0063).
+        const accepted = await this.deps.confirm.confirm(
+          retentionTightenConfirmation(current, parsed.value),
         );
+        if (!accepted) return err(CONFIRM_CANCELLED_CODE, CANCELLED_MESSAGE);
       }
       await this.deps.settings.save(parsed.value);
       return ok(this.state(parsed.value));
@@ -175,6 +192,15 @@ export class RetentionRunner {
     } catch (error: unknown) {
       return this.internal(error);
     }
+    // Okno przed blokada wylaczna: decyzja uzytkownika nie wstrzymuje zapisow. Liczby z podgladu w main.
+    const accepted = await this.deps.confirm.confirm(
+      retentionCleanConfirmation({
+        entries: pending.entries,
+        objects: pending.objects,
+        bytes: pending.bytes,
+      }),
+    );
+    if (!accepted) return err(CONFIRM_CANCELLED_CODE, CANCELLED_MESSAGE);
     const result = await this.run({
       apply: true,
       ceiling: { entries: pending.entries, objects: pending.objects },
@@ -261,6 +287,7 @@ export class RetentionRunner {
       expiresAt: t + PREVIEW_TOKEN_TTL_MS,
       entries: report.entriesRemoved,
       objects: report.objectsRemoved,
+      bytes: report.bytesFreed,
       settings,
     });
     return token;

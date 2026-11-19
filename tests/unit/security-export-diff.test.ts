@@ -28,7 +28,10 @@ async function planPayload(entries: ReturnType<typeof entry>[]): Promise<{
       handlers.set(channel, listener);
     },
   });
-  registerExportHandlers(registry, { service: () => h.service });
+  registerExportHandlers(registry, {
+    service: () => h.service,
+    confirm: { confirm: () => Promise.resolve(false) },
+  });
   const r = (await handlers.get('export:plan')?.(
     {},
     { tool: 'claude-code', itemIds: [h.itemId] },

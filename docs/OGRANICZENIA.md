@@ -184,6 +184,10 @@ nagłówki jako `"Bearer ${NAZWA}"` (Claude Code, Gemini CLI) albo `bearer_token
   przekazującą dane logowania (np. `--api-key`, `--header`), z nagłówkiem autoryzacji albo z niewidocznym znakiem
   kierunku tekstu są odmową, przy imporcie i przy eksporcie.
 - Serwer globalny zapisywany do `.mcp.json` projektu wymaga osobnego potwierdzenia.
+- Po zaznaczeniu potwierdzenia w planie zapis pokazuje jeszcze okno systemowe z listą serwerów (ADR 0063). Długie
+  polecenie jest w nim skrócone do 300 znaków z liczbą pominiętych, a długa lista do kilkunastu serwerów z liczbą
+  pozostałych; pełny podgląd jest w planie. Anulowanie w tym oknie niczego nie zapisuje, a ponowna próba wymaga
+  przygotowania planu od nowa.
 - Zapisu serwera MCP nie da się cofnąć z widoku Historia: cofnięcie przywróciłoby cały plik. Dotyczy to
   także zapisu hooków Gemini CLI, bo leżą w tym samym `settings.json`. Kopia zapasowa pliku jest w
   katalogu danych aplikacji.
@@ -236,3 +240,6 @@ Po cofnięciu pierwszego eksportu skilla kopia w `materialized/` zostaje w katal
   trafiła do commita; usunięcie historii to usunięcie katalogu `library-git` w katalogu danych aplikacji. Wymaga `git` 2.26
   lub nowszego w PATH; na Windowsie funkcja jest niedostępna. Zmiany zrobione, gdy aplikacja była zamknięta, trafiają do
   historii przy następnym starcie albo następnej operacji.
+- Czyszczenie historii, włączenie albo zaostrzenie limitu retencji i zgoda na elementy prywatne w historii Git pytają
+  o zgodę w oknie systemowym, także po zaznaczeniu pola na ekranie (ADR 0063). "Zapisz i wyczyść teraz" z ostrzejszym
+  limitem pokazuje dwa takie okna po sobie. Po anulowaniu trzeba ponowić podgląd albo potwierdzenie na ekranie.

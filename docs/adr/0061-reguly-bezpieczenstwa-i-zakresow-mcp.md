@@ -1,6 +1,6 @@
 # ADR 0061: reguły bezpieczeństwa i zakresów MCP, jawny eksport serwerów
 
-Status: zaakceptowane, uzupełnione przez ADR 0062 (Gemini CLI i nagłówki HTTP jako odniesienia)
+Status: zaakceptowane, uzupełnione przez ADR 0062 (Gemini CLI i nagłówki HTTP jako odniesienia) i ADR 0063 (natywne okno potwierdzenia)
 Data: 2026-11-19
 Zastępuje częściowo: ADR 0020 (brak automatycznej synchronizacji MCP), w części o imporcie i eksporcie
 Dotyczy: ADR 0011 (segmenty TOML), ADR 0012 (`WriteGate`), ADR 0025 (decyzje w konflikcie), ADR 0054 (eksport ZIP), ADR 0055 (Gemini CLI), ADR 0059 (projekty), ADR 0060 (jednorazowy znacznik zgody)
@@ -121,8 +121,8 @@ w repozytorium, czyli do Gita.
    do projektu wymaga dodatkowo `mcpGlobalToProject: true` w `export:apply`, sprawdzanego w tym samym miejscu. To ten sam
    wzorzec co zgoda w ADR 0060 (znacznik z odczytu plus jawne pole) i ma to samo ograniczenie: znacznik trafia do
    renderera, więc skompromitowany renderer, który przeczyta plan, może go potwierdzić. Chroni to przed zapisem jednym
-   wywołaniem bez podglądu, nie przed przejętym rendererem; potwierdzenie natywnym oknem dialogowym w main jest pozycją
-   otwartą. Synchronizacja woła `apply` bez potwierdzenia i nie dostaje serwerów MCP wcale.
+   wywołaniem bez podglądu, nie przed przejętym rendererem. **Od ADR 0063** ważny znacznik otwiera natywne okno w main z
+   listą serwerów zapamiętaną przy planie, a zapis wymaga zgody w tym oknie. Synchronizacja woła `apply` bez potwierdzenia i nie dostaje serwerów MCP wcale.
    **Cofnięcie z Historii jest dla zapisu MCP zablokowane.** Cofnięcie przywraca cały plik z kopii, a nie sam klucz
    `mcpServers.<nazwa>` albo segment, więc zniosłoby zmiany, które narzędzie zrobiło w tym pliku po eksporcie, i nie
    przechodziłoby przez potwierdzenie MCP. `HistoryService.rollback` odmawia (`not-revertible`, `MCP_ROLLBACK_REFUSAL`),
@@ -168,4 +168,5 @@ Koszty, na które się godzimy:
 - Cofnięcie zapisu MCP z Historii, które przywraca tylko klucz `mcpServers.<nazwa>` albo segment
   `[mcp_servers.<nazwa>]` i przechodzi przez potwierdzenie ze znacznikiem.
 - Kopia zapasowa samego poddrzewa MCP zamiast całego pliku (wymaga osobnej ścieżki w bramce zapisu).
-- Potwierdzenie eksportu MCP natywnym oknem dialogowym w main zamiast znacznika wysyłanego do renderera.
+- Potwierdzenie eksportu MCP natywnym oknem dialogowym w main: rozstrzygnięte w ADR 0063 (okno jako drugi,
+  autorytatywny krok po znaczniku).

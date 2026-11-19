@@ -1,6 +1,6 @@
 # ADR 0062: serwery MCP w Gemini CLI i nagłówki HTTP jako odniesienia
 
-Status: zaakceptowane
+Status: zaakceptowane, potwierdzenie zapisu uzupełnione natywnym oknem w ADR 0063
 Data: 2026-11-19
 Uzupełnia: ADR 0061 (reguły bezpieczeństwa i zakresów MCP)
 Dotyczy: ADR 0012 (`WriteGate`), ADR 0055 (Gemini CLI), ADR 0059 (projekty), ADR 0060 (jednorazowy znacznik zgody)
@@ -113,7 +113,8 @@ użytkownik poprawia w narzędziu źródłowym i importuje ponownie.
    każdym projekcie drugi cel "Projekt (Gemini CLI, serwery MCP)"; inne elementy Gemini CLI nie mają rootów w projekcie
    i są odmawiane.
 7. **Potwierdzenie i Historia.** Bez zmian w mechanizmie z ADR 0061: plan zapisujący serwer MCP do Gemini CLI dostaje
-   jednorazowy znacznik, a `ExportService.apply` niezależnie odmawia bez `mcpConfirmed`. Cofnięcie z Historii zapisu do
+   jednorazowy znacznik, a `ExportService.apply` niezależnie odmawia bez `mcpConfirmed`. Od ADR 0063 zapis wymaga też
+   zgody w natywnym oknie main, które pokazuje nagłówki i zdania o hostach z tego planu. Cofnięcie z Historii zapisu do
    `settings.json` Gemini CLI jest zablokowane (`MCP_ROLLBACK_REFUSAL`). Nazwa pliku tu nie wystarcza, a rodzaj roota
    też nie: hooki Gemini CLI piszą **ten sam fizyczny** `settings.json` z innego roota, a cofnięcie zapisu hooków
    przywróciłoby cały plik, razem z `mcpServers` z chwili kopii, bez potwierdzenia MCP. Dlatego `HistoryService`

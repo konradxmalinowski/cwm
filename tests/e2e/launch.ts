@@ -55,6 +55,9 @@ function launchEnv(overrides: Readonly<Record<string, string>> = {}): Record<str
   // Bez tego zawis startu nie zostawia na stderr zadnego sladu, a cisza
   // w logu byla najbardziej kosztowna cecha awarii na Windowsie.
   env['ELECTRON_ENABLE_LOGGING'] = '1';
+  // Natywne okno potwierdzenia (ADR 0063) zawiesiloby przebieg bez ekranu. Main honoruje te zmienna
+  // tylko w aplikacji niezapakowanej; zapakowana binarka ja ignoruje i pokazalaby okno.
+  env['CWM_TEST_CONFIRM'] = 'accept';
   return { ...env, ...overrides };
 }
 

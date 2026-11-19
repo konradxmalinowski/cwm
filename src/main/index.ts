@@ -17,6 +17,7 @@ import { handleAppScheme, registerAppScheme } from './bootstrap/protocol';
 import { blockOutboundNetwork, denyAllPermissions, hardenWebContents } from './bootstrap/security';
 import { configureUserData, resolveMigration } from './bootstrap/user-data';
 import { createMainWindow } from './bootstrap/window';
+import { createConfirmPort } from './bootstrap/native-confirm';
 import { startExport } from './bootstrap/export';
 import { startImport } from './bootstrap/import';
 import { indexBackedOperationLog, startLibrary } from './bootstrap/library';
@@ -211,6 +212,10 @@ function start(): void {
     const userData = app.getPath('userData');
     const dbPath = databaseFile(userData);
     const home = homedir();
+    // Natywne okno potwierdzen operacji wysokiego ryzyka (ADR 0063), wspolne dla eksportu MCP, retencji i Gita.
+    const confirm = createConfirmPort((message) => {
+      log().warn(message);
+    });
 
     const registry = new IpcRegistry(ipcMain, {
       lock: writeLock,
@@ -308,6 +313,7 @@ function start(): void {
       service: () => exportService,
       zip: () => zipSave,
       rootOwner,
+      confirm,
       logUnexpected: logExportError,
     });
     registerSyncHandlers(registry, {
@@ -336,6 +342,7 @@ function start(): void {
           ? retentionService
           : null,
       lock: writeLock,
+      confirm,
       logUnexpected: logRetentionError,
       logInfo: (message) => {
         log().info(message);
@@ -346,6 +353,7 @@ function start(): void {
     libraryGitRunner = new LibraryGitRunner({
       ...createLibraryGit(userData),
       lock: writeLock,
+      confirm,
       logUnexpected: (error) => {
         log().error(
           '[cwm] nieoczekiwany blad wersjonowania biblioteki:',
