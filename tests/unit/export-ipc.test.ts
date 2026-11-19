@@ -569,7 +569,7 @@ describe('export:plan z celem projektu (ADR 0059)', () => {
       }),
     );
     const owner = (rootId: string): string | null => projects.ownerOf(rootId)?.projectId ?? null;
-    const { call, asked } = wire(h.service, null, owner);
+    const { call } = wire(h.service, null, owner);
     const result = await call<ExportPlanDto>('export:plan', {
       tool: 'claude-code',
       itemIds: [bound.item.id],
