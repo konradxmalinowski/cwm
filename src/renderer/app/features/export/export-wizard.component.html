@@ -616,6 +616,11 @@
                             <span class="mono">{{ server.headers.join(', ') }}</span>
                           </p>
                         }
+                        @for (notice of server.headerNotices; track $index) {
+                          <p class="cand__desc" data-testid="export-mcp-header-notice">
+                            <strong>Dane logowania.</strong> {{ notice }}
+                          </p>
+                        }
                       </div>
                     </li>
                   }

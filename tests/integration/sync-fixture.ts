@@ -91,9 +91,13 @@ export function makeSyncStack(options: SyncStackOptions = {}) {
     reader,
     exports,
     clock: systemClock,
-    // Jak w main (ADR 0062): settings.json Gemini CLI rozpoznawany po rodzaju roota, nie po nazwie.
-    mcpRoot: async (rootId) =>
-      (await catalog.detect()).some((r) => r.rootId === rootId && r.kind === 'mcp'),
+    // Jak w main (ADR 0062): plik celu MCP po rozwiazanej sciezce, takze z roota hookow Gemini CLI.
+    mcpTarget: async (rootId) => {
+      const roots = await catalog.detect();
+      const target = catalog.resolvePath(rootId);
+      if (target === null) return false;
+      return roots.some((r) => r.kind === 'mcp' && catalog.resolvePath(r.rootId) === target);
+    },
   });
   return {
     tree,

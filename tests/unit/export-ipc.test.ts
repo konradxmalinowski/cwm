@@ -317,6 +317,7 @@ describe('kanaly export:*', () => {
         launch: 'acme-mcp --serve',
         env: ['ACME_TOKEN'],
         headers: [],
+        headerNotices: [],
       }),
     ]);
     // Bez znacznika: odmowa w main, nic nie trafia do bramki, a plan jest zuzyty.

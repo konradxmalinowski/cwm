@@ -79,6 +79,8 @@ export interface McpServerPreviewDto {
   env: string[];
   /** Naglowki HTTP jako `Nazwa: Bearer ${ZMIENNA}`: nazwa i odniesienie, nigdy wartosc (ADR 0062). */
   headers: string[];
+  /** Jawne zdania dla naglowkow ze zmienna wygladajaca na dane logowania: wartosc trafi do hosta. */
+  headerNotices: string[];
   warnings: string[];
   /** Serwer globalny trafia do repozytorium projektu: zapis wymaga `mcpGlobalToProject: true`. */
   globalToProject: boolean;

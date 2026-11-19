@@ -82,11 +82,12 @@ const FORBIDDEN_HEADERS = new Set([
   'proxy-connection',
 ]);
 /**
- * Zmienne z danymi logowania samych narzedzi i dostawcow chmury. Naglowek wysyla wartosc pod adres
- * serwera, wiec odniesienie do nich byloby wyciekiem (Claude Code czyta je w naglowkach jako puste).
+ * Zmienne z danymi logowania samych narzedzi, dostawcow chmury i popularnych uslug (forge, rejestry
+ * pakietow, czaty, platnosci). Naglowek wysyla wartosc pod adres serwera, wiec odniesienie do nich
+ * byloby wyciekiem tokenu do innej uslugi (Claude Code czyta swoje w naglowkach jako puste).
  */
 const HEADER_REF_DENIED =
-  /^(?:ANTHROPIC_|CLAUDE_|OPENAI_|CODEX_|GEMINI_|GOOGLE_|GCLOUD_|AWS_|AZURE_)/i;
+  /^(?:ANTHROPIC_|CLAUDE_|OPENAI_|CODEX_|GEMINI_|GOOGLE_|GCLOUD_|AWS_|AZURE_|GITHUB_|GH_|GITLAB_|NPM_|HF_|HUGGING_FACE_|SLACK_|DOCKER_|DIGITALOCEAN_|CLOUDFLARE_|CF_|STRIPE_|TWILIO_|SENTRY_)/i;
 const MAX_HEADERS = 32;
 // eslint-disable-next-line no-control-regex -- kontrolujemy dokladnie znaki sterujace
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
@@ -128,6 +129,15 @@ function flagCarriesSecret(arg: string): boolean {
 
 function tokenLike(text: string): boolean {
   return HEX_RUN.test(text) || UUID.test(text);
+}
+
+/**
+ * Odniesienie, ktore samo wyglada na token (wklejona wartosc zamiast nazwy zmiennej, np. znany prefiks,
+ * ciag szesnastkowy od 32 znakow, UUID albo dlugi ciag o wysokiej entropii). Takie odniesienie nie trafia
+ * do biblioteki ani do pliku, bo `${<token>}` w pliku to sam sekret (ADR 0062).
+ */
+export function refLooksLikeToken(ref: string): boolean {
+  return textHasSecret(ref) || tokenLike(ref);
 }
 
 /**
@@ -307,10 +317,15 @@ export interface McpExportCheck {
   readonly headers: readonly McpHeaderRef[];
   /** Ostrzezenia dla planu, po polsku, bez wartosci. */
   readonly warnings: readonly string[];
+  /**
+   * Naglowki, ktorych zmienna wyglada na dane logowania (`nameLooksSecret`): jawne zdanie, ze wartosc
+   * trafi do hosta serwera (ADR 0062). Pokazywane w podgladzie potwierdzenia.
+   */
+  readonly headerNotices: readonly string[];
 }
 
 function refuse(reason: string): McpExportCheck {
-  return { refusal: reason, url: null, env: [], headers: [], warnings: [] };
+  return { refusal: reason, url: null, env: [], headers: [], warnings: [], headerNotices: [] };
 }
 
 function textProblem(label: string, text: string): string | null {
@@ -404,6 +419,9 @@ function headerProblem(spec: McpServerSpec, tool: ToolId): string | null {
     if (!ENV_NAME.test(header.ref)) {
       return `nagłówek ${header.name} ma niepoprawną nazwę zmiennej.`;
     }
+    if (refLooksLikeToken(header.ref)) {
+      return `nagłówek ${header.name} ma zamiast nazwy zmiennej tekst, który wygląda na token. Wpisz w narzędziu źródłowym nazwę zmiennej i zaimportuj serwer ponownie.`;
+    }
     if (isSettingsEnvNameDenied(header.ref) || HEADER_REF_DENIED.test(header.ref)) {
       return `nagłówek ${header.name} bierze wartość ze zmiennej ${header.ref}, która niesie dane logowania narzędzia albo chmury albo zmienia ruch sieciowy. Taka wartość nie jest wysyłana do serwera MCP.`;
     }
@@ -429,6 +447,7 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
   const warnings: string[] = [];
   let url: string | null = null;
   let headers: readonly McpHeaderRef[] = [];
+  const headerNotices: string[] = [];
   if (spec.transport === 'stdio') {
     const command = spec.command ?? '';
     const problem =
@@ -469,6 +488,13 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
         `Wartości nagłówków HTTP nie są kopiowane. Serwer wyśle pod ten adres wartości zmiennych: ${headers.map(describeHeader).join(', ')}.`,
       );
     }
+    for (const h of headers) {
+      if (h.ref === null || !nameLooksSecret(h.ref)) continue;
+      headerNotices.push(
+        `Nagłówek ${h.name} wyśle wartość zmiennej ${h.ref}, która wygląda na dane logowania, do hosta ${parsed.host}. Zapisz ten serwer tylko, jeśli ufasz temu hostowi.`,
+      );
+    }
+    warnings.push(...headerNotices);
   }
   const secret = mcpSecretProblem({ ...spec, url });
   if (secret !== null) return refuse(`Serwer MCP „${spec.name}”: ${secret}`);
@@ -477,6 +503,12 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
     if (!ENV_NAME.test(entry.name) || !ENV_NAME.test(entry.ref)) {
       warnings.push(
         `Zmienna „${entry.name.slice(0, 64)}” ma niepoprawną nazwę i zostanie pominięta.`,
+      );
+      continue;
+    }
+    if (refLooksLikeToken(entry.ref)) {
+      warnings.push(
+        `Zmienna ${entry.name.slice(0, 64)} ma zamiast nazwy zmiennej źródłowej tekst, który wygląda na token, i zostanie pominięta.`,
       );
       continue;
     }
@@ -503,7 +535,7 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
       `Wartości zmiennych nie są kopiowane. Serwer weźmie je ze środowiska: ${env.map((e) => e.ref).join(', ')}.`,
     );
   }
-  return { refusal: null, url, env, headers, warnings };
+  return { refusal: null, url, env, headers, warnings, headerNotices };
 }
 
 /** Polecenie w calosci, do podgladu: argumenty ze spacja albo cudzyslowem w cudzyslowach JSON. */
@@ -542,7 +574,11 @@ export function sameMcpServer(a: McpServerSpec, b: McpServerSpec): boolean {
 }
 
 /** Roznica do pokazania w konflikcie nadpisania: same pola opisu, nigdy wartosci zmiennych. */
-export function describeMcpDifference(current: McpServerSpec, next: McpServerSpec): string {
+export function describeMcpDifference(
+  current: McpServerSpec,
+  next: McpServerSpec,
+  notes: readonly string[] = [],
+): string {
   const lines: string[] = [];
   const show = (s: McpServerSpec): string => `${s.transport}: ${describeLaunch(s)}`;
   if (show(current) !== show(next)) lines.push(`teraz ${show(current)}; po zamianie ${show(next)}`);
@@ -558,6 +594,7 @@ export function describeMcpDifference(current: McpServerSpec, next: McpServerSpe
   if (headersOf(current) !== headersOf(next)) {
     lines.push(`nagłówki teraz: ${headersOf(current)}; po zamianie: ${headersOf(next)}`);
   }
+  lines.push(...notes);
   return lines.length === 0 ? 'inne pola definicji' : lines.join('; ');
 }
 
@@ -609,7 +646,7 @@ function readHeaders(raw: unknown, reference: RegExp): HeadersRead | string {
     const match = typeof value === 'string' ? HEADER_VALUE.exec(value) : null;
     const ref = match === null ? null : reference.exec(match[2] ?? '');
     const variable = ref === null ? undefined : (ref[1] ?? ref[2]);
-    if (match === null || variable === undefined) {
+    if (match === null || variable === undefined || refLooksLikeToken(variable)) {
       literal.push(key);
       headers.push({ name: key, ref: null, scheme: null });
       continue;
@@ -672,7 +709,8 @@ export function fromClaudeServer(name: string, raw: unknown): NativeResult {
   let literal = false;
   if (isRecord(raw['env'])) {
     for (const [key, value] of Object.entries(raw['env'])) {
-      const ref = typeof value === 'string' ? ENV_REFERENCE.exec(value)?.[1] : undefined;
+      const found = typeof value === 'string' ? ENV_REFERENCE.exec(value)?.[1] : undefined;
+      const ref = found !== undefined && refLooksLikeToken(found) ? undefined : found;
       if (ref === undefined) literal = true;
       env.push({ name: key, ref: ref ?? key });
     }
@@ -784,7 +822,7 @@ export function fromCodexServer(name: string, raw: unknown): NativeResult {
   if (typeof bearer === 'string') {
     headers.push({
       name: 'Authorization',
-      ref: ENV_NAME.test(bearer) ? bearer : null,
+      ref: ENV_NAME.test(bearer) && !refLooksLikeToken(bearer) ? bearer : null,
       scheme: 'Bearer',
     });
   }
@@ -802,11 +840,20 @@ export function fromCodexServer(name: string, raw: unknown): NativeResult {
     if (headers.some((h) => h.name.toLowerCase() === key.toLowerCase())) continue;
     headers.push({
       name: key,
-      ref: typeof value === 'string' && ENV_NAME.test(value) ? value : null,
+      ref:
+        typeof value === 'string' && ENV_NAME.test(value) && !refLooksLikeToken(value)
+          ? value
+          : null,
       scheme: null,
     });
   }
   const literal: string[] = [];
+  // Tu `headers` ma jeszcze tylko odniesienia (bearer i env_http_headers); `null` to wartosc zamiast nazwy.
+  if (headers.some((h) => h.ref === null)) {
+    warnings.push(
+      'Część nagłówków HTTP ma zamiast nazwy zmiennej wartość, która nie jest poprawną nazwą albo wygląda na token. Nie została zaimportowana, a serwer bez odniesienia nie przejdzie eksportu.',
+    );
+  }
   for (const key of fixed) {
     if (headers.some((h) => h.name.toLowerCase() === key.toLowerCase())) continue;
     literal.push(key);
@@ -901,7 +948,8 @@ export function fromGeminiServer(name: string, raw: unknown): NativeResult {
   if (isRecord(raw['env'])) {
     for (const [key, value] of Object.entries(raw['env'])) {
       const match = typeof value === 'string' ? GEMINI_REFERENCE.exec(value) : null;
-      const ref = match === null ? undefined : (match[1] ?? match[2]);
+      const found = match === null ? undefined : (match[1] ?? match[2]);
+      const ref = found !== undefined && refLooksLikeToken(found) ? undefined : found;
       if (ref === undefined) literal = true;
       env.push({ name: key, ref: ref ?? key });
     }
@@ -958,6 +1006,8 @@ export interface McpPreview {
   readonly env: readonly string[];
   /** Naglowki jako `Nazwa: Bearer ${ZMIENNA}` (ADR 0062), nigdy wartosci. */
   readonly headers: readonly string[];
+  /** Jawne zdania dla naglowkow ze zmienna wygladajaca na dane logowania: wartosc trafi do hosta. */
+  readonly headerNotices: readonly string[];
   readonly warnings: readonly string[];
   /** Serwer globalny zapisywany do repozytorium projektu: osobne, jawne potwierdzenie (ADR 0061). */
   readonly globalToProject?: boolean;
@@ -974,6 +1024,7 @@ export function mcpPreview(item: LibraryItem, tool: ToolId): McpPreview | null {
     launch: read.spec.transport === 'stdio' ? describeLaunch(read.spec) : (check.url ?? ''),
     env: check.env.map((e) => e.ref),
     headers: check.headers.map(describeHeader),
+    headerNotices: check.headerNotices,
     warnings: check.warnings,
   };
 }

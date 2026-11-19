@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createClaudeCodeAdapter } from '../../src/adapters/claude-code';
 import { createGeminiCliAdapter } from '../../src/adapters/gemini-cli';
+import { mcpPreview } from '../../src/core/services/mcp/mcp-server';
 import { parseFrontmatter } from '../../src/adapters/shared/frontmatter';
 import type { ItemDraft, LoadedItem } from '../../src/core/model/item';
 import type { ExportContext, ToolAdapter, ToolExporter } from '../../src/core/ports/tool-adapter';
@@ -667,6 +668,19 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
           { name: 'x-key', ref: 'ACME_B', scheme: null },
         ],
       }),
+      // Wklejony token zamiast nazwy zmiennej (przeglad bezpieczenstwa, L1): odmowa bez wartosci w powodzie.
+      server('pastedgh', {
+        ...http,
+        headers: [{ name: 'Authorization', ref: SECRETS.github, scheme: 'Bearer' }],
+      }),
+      server('pastedhex', {
+        ...http,
+        headers: [{ name: 'X-Key', ref: `a${HEX}`, scheme: null }],
+      }),
+      server('forge', {
+        ...http,
+        headers: [{ name: 'Authorization', ref: 'GITHUB_TOKEN', scheme: 'Bearer' }],
+      }),
     ];
     const plan = await adapter.plan(items, mcpCtx(reader));
     const reasons = new Map(plan.refusals.map((r) => [r.slug, r.reason]));
@@ -677,6 +691,13 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
     expect(reasons.get('mcp-hostname')).toMatch(/Host/);
     expect(reasons.get('mcp-badname')).toMatch(/tokenu HTTP/);
     expect(reasons.get('mcp-twice')).toMatch(/więcej niż raz/);
+    expect(reasons.get('mcp-pastedgh')).toMatch(/wygląda na token/);
+    expect(reasons.get('mcp-pastedhex')).toMatch(/wygląda na token/);
+    expect(reasons.get('mcp-forge')).toMatch(/GITHUB_TOKEN/);
+    for (const reason of reasons.values()) {
+      expect(reason).not.toContain(SECRETS.github);
+      expect(reason).not.toContain(HEX);
+    }
     const e = entryFor(plan, MCP_ROOT.rootId, '.claude.json')!;
     const written = JSON.parse(text(e.content)) as { mcpServers: Record<string, unknown> };
     expect(Object.keys(written.mcpServers)).toEqual(['bearer']);
@@ -688,6 +709,11 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
     // Podglad pokazuje odniesienia, bo nie sa wartosciami.
     expect(e.preview?.after).toContain('Bearer ${ACME_API_KEY}');
     expect(e.warnings.join(' ')).toMatch(/Authorization: Bearer \$\{ACME_API_KEY\}/);
+    // Zmienna o nazwie sekretu: jawne zdanie, ze wartosc trafi do hosta (L4); ACME_TENANT go nie dostaje.
+    const preview = mcpPreview(items[0]!.item, 'claude-code');
+    expect(preview?.headerNotices).toEqual([
+      expect.stringMatching(/ACME_API_KEY.*do hosta mcp\.acme\.test/),
+    ]);
 
     reader.apply(plan);
     const again = await adapter.plan([items[0]!], mcpCtx(reader));
@@ -709,6 +735,7 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
               Authorization: 'Bearer ${ACME_API_KEY}',
               'X-Static': literal,
               'X-Default': `\${ACME_X:-${literal}}`,
+              'X-Pasted': `Bearer \${${SECRETS.github}}`,
             },
           },
           broken: {
@@ -732,9 +759,11 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
       { name: 'Authorization', ref: 'ACME_API_KEY', scheme: 'Bearer' },
       { name: 'X-Static', ref: null, scheme: null },
       { name: 'X-Default', ref: null, scheme: null },
+      { name: 'X-Pasted', ref: null, scheme: null },
     ]);
+    expect(dump).not.toContain(SECRETS.github);
     expect(result.candidates[0]!.warnings.map((w) => w.message).join(' ')).toMatch(
-      /X-Static, X-Default/,
+      /X-Static, X-Default, X-Pasted/,
     );
     expect(result.skipped.find((s) => s.relPath.endsWith('/broken'))?.reason).toBe('unsupported');
   });
@@ -839,11 +868,18 @@ describe('eksport Gemini CLI: serwery MCP i naglowki (ADR 0062)', () => {
     reader.file(
       GLOBAL.rootId,
       'settings.json',
-      JSON.stringify({ mcpServers: { local: { command: 'old-mcp', trust: true } } }),
+      JSON.stringify({
+        mcpServers: {
+          local: { command: 'old-mcp', trust: true, excludeTools: ['delete_everything'] },
+        },
+      }),
     );
     const item = server('local', stdio);
     const conflict = await gemini.plan([item], geminiCtx(reader));
     expect(conflict.conflicts[0]?.options?.map((o) => o.id)).toEqual(['replace-server']);
+    // Pola zmieniajace uprawnienia serwera sa opisane w konflikcie (przeglad bezpieczenstwa, L3).
+    expect(conflict.conflicts[0]?.reason).toMatch(/trust: true/);
+    expect(conflict.conflicts[0]?.reason).toMatch(/excludeTools zostaną zachowane/);
     const decided = await gemini.plan(
       [item],
       geminiCtx(reader, GLOBAL, {
@@ -855,7 +891,31 @@ describe('eksport Gemini CLI: serwery MCP i naglowki (ADR 0062)', () => {
     const e = entryFor(decided, GLOBAL.rootId, 'settings.json')!;
     const after = JSON.parse(text(e.content)) as { mcpServers: { local: object } };
     expect(after.mcpServers.local).not.toHaveProperty('trust');
+    // excludeTools tylko zaweza narzedzia serwera, wiec zostaje po zastapieniu.
+    expect(after.mcpServers.local).toMatchObject({ excludeTools: ['delete_everything'] });
     expect(e.warnings.join(' ')).toMatch(/trust: true/);
+    expect(e.warnings.join(' ')).toMatch(/zachowuje obecne excludeTools/);
+
+    // Ta sama definicja z trust: true w pliku: nic nie jest zapisywane, ale plan to mowi wprost.
+    const same = new MemoryReader();
+    same.file(
+      GLOBAL.rootId,
+      'settings.json',
+      JSON.stringify({
+        mcpServers: {
+          local: {
+            command: 'acme-mcp',
+            args: ['--serve'],
+            env: { ACME_TOKEN: '${ACME_TOKEN}' },
+            trust: true,
+          },
+        },
+      }),
+    );
+    const unchanged = await gemini.plan([item], geminiCtx(same));
+    const u = entryFor(unchanged, GLOBAL.rootId, 'settings.json')!;
+    expect(u.action).toBe('unchanged');
+    expect(u.warnings.join(' ')).toMatch(/ma w pliku trust: true/);
 
     const hook = toLoaded(
       draft('hook', 'BeforeTool-1', {

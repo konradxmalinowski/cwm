@@ -15,6 +15,7 @@ import {
   text,
   toLoaded,
 } from '../contract/support/export-helpers';
+import { SECRETS } from './security-secrets';
 
 const adapter = createCodexAdapter() as ToolAdapter & ToolExporter;
 const codex = resolve(__dirname, '..', 'fixtures', 'codex', 'home', '.codex');
@@ -445,14 +446,30 @@ describe('eksport Codeksa: hooki i serwery MCP', () => {
       'env_http_headers = { "X-Acme-Tenant" = "ACME_TENANT" }',
       `http_headers = { "X-Region" = "${literal}" }`,
       '',
+      // Token wklejony zamiast nazwy zmiennej (przeglad bezpieczenstwa, L1): nie trafia do biblioteki.
+      '[mcp_servers.pasted]',
+      'url = "https://mcp.acme.test/other"',
+      `bearer_token_env_var = "${SECRETS.github}"`,
+      `env_http_headers = { "X-Key" = "${SECRETS.github}" }`,
+      '',
     ].join('\n');
     const reader = new MemoryReader();
     reader.file(id('agent-registry'), 'config.toml', config);
     const root = roots[KINDS.indexOf('agent-registry')]!;
     const result = await adapter.scan(root, reader);
-    expect(JSON.stringify(result.candidates)).not.toContain(literal);
-    const value = result.candidates.find((c) => c.kind === 'tool-setting')?.draft.attributes
-      ?.toolSetting?.value as { headers: unknown };
+    const dump = JSON.stringify(result, (_k, v: unknown) =>
+      v instanceof Uint8Array ? new TextDecoder().decode(v) : v,
+    );
+    expect(dump).not.toContain(literal);
+    expect(dump).not.toContain(SECRETS.github);
+    const valueOf = (slug: string) =>
+      result.candidates.find((c) => c.draft.identity.slug === slug)?.draft.attributes?.toolSetting
+        ?.value as { headers: unknown };
+    expect(valueOf('mcp-pasted').headers).toEqual([
+      { name: 'Authorization', ref: null, scheme: 'Bearer' },
+      { name: 'X-Key', ref: null, scheme: null },
+    ]);
+    const value = valueOf('mcp-api');
     expect(value.headers).toEqual([
       { name: 'Authorization', ref: 'ACME_API_KEY', scheme: 'Bearer' },
       { name: 'X-Acme-Tenant', ref: 'ACME_TENANT', scheme: null },

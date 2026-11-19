@@ -49,13 +49,14 @@ export interface HistoryServiceDeps {
   /** Czy element jest serwerem MCP (ADR 0061); brak portu: rozpoznanie tylko po pliku MCP w kopii. */
   readonly mcpItem?: (itemId: string) => Promise<boolean>;
   /**
-   * Czy root jest plikiem serwerow MCP (ADR 0062). Potrzebne dla Gemini CLI, gdzie `settings.json` trzyma
-   * i hooki, i serwery MCP: nazwa pliku nie wystarcza, a element moze byc juz usuniety z biblioteki.
+   * Czy root zapisuje plik, ktory jest celem serwerow MCP (ADR 0062), po rozwiazanej sciezce, nie po
+   * rodzaju roota. Gemini CLI trzyma hooki i serwery MCP w tym samym `settings.json`: cofniecie zapisu
+   * hookow przywrociloby tez `mcpServers` bez potwierdzenia MCP. Element moze byc juz usuniety z biblioteki.
    */
-  readonly mcpRoot?: (rootId: string) => Promise<boolean>;
+  readonly mcpTarget?: (rootId: string) => Promise<boolean>;
 }
 
-/** Pliki, ktore zapisuje wylacznie eksport MCP (ADR 0061); `settings.json` Gemini CLI rozpoznaje `mcpRoot`. */
+/** Pliki, ktore zapisuje wylacznie eksport MCP (ADR 0061); `settings.json` Gemini CLI rozpoznaje `mcpTarget`. */
 const MCP_FILES = new Set(['.claude.json', '.mcp.json']);
 
 export const MCP_ROLLBACK_REFUSAL =
@@ -229,7 +230,7 @@ export class HistoryService {
       throw new HistoryError('not-revertible', MCP_ROLLBACK_REFUSAL);
     }
     for (const m of manifest.entries) {
-      if ((await this.deps.mcpRoot?.(m.rootId)) === true) {
+      if ((await this.deps.mcpTarget?.(m.rootId)) === true) {
         throw new HistoryError('not-revertible', MCP_ROLLBACK_REFUSAL);
       }
     }

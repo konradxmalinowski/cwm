@@ -168,19 +168,25 @@ nagłówki jako `"Bearer ${NAZWA}"` (Claude Code, Gemini CLI) albo `bearer_token
   odniesienie do zmiennej: nagłówek z wartością wpisaną wprost (np. token w `Authorization`) blokuje
   eksport serwera, bo serwer bez niego nie zadziała. Popraw go w narzędziu źródłowym na
   `"Bearer ${NAZWA}"` i zaimportuj ponownie. Odmową są też nagłówki `Host`, `Cookie` i inne
-  sterujące połączeniem oraz odniesienia do zmiennych z danymi logowania narzędzi i chmury
-  (`ANTHROPIC_*`, `GEMINI_*`, `OPENAI_*`, `AWS_*` itd.). Codex nie obsługuje transportu sse ani
-  schematu `Basic` w nagłówku.
+  sterujące połączeniem, odniesienia do zmiennych z danymi logowania narzędzi, chmury i popularnych
+  usług (`ANTHROPIC_*`, `GEMINI_*`, `OPENAI_*`, `AWS_*`, `GITHUB_*`, `GH_*`, `NPM_*`, `SLACK_*`,
+  `STRIPE_*` itd.; użyj własnej nazwy zmiennej) oraz odniesienia, które same wyglądają na token
+  (wklejona wartość zamiast nazwy zmiennej; taki tekst nie trafia też do biblioteki przy imporcie).
+  Nagłówek ze zmienną o nazwie sekretu (np. `ACME_API_KEY`) przechodzi, ale plan mówi wprost, do
+  którego hosta trafi jej wartość. Codex nie obsługuje transportu sse ani schematu `Basic` w nagłówku.
 - `trust: true` z Gemini CLI (pomijanie potwierdzeń wywołań narzędzi) nie jest importowany ani
-  eksportowany. Zastąpienie serwera, który go ma, usuwa to pole.
+  eksportowany. Zastąpienie serwera, który go ma, usuwa to pole; gdy definicja jest taka sama,
+  aplikacja niczego nie zapisuje, ale plan ostrzega, że serwer ma `trust: true`. `includeTools` i
+  `excludeTools` istniejącego serwera zostają po zastąpieniu.
 - Hooki i serwery MCP Gemini CLI leżą w tym samym `settings.json`, więc trzeba je eksportować
   osobnymi planami.
 - Polecenie, argument albo adres ze znakiem `$`, wyglądające na sekret, z tokenem szesnastkowym albo UUID, z flagą
   przekazującą dane logowania (np. `--api-key`, `--header`), z nagłówkiem autoryzacji albo z niewidocznym znakiem
   kierunku tekstu są odmową, przy imporcie i przy eksporcie.
 - Serwer globalny zapisywany do `.mcp.json` projektu wymaga osobnego potwierdzenia.
-- Zapisu serwera MCP nie da się cofnąć z widoku Historia: cofnięcie przywróciłoby cały plik. Kopia zapasowa pliku
-  jest w katalogu danych aplikacji.
+- Zapisu serwera MCP nie da się cofnąć z widoku Historia: cofnięcie przywróciłoby cały plik. Dotyczy to
+  także zapisu hooków Gemini CLI, bo leżą w tym samym `settings.json`. Kopia zapasowa pliku jest w
+  katalogu danych aplikacji.
 - Zmienna biorąca wartość z innej zmiennej (`"TOKEN": "${INNY}"`) nie przejdzie do Codeksa, który
   przekazuje zmienną tylko pod tą samą nazwą: zostaje pominięta z ostrzeżeniem.
 - Serwer o tej samej nazwie i innej definicji jest zastępowany tylko po Twojej decyzji w planie.

@@ -148,9 +148,35 @@ describe('synchronizacja na plikach', () => {
       headers: { Authorization: 'Bearer ${ACME_API_KEY}' },
     });
 
-    // Fixture nie zna elementow MCP (brak `mcpItem`): blokuje sam root rodzaju mcp.
+    // Fixture nie zna elementow MCP (brak `mcpItem`): blokuje sam plik celu MCP.
     const entry = (await s.history.list()).find((e) => e.itemIds.includes(item.id));
     await expect(s.history.rollback(entry?.operationId ?? '')).rejects.toMatchObject({
+      code: 'not-revertible',
+    });
+
+    // Hooki Gemini CLI pisza ten sam settings.json: cofniecie przywrociloby tez mcpServers bez
+    // potwierdzenia MCP, wiec blokada idzie po sciezce pliku, nie po rodzaju roota (przeglad, L2).
+    const { item: hook } = await s.lib.service.create(
+      draft({
+        kind: 'hook',
+        slug: 'acme-before-tool',
+        body: '',
+        attributes: {
+          hook: {
+            event: 'BeforeTool',
+            matcher: null,
+            command: '/opt/acme/check.sh',
+            pathStyle: 'absolute',
+            timeoutSeconds: 5,
+          },
+        },
+      }),
+    );
+    const hooksPlan = await s.exports.plan('gemini-cli', [hook.id]);
+    expect(hooksPlan.mcp ?? []).toEqual([]);
+    expect((await s.exports.apply(hooksPlan.planId, true)).verified).toBe(true);
+    const hooksEntry = (await s.history.list()).find((e) => e.itemIds.includes(hook.id));
+    await expect(s.history.rollback(hooksEntry?.operationId ?? '')).rejects.toMatchObject({
       code: 'not-revertible',
     });
     s.index.close();

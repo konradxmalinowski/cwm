@@ -144,6 +144,7 @@ function compare(
   current: McpServerSpec | null,
   unreadable: string | null,
   relPath: string,
+  notes: readonly string[] = [],
 ): Existing {
   if (current === null && unreadable === null) return 'absent';
   if (current !== null && sameMcpServer(current, written(p))) return 'same';
@@ -151,7 +152,7 @@ function compare(
   const difference =
     current === null
       ? `obecnej definicji aplikacja nie umie odczytać (${unreadable ?? ''})`
-      : describeMcpDifference(current, written(p));
+      : describeMcpDifference(current, written(p), notes);
   b.conflict(
     [p.loaded.item.id],
     relPath,
@@ -159,6 +160,27 @@ function compare(
     [REPLACE_SERVER_OPTION],
   );
   return 'conflict';
+}
+
+/** `includeTools` i `excludeTools` Gemini CLI z obecnego wpisu, jesli sa listami napisow. */
+function toolFilters(raw: JsonRecord): JsonRecord {
+  const out: JsonRecord = {};
+  for (const key of ['includeTools', 'excludeTools']) {
+    const value = raw[key];
+    if (Array.isArray(value) && (value as unknown[]).every((v) => typeof v === 'string')) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/** Pola Gemini CLI spoza opisu serwera, ktore zmieniaja jego uprawnienia: opis w konflikcie. */
+function differenceNotes(trusted: boolean, narrowing: JsonRecord): string[] {
+  const notes: string[] = [];
+  if (trusted) notes.push('obecny wpis ma trust: true, zastąpienie je usunie');
+  const kept = Object.keys(narrowing);
+  if (kept.length > 0) notes.push(`obecne ${kept.join(' i ')} zostaną zachowane`);
+  return notes;
 }
 
 /** Narzedzie z serwerami MCP pod kluczem `mcpServers` w pliku JSON: odczyt i zapis wpisu. */
@@ -261,6 +283,10 @@ async function planJsonMcp(
   for (const p of prepared) {
     const raw = Object.hasOwn(servers, p.spec.name) ? servers[p.spec.name] : undefined;
     const read = raw === undefined ? null : format.read(p.spec.name, raw);
+    // `trust`, `includeTools` i `excludeTools` to pola Gemini CLI (ADR 0062).
+    const gemini = format.tool === 'gemini-cli' && isJsonRecord(raw) ? raw : null;
+    const trusted = gemini?.['trust'] === true;
+    const narrowing = gemini === null ? {} : toolFilters(gemini);
     const state = compare(
       b,
       ctx,
@@ -268,16 +294,33 @@ async function planJsonMcp(
       read !== null && read.ok ? read.spec : null,
       read !== null && !read.ok ? read.reason : null,
       fileName,
+      differenceNotes(trusted, narrowing),
     );
     if (state === 'conflict') continue;
     used.push(p);
-    if (state === 'same') continue;
-    if (isJsonRecord(raw) && raw['trust'] === true) {
+    if (state === 'same') {
+      // Ta sama definicja nie jest zapisywana, ale `trust` w pliku pomija potwierdzenia (ADR 0062).
+      if (trusted) {
+        notes.push(
+          `Serwer MCP „${p.spec.name}” ma w pliku trust: true, więc Gemini CLI nie pyta o wywołania jego narzędzi. Definicja jest taka sama, więc aplikacja go nie zmienia; usuń trust ręcznie, jeśli chcesz potwierdzeń.`,
+        );
+      }
+      continue;
+    }
+    if (trusted) {
       notes.push(
         `Serwer MCP „${p.spec.name}” ma teraz trust: true. Zastąpienie usuwa to pole, więc Gemini CLI znowu zapyta o wywołania narzędzi.`,
       );
     }
-    servers[p.spec.name] = format.write(p);
+    const next = format.write(p);
+    // includeTools i excludeTools tylko zawezaja narzedzia serwera: zastapienie je zachowuje (ADR 0062).
+    servers[p.spec.name] =
+      isJsonRecord(next) && Object.keys(narrowing).length > 0 ? { ...next, ...narrowing } : next;
+    if (Object.keys(narrowing).length > 0) {
+      notes.push(
+        `Serwer MCP „${p.spec.name}” zachowuje obecne ${Object.keys(narrowing).join(' i ')}, które zawężają jego narzędzia.`,
+      );
+    }
     changed = true;
   }
   if (used.length === 0) return;

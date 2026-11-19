@@ -58,16 +58,24 @@ użytkownik poprawia w narzędziu źródłowym i importuje ponownie.
    ostrzeżeniem, a wartość jest pomijana. Codex: `bearer_token_env_var` to `Authorization` ze schematem `Bearer`,
    `env_http_headers` to nagłówki z `ref` równym nazwie zmiennej, `http_headers` daje same nazwy (wartości są wpisane
    wprost). Nazwa nagłówka spoza tokenu HTTP z RFC 7230 (spacja, dwukropek, CR, LF, znak sterujący, ponad 128 znaków)
-   albo ze znakiem `$` odrzuca cały serwer przy imporcie: taki napis nie trafia do biblioteki.
+   albo ze znakiem `$` odrzuca cały serwer przy imporcie: taki napis nie trafia do biblioteki. **Odniesienie, które
+   samo wygląda na token** (`refLooksLikeToken`: `textHasSecret`, czyli znane prefiksy i długi ciąg o wysokiej
+   entropii, albo ciąg szesnastkowy od 32 znaków, albo UUID), np. `bearer_token_env_var = "ghp_..."` albo
+   `"Bearer ${ghp_...}"`, jest traktowane jak wartość wpisana wprost: zostaje sama nazwa nagłówka z ostrzeżeniem, a
+   tekst nie trafia do biblioteki. To samo dotyczy odniesień w `env`: zmienna zostaje pod własną nazwą.
 3. **Eksport nagłówków.** Serwer http albo sse przechodzi eksport tylko wtedy, gdy **każdy** nagłówek ma odniesienie:
    nagłówek bez `ref` to odmowa z powodem (serwer bez nagłówka nie zadziała, a wartości nie kopiujemy). Odmową są też:
    nazwa spoza tokenu HTTP, nagłówek powtórzony (bez rozróżnienia wielkości liter), ponad 32 nagłówki, nagłówki
    sterujące połączeniem albo niosące sesję (`Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Keep-Alive`,
    `Upgrade`, `TE`, `Trailer`, `Expect`, `Cookie`, `Proxy-Authorization`, `Proxy-Connection`), `ref` o niepoprawnej
-   nazwie, z listy `isSettingsEnvNameDenied` albo z prefiksem danych logowania narzędzi i chmury (`ANTHROPIC_`,
-   `CLAUDE_`, `OPENAI_`, `CODEX_`, `GEMINI_`, `GOOGLE_`, `GCLOUD_`, `AWS_`, `AZURE_`). Ta ostatnia reguła powtarza
-   ochronę Claude Code: nagłówek wysyła wartość pod adres serwera, więc odniesienie do klucza samego narzędzia byłoby
-   wyciekiem. Zapis:
+   nazwie, wyglądający na token (`refLooksLikeToken`, powód bez wartości), z listy `isSettingsEnvNameDenied` albo z
+   prefiksem danych logowania narzędzi, chmury i popularnych usług (`ANTHROPIC_`, `CLAUDE_`, `OPENAI_`, `CODEX_`,
+   `GEMINI_`, `GOOGLE_`, `GCLOUD_`, `AWS_`, `AZURE_`, `GITHUB_`, `GH_`, `GITLAB_`, `NPM_`, `HF_`, `HUGGING_FACE_`,
+   `SLACK_`, `DOCKER_`, `DIGITALOCEAN_`, `CLOUDFLARE_`, `CF_`, `STRIPE_`, `TWILIO_`, `SENTRY_`). Ta reguła rozszerza
+   ochronę Claude Code: nagłówek wysyła wartość pod adres serwera, więc odniesienie do tokenu innej usługi byłoby
+   wyciekiem. Nagłówek, którego zmienna ma nazwę sekretu (`nameLooksSecret`, np. `ACME_API_KEY`), przechodzi, ale
+   podgląd potwierdzenia ma przy serwerze osobne zdanie "Nagłówek X wyśle wartość zmiennej Y, która wygląda na dane
+   logowania, do hosta H" (`headerNotices`), oznaczone jako dane logowania. Zapis:
    - Claude Code i Gemini CLI: `"Nazwa": "${REF}"` albo `"Nazwa": "Bearer ${REF}"` (`Basic` tak samo).
    - Codex: `Authorization` ze schematem `Bearer` to `bearer_token_env_var = "REF"`, nagłówek bez schematu to wpis w
      `env_http_headers`. `Basic` i `Bearer` w innym nagłówku niż `Authorization` to odmowa, bo Codex nie ma odniesienia
@@ -83,8 +91,16 @@ użytkownik poprawia w narzędziu źródłowym i importuje ponownie.
    nigdy**, także jako nazwa pola w `unmappedKeys`; dla `trust: true` import dodaje ostrzeżenie. `cwd`, `timeout`,
    `includeTools`, `excludeTools` i inne pola trafiają do `unmappedKeys` jako same nazwy z wartością `null`.
 5. **Gemini CLI: eksport.** Wpis bez `trust`, `cwd` i limitów czasu: `{ command, args, env }` dla stdio, `{ httpUrl,
-   headers }` dla http, `{ url, headers }` dla sse; zmienne `env` jako `"${REF}"`. Zastąpienie istniejącego serwera z
-   `trust: true` usuwa to pole i dodaje ostrzeżenie do wpisu. Zapis idzie istniejącym mechanizmem `json-key` z ADR 0061
+   headers }` dla http, `{ url, headers }` dla sse; zmienne `env` jako `"${REF}"`. Pola istniejącego wpisu, które
+   zmieniają uprawnienia serwera, nie giną po cichu:
+   - `trust: true` przy innej definicji: powód konfliktu mówi, że zastąpienie je usunie, a po decyzji wpis planu ma
+     ostrzeżenie. Przy tej samej definicji nic nie jest zapisywane (wpis `unchanged`), ale plan ostrzega, że serwer ma w
+     pliku `trust: true` i Gemini CLI nie pyta o wywołania jego narzędzi; aplikacja nie usuwa tego pola bez zmiany
+     definicji.
+   - `includeTools` i `excludeTools` tylko zawężają narzędzia serwera, więc zastąpienie je **zachowuje** (lista napisów
+     przepisana z obecnego wpisu), a powód konfliktu i ostrzeżenie wpisu to mówią. Porównanie definicji ich nie
+     uwzględnia, więc ponowny plan daje `unchanged`.
+   Zapis idzie istniejącym mechanizmem `json-key` z ADR 0061
    (klucz `mcpServers`, porównanie drzewa poza kluczem i w kluczu), wspólnym z Claude Code. Hooki Gemini CLI też leżą
    w `settings.json`, a jeden plan nie może zapisać jednego pliku dwoma wpisami: plan z hookami i serwerami MCP Gemini
    CLI odmawia serwerów MCP z prośbą o osobny plan.
@@ -96,10 +112,14 @@ użytkownik poprawia w narzędziu źródłowym i importuje ponownie.
    i są odmawiane.
 7. **Potwierdzenie i Historia.** Bez zmian w mechanizmie z ADR 0061: plan zapisujący serwer MCP do Gemini CLI dostaje
    jednorazowy znacznik, a `ExportService.apply` niezależnie odmawia bez `mcpConfirmed`. Cofnięcie z Historii zapisu do
-   `settings.json` Gemini CLI jest zablokowane (`MCP_ROLLBACK_REFUSAL`). Nazwa pliku tu nie wystarcza (ten sam plik
-   piszą hooki), więc `HistoryService` dostaje port `mcpRoot`, który rozpoznaje root rodzaju `mcp` po `rootId`
-   (katalog globalny z warstwy lokalizacji, projekt przez `FsProjectCatalog.kindOf`). Blokada działa także wtedy, gdy
-   elementu nie ma już w bibliotece.
+   `settings.json` Gemini CLI jest zablokowane (`MCP_ROLLBACK_REFUSAL`). Nazwa pliku tu nie wystarcza, a rodzaj roota
+   też nie: hooki Gemini CLI piszą **ten sam fizyczny** `settings.json` z innego roota, a cofnięcie zapisu hooków
+   przywróciłoby cały plik, razem z `mcpServers` z chwili kopii, bez potwierdzenia MCP. Dlatego `HistoryService`
+   dostaje port `mcpTarget`, który decyduje po rozwiązanej ścieżce: root kopii pisze plik będący celem MCP, gdy jego
+   ścieżka jest ścieżką któregoś roota rodzaju `mcp` z warstwy lokalizacji (`~/.claude.json`, `settings.json` Gemini
+   CLI), albo gdy to root `mcp` projektu (`FsProjectCatalog.kindOf`: `.mcp.json`, `.gemini/settings.json`). W efekcie
+   cofnięcie zapisu hooków Gemini CLI z Historii też jest zablokowane. Blokada działa także wtedy, gdy elementu nie ma
+   już w bibliotece.
 8. **Synchronizacja, ZIP i profile.** Nadal zablokowane dla serwerów MCP wszystkich trzech narzędzi (ADR 0061, punkt 8).
 9. **Porównanie z celem.** Serwer w pliku celu jest "ten sam", gdy zgadzają się transport, adres, zmienne i nagłówki
    (nazwa bez wielkości liter, schemat i zmienna); polecenie i argumenty liczą się tylko dla stdio. Różnica nagłówków
@@ -117,11 +137,14 @@ Koszty, na które się godzimy:
   formularza edycji serwera.
 - `Basic` do Codeksa jest odmową. Kto potrzebuje, może wpisać do zmiennej całą wartość `Basic ...` i użyć nagłówka bez
   schematu.
-- Zmienne z danymi logowania narzędzi i chmury nie przechodzą do nagłówków, także gdy użytkownik celowo ich używa;
-  obejście to własna nazwa zmiennej.
+- Zmienne z danymi logowania narzędzi, chmury i popularnych usług (np. `GITHUB_TOKEN`) nie przechodzą do nagłówków,
+  także gdy użytkownik celowo ich używa (serwer MCP GitHuba z `GITHUB_TOKEN` też); obejście to własna nazwa zmiennej
+  z tą samą wartością.
 - Hooki i serwery MCP Gemini CLI wymagają osobnych planów.
-- Cofnięcie zapisu hooków Gemini CLI z Historii nadal przywraca cały `settings.json`, razem z `mcpServers` z chwili
-  kopii (zachowanie sprzed tej decyzji).
+- Zapisu hooków Gemini CLI nie da się już cofnąć z Historii (ten sam `settings.json` co serwery MCP); kopia zapasowa
+  pliku jest w katalogu danych aplikacji, a hooki zmienia się w narzędziu albo kolejnym eksportem.
+- Odniesienie, które wygląda na token, jest odrzucane także wtedy, gdy to naprawdę nazwa zmiennej o takim kształcie
+  (np. długi ciąg szesnastkowy); obejście to zwykła nazwa zmiennej.
 - Zapis do `.gemini/settings.json` projektu, którego katalog `.gemini` nie istnieje, podlega tym samym regułom bramki
   zapisu co inne rooty projektu.
 
