@@ -241,6 +241,10 @@ export const OPTION_HINT: Readonly<
     overwrites: false,
     text: 'Istniejący tekst zostaje bez zmian. Blok aplikacji dochodzi na końcu pliku, więc treść będzie w pliku dwa razy.',
   },
+  'replace-server': {
+    overwrites: true,
+    text: 'zmienia istniejącą definicję serwera MCP o tej nazwie: zostanie zastąpiona definicją z biblioteki, a różnice są opisane powyżej. Poprzednia treść pliku trafi najpierw do kopii zapasowej.',
+  },
 };
 
 const OVERWRITE_PREFIX = 'Nadpisze';

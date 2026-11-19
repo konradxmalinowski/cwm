@@ -16,6 +16,7 @@ import {
   text,
   toLoaded,
 } from '../contract/support/export-helpers';
+import { SECRETS, filler } from './security-secrets';
 
 const adapter = createClaudeCodeAdapter() as ToolAdapter & ToolExporter;
 const claude = resolve(__dirname, '..', 'fixtures', 'claude-code', 'home', '.claude');
@@ -375,5 +376,258 @@ describe('eksport Claude Code: werdykt agenta zapowiada dopisane pola', () => {
       lostAttributes: [],
       addedAttributes: [],
     });
+  });
+});
+
+describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
+  // Tokeny skladane w czasie testu (gitleaks skanuje historie): ciag szesnastkowy i UUID.
+  const hexToken = (length: number, seed: number): string =>
+    Array.from({ length }, (_v, i) => '0123456789abcdef'.charAt((i * 7 + seed) % 16)).join('');
+  const HEX = hexToken(40, 3);
+  const UUID_TOKEN = [8, 4, 4, 4, 12].map((n, i) => hexToken(n, i + 5)).join('-');
+  const MCP_ROOT = { ...detectedRoot('claude-code', 'mcp', 9), label: '~/.claude.json' };
+  const PROJECT_ROOT = { ...detectedRoot('claude-code', 'mcp', 10), label: 'acme-app: .mcp.json' };
+  const stdio = (env: { name: string; ref: string }[] = []) => ({
+    transport: 'stdio',
+    command: 'acme-mcp',
+    args: ['--serve', '--port', '0'],
+    url: null,
+    env,
+    headers: [],
+  });
+  const server = (name: string, value: object, tool: 'codex' | 'claude-code' = 'codex') =>
+    toLoaded(
+      draft('tool-setting', `mcp-${name}`, {
+        attributes: {
+          toolSetting: {
+            tool,
+            key: tool === 'codex' ? `mcp_servers.${name}` : `mcpServers.${name}`,
+            value: value as never,
+          },
+        },
+      }),
+    );
+  const mcpCtx = (
+    reader: MemoryReader,
+    extra: Partial<ExportContext> = {},
+    root = MCP_ROOT,
+  ): ExportContext => ({ ...ctx(reader), roots: [...roots, root], ...extra });
+
+  it('zapisuje odniesienie ${NAZWA}, a reszta pliku i inne serwery zostaja bez zmian', async () => {
+    // Wartosc sekretu w cudzym serwerze: zostaje w pliku, ale nie trafia do elementu ani do nowego wpisu.
+    const foreign = SECRETS.github;
+    const before = {
+      numStartups: 3,
+      projects: { '/tmp/acme': { allowedTools: [] } },
+      mcpServers: { other: { type: 'stdio', command: 'other-mcp', env: { OTHER_KEY: foreign } } },
+    };
+    const reader = target();
+    reader.file(MCP_ROOT.rootId, '.claude.json', `${JSON.stringify(before, null, 2)}\n`);
+    const item = server('acme', stdio([{ name: 'ACME_TOKEN', ref: 'ACME_TOKEN' }]));
+    const plan = await adapter.plan([item], mcpCtx(reader));
+    expect(plan.refusals).toEqual([]);
+    expect(plan.verdicts[0]?.verdict.level).toBe('partial');
+    const e = entryFor(plan, MCP_ROOT.rootId, '.claude.json')!;
+    expect([e.action, e.scope]).toEqual(['modify', 'json-key']);
+    const after = JSON.parse(text(e.content)) as typeof before & {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(after.numStartups).toBe(3);
+    expect(after.projects).toEqual(before.projects);
+    expect(after.mcpServers['other']).toEqual(before.mcpServers.other);
+    expect(after.mcpServers['acme']).toEqual({
+      type: 'stdio',
+      command: 'acme-mcp',
+      args: ['--serve', '--port', '0'],
+      env: { ACME_TOKEN: '${ACME_TOKEN}' },
+    });
+    expect(e.warnings.join(' ')).toMatch(/uruchamia program na tym komputerze: acme-mcp --serve/);
+    // Renderer dostaje wycinek z samym zmienianym serwerem, nie caly plik (projekty, cudze serwery).
+    expect(JSON.parse(e.preview!.before)).toEqual({ mcpServers: {} });
+    expect(JSON.parse(e.preview!.after)).toEqual({
+      mcpServers: { acme: after.mcpServers['acme'] },
+    });
+    expect(e.preview!.after).not.toContain('projects');
+    expect(e.preview!.after).not.toContain(foreign);
+    expect(e.warnings.join(' ')).toMatch(/ACME_TOKEN/);
+
+    // Drugi plan na zapisanym pliku nic nie zmienia.
+    reader.apply(plan);
+    const again = await adapter.plan([item], mcpCtx(reader));
+    expect(entryFor(again, MCP_ROOT.rootId, '.claude.json')?.action).toBe('unchanged');
+  });
+
+  it('serwer o tej samej nazwie i innej definicji: konflikt z opisem roznic, zapis tylko po decyzji', async () => {
+    const reader = target();
+    reader.file(
+      MCP_ROOT.rootId,
+      '.claude.json',
+      JSON.stringify({ mcpServers: { acme: { command: 'old-mcp', args: [] } } }),
+    );
+    const item = server('acme', stdio());
+    const plan = await adapter.plan([item], mcpCtx(reader));
+    expect(plan.entries).toEqual([]);
+    expect(plan.applicable).toBe(false);
+    const conflict = plan.conflicts[0]!;
+    expect(conflict.options?.map((o) => o.id)).toEqual(['replace-server']);
+    expect(conflict.reason).toMatch(/old-mcp/);
+    expect(conflict.reason).toMatch(/acme-mcp --serve/);
+
+    const decided = await adapter.plan(
+      [item],
+      mcpCtx(reader, {
+        decisions: [
+          { itemId: item.item.id, relPath: '.claude.json', resolution: 'replace-server' },
+        ],
+      }),
+    );
+    expect(decided.conflicts).toEqual([]);
+    const e = entryFor(decided, MCP_ROOT.rootId, '.claude.json')!;
+    expect(e.action).toBe('modify');
+    expect(
+      (JSON.parse(text(e.content)) as { mcpServers: { acme: { command: string } } }).mcpServers.acme
+        .command,
+    ).toBe('acme-mcp');
+  });
+
+  it('projekt: brak .mcp.json tworzy plik z samym kluczem mcpServers', async () => {
+    const reader = target();
+    reader.file(PROJECT_ROOT.rootId, '.mcp.json', null);
+    const item = server('acme', {
+      ...stdio(),
+      transport: 'http',
+      command: null,
+      url: 'https://mcp.acme.test/v1',
+    });
+    const plan = await adapter.plan([item], mcpCtx(reader, {}, PROJECT_ROOT));
+    const e = entryFor(plan, PROJECT_ROOT.rootId, '.mcp.json')!;
+    expect(e.action).toBe('create');
+    expect(JSON.parse(text(e.content))).toEqual({
+      mcpServers: { acme: { type: 'http', url: 'https://mcp.acme.test/v1' } },
+    });
+  });
+
+  it('odmowy: adres bez https, naglowki, sekret w argumencie, znak $ i niekompletny opis', async () => {
+    const reader = target();
+    reader.file(MCP_ROOT.rootId, '.claude.json', '{}');
+    const http = { ...stdio(), transport: 'http', command: null };
+    const items = [
+      server('plain', { ...http, url: 'http://mcp.acme.test' }),
+      server('local', { ...http, url: 'http://localhost:8080/mcp' }),
+      server('auth', { ...http, url: 'https://mcp.acme.test', headers: ['Authorization'] }),
+      server('leaky', { ...stdio(), args: ['--token', SECRETS.openai] }),
+      server('dollar', { ...stdio(), args: ['${HOME}/x'] }),
+      server('broken', {}),
+      server('remote', {
+        ...stdio(),
+        command: 'npx',
+        args: [
+          '-y',
+          'mcp-remote',
+          'https://mcp.acme.test/sse',
+          '--header',
+          `Authorization:Bearer ${HEX}`,
+        ],
+      }),
+      server('apikey', { ...stdio(), args: ['--api-key', UUID_TOKEN] }),
+      server('pathtoken', { ...http, url: `https://mcp.acme.test/${HEX}/sse` }),
+      server('query', { ...http, url: 'https://mcp.acme.test/sse?sig=abc' }),
+      server('bidi', { ...stdio(), args: ['--name', 'acme\u202Etxt'] }),
+      server('constructor', stdio()),
+    ];
+    const plan = await adapter.plan(items, mcpCtx(reader));
+    const reasons = new Map(plan.refusals.map((r) => [r.slug, r.reason]));
+    expect(reasons.get('mcp-plain')).toMatch(/https/);
+    expect(reasons.has('mcp-local')).toBe(false);
+    expect(reasons.get('mcp-auth')).toMatch(/nagłówki/);
+    expect(reasons.get('mcp-leaky')).toMatch(/sekret/);
+    expect(reasons.get('mcp-dollar')).toMatch(/\$/);
+    expect(reasons.get('mcp-broken')).toMatch(/MCP/);
+    expect(reasons.get('mcp-remote')).toMatch(/dane logowania|autoryzacji|sekret/);
+    expect(reasons.get('mcp-apikey')).toMatch(/dane logowania|token|sekret/);
+    expect(reasons.get('mcp-pathtoken')).toMatch(/token|sekret/);
+    expect(reasons.get('mcp-query')).toMatch(/parametr/);
+    expect(reasons.get('mcp-bidi')).toMatch(/niewidoczny znak/);
+    expect(reasons.get('mcp-constructor')).toMatch(/zastrzeżona/);
+    for (const reason of reasons.values()) {
+      expect(reason).not.toContain(HEX);
+      expect(reason).not.toContain(UUID_TOKEN);
+    }
+    const written = text(entryFor(plan, MCP_ROOT.rootId, '.claude.json')?.content);
+    expect(written).not.toContain(SECRETS.openai);
+    expect(written).not.toContain(HEX);
+    expect(Object.keys((JSON.parse(written) as { mcpServers: object }).mcpServers)).toEqual([
+      'local',
+    ]);
+  });
+
+  it('import z ~/.claude.json: tylko mcpServers, nazwy zmiennych bez wartosci, serwer z sekretem pominiety', async () => {
+    const literal = filler(40, 77);
+    const reader = new MemoryReader();
+    reader.file(
+      MCP_ROOT.rootId,
+      '.claude.json',
+      JSON.stringify({
+        oauthAccount: { token: SECRETS.github },
+        mcpServers: {
+          acme: {
+            command: 'acme-mcp',
+            args: ['--serve'],
+            env: { ACME_TOKEN: literal, ACME_URL: '${ACME_BASE}' },
+            timeout: 30,
+          },
+          leaky: { command: 'leaky-mcp', args: [`--key=${SECRETS.openai}`] },
+          remote: {
+            command: 'npx',
+            args: [
+              '-y',
+              'mcp-remote',
+              'https://mcp.acme.test/sse',
+              '--header',
+              `Authorization:Bearer ${HEX}`,
+            ],
+          },
+          keyed: { command: 'acme-mcp', args: ['--api-key', UUID_TOKEN] },
+          hexurl: { type: 'http', url: `https://mcp.acme.test/${HEX}/sse` },
+          constructor: { command: 'acme-mcp' },
+        },
+      }),
+    );
+    const result = await adapter.scan(MCP_ROOT, reader);
+    const dump = JSON.stringify(result, (_k, v: unknown) =>
+      v instanceof Uint8Array ? new TextDecoder().decode(v) : v,
+    );
+    for (const forbidden of [
+      literal,
+      SECRETS.github,
+      SECRETS.openai,
+      HEX,
+      UUID_TOKEN,
+      'oauthAccount',
+    ]) {
+      expect(dump).not.toContain(forbidden);
+    }
+    expect(result.candidates.map((c) => c.draft.identity.slug)).toEqual(['mcp-acme']);
+    const setting = result.candidates[0]!.draft.attributes?.toolSetting;
+    expect(setting?.key).toBe('mcpServers.acme');
+    expect(setting?.value).toEqual({
+      transport: 'stdio',
+      command: 'acme-mcp',
+      args: ['--serve'],
+      url: null,
+      env: [
+        { name: 'ACME_TOKEN', ref: 'ACME_TOKEN' },
+        { name: 'ACME_URL', ref: 'ACME_BASE' },
+      ],
+      headers: [],
+    });
+    expect(result.candidates[0]!.draft.source?.snapshots[0]?.unmappedKeys).toEqual([
+      { path: 'server.timeout', value: null },
+    ]);
+    for (const name of ['leaky', 'remote', 'keyed', 'hexurl', 'constructor']) {
+      expect(result.skipped.find((s) => s.relPath.endsWith(`/${name}`))?.reason).toBe(
+        'unsupported',
+      );
+    }
   });
 });

@@ -39,6 +39,7 @@ import {
 } from '../store/backup';
 
 import {
+  AtomicPreconditionError,
   AtomicWriteError,
   errnoCode,
   removeStaleTemps,
@@ -272,7 +273,9 @@ async function defaultFreeBytes(dir: string): Promise<number | null> {
 }
 
 function describeFailure(error: unknown): string {
-  if (error instanceof VerifyError) return error.message;
+  if (error instanceof VerifyError || error instanceof AtomicPreconditionError) {
+    return error.message;
+  }
   if (error instanceof AtomicWriteError && error.reason === 'verify-failed') {
     return 'Odczyt kontrolny różni się od zapisanej treści.';
   }
@@ -290,6 +293,8 @@ type JournalItem =
       readonly abs: string;
       readonly bytes: Uint8Array;
       readonly mode: number;
+      /** Bajty zapisane przez ten krok; cofniecie rusza plik tylko, gdy nadal je ma (ADR 0061). */
+      readonly written?: Uint8Array;
     }
   | {
       readonly t: 'restore-link';
@@ -297,7 +302,7 @@ type JournalItem =
       readonly linkTarget: string;
       readonly isDirectory: boolean;
     }
-  | { readonly t: 'remove'; readonly abs: string }
+  | { readonly t: 'remove'; readonly abs: string; readonly written?: Uint8Array }
   | { readonly t: 'rmdir'; readonly abs: string }
   /** Zwykly katalog usuniety przed zapisem; rollback odtwarza go z kopii w pamieci i content store. */
   | { readonly t: 'restore-tree'; readonly abs: string; readonly tree: TreeSnapshot }
@@ -1291,9 +1296,15 @@ export class FsWriteGate implements WriteGate {
 
   private async writeOp(op: FileOp, journal: JournalItem[]): Promise<void> {
     await this.mkdirTracked(path.dirname(op.abs), journal);
-    journal.push(this.restoreOf(op.abs, op.before));
+    const undo = this.restoreOf(op.abs, op.before);
+    journal.push(
+      undo.t === 'restore-file' || undo.t === 'remove' ? { ...undo, written: op.final } : undo,
+    );
     await removeStaleTemps(op.abs, this.clock.now().getTime());
     await writeFileAtomic(op.abs, op.final, {
+      // Plik wspolny (np. `~/.claude.json`) zapisuje tez dzialajace narzedzie: tuz przed zamiana
+      // bajty celu musza byc te same co przy analizie, inaczej zapis jest przerwany (ADR 0061).
+      beforeRename: () => this.assertStill(op.abs, op.before),
       ...(op.mode !== undefined
         ? { mode: op.mode }
         : op.before.kind === 'file'
@@ -1302,6 +1313,29 @@ export class FsWriteGate implements WriteGate {
       ...(this.deps.atomicOps === undefined ? {} : { ops: this.deps.atomicOps }),
     });
     await this.verifyFile(op.abs, op.final);
+  }
+
+  private async assertStill(abs: string, before: Existing): Promise<void> {
+    if (before.kind === 'symlink') return;
+    const now = await this.currentBytes(abs);
+    const same =
+      before.kind === 'missing'
+        ? now === 'missing'
+        : now !== 'missing' && now !== 'other' && bytesEqual(now, before.bytes);
+    if (!same) {
+      throw new AtomicPreconditionError(
+        'Plik zmienił się w trakcie zapisu (zapisał go inny program). Aplikacja go nie nadpisała; przygotuj plan jeszcze raz.',
+      );
+    }
+  }
+
+  /** Bajty zwyklego pliku, `missing` albo `other` (katalog, dowiazanie, plik za duzy). */
+  private async currentBytes(abs: string): Promise<Uint8Array | 'missing' | 'other'> {
+    const info = await lstatOrNull(abs);
+    if (info === null) return 'missing';
+    if (!info.isFile()) return 'other';
+    const back = await readBounded(abs, MAX_OBJECT_BYTES);
+    return back.truncated ? 'other' : back.bytes;
   }
 
   private async verifyFile(abs: string, expected: Uint8Array): Promise<void> {
@@ -1414,6 +1448,15 @@ export class FsWriteGate implements WriteGate {
         switch (item.t) {
           case 'restore-file': {
             const bytes = await this.fromBackup(item.bytes);
+            if (item.written !== undefined) {
+              // Cofamy tylko wlasny zapis: plik z obca trescia (inny program) zostaje, a krok liczy sie jako konflikt.
+              const now = await this.currentBytes(item.abs);
+              if (now !== 'missing' && now !== 'other' && bytesEqual(now, bytes)) break;
+              if (now === 'missing' || now === 'other' || !bytesEqual(now, item.written)) {
+                failures++;
+                break;
+              }
+            }
             const current = await lstatOrNull(item.abs);
             if (current?.isSymbolicLink() === true) await removeLink(item.abs);
             await writeFileAtomic(item.abs, bytes, { mode: item.mode, ...atomic });
@@ -1430,6 +1473,14 @@ export class FsWriteGate implements WriteGate {
             await this.restoreTree(item.abs, item.tree);
             break;
           case 'remove': {
+            if (item.written !== undefined) {
+              const now = await this.currentBytes(item.abs);
+              if (now === 'missing') break;
+              if (now === 'other' || !bytesEqual(now, item.written)) {
+                failures++;
+                break;
+              }
+            }
             const current = await lstatOrNull(item.abs);
             if (current?.isSymbolicLink() === true) await removeLink(item.abs);
             else if (current !== null) await rm(item.abs, { force: true });

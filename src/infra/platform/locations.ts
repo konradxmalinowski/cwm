@@ -12,7 +12,7 @@ import type { PlatformEnv } from './env';
  * narzedzia albo systemu to wpis w `CANDIDATES` plus test z podstawionym `PlatformEnv`.
  */
 
-type Base = 'claude' | 'codex' | 'gemini' | 'agents';
+type Base = 'claude' | 'claude-state' | 'codex' | 'gemini' | 'agents';
 type EntryType = 'directory' | 'file';
 
 interface CandidateSpec {
@@ -52,6 +52,15 @@ export const CANDIDATES: readonly CandidateSpec[] = [
     kind: 'hooks',
     base: 'claude',
     segments: ['settings.json'],
+    entry: 'file',
+  },
+  // Serwery MCP zakresu uzytkownika (ADR 0061): `~/.claude.json` lezy w katalogu domowym, nie w `~/.claude`.
+  // Z `CLAUDE_CONFIG_DIR` plik jest w tym katalogu. Z pliku czytany i zmieniany jest tylko klucz `mcpServers`.
+  {
+    tool: 'claude-code',
+    kind: 'mcp',
+    base: 'claude-state',
+    segments: ['.claude.json'],
     entry: 'file',
   },
   { tool: 'codex', kind: 'skills', base: 'codex', segments: ['skills'], entry: 'directory' },
@@ -103,8 +112,9 @@ export const CANDIDATES: readonly CandidateSpec[] = [
 /**
  * Rooty wzgledne do katalogu projektu z rejestru (ADR 0059). Ta sama tabela co wyzej, tylko z baza
  * w katalogu projektu zamiast w katalogu domowym; adaptery i eksportery nie widza roznicy, bo format
- * plikow jest ten sam. Na razie tylko Claude Code: `.claude/` i `CLAUDE.md` w korzeniu projektu.
- * `.claude/settings.json` (hooki) celowo nie jest rootem: ten plik trzyma tez uprawnienia projektu.
+ * plikow jest ten sam. Na razie tylko Claude Code: `.claude/`, `CLAUDE.md` i `.mcp.json` (serwery MCP
+ * projektu, ADR 0061) w korzeniu projektu. `.claude/settings.json` (hooki) celowo nie jest rootem: ten plik
+ * trzyma tez uprawnienia projektu.
  */
 export interface ProjectCandidateSpec {
   readonly tool: ToolId;
@@ -118,6 +128,7 @@ export const PROJECT_CANDIDATES: readonly ProjectCandidateSpec[] = [
   { tool: 'claude-code', kind: 'agents', segments: ['.claude', 'agents'], entry: 'directory' },
   { tool: 'claude-code', kind: 'commands', segments: ['.claude', 'commands'], entry: 'directory' },
   { tool: 'claude-code', kind: 'global-instructions', segments: ['CLAUDE.md'], entry: 'file' },
+  { tool: 'claude-code', kind: 'mcp', segments: ['.mcp.json'], entry: 'file' },
 ];
 
 const BASE_DIR: Record<
@@ -125,6 +136,8 @@ const BASE_DIR: Record<
   { readonly dir: string; readonly override?: string; readonly overrideIsParent?: boolean }
 > = {
   claude: { dir: '.claude', override: 'CLAUDE_CONFIG_DIR' },
+  // Katalog domowy, a z CLAUDE_CONFIG_DIR ten katalog: tam Claude Code trzyma `.claude.json`.
+  'claude-state': { dir: '', override: 'CLAUDE_CONFIG_DIR' },
   codex: { dir: '.codex', override: 'CODEX_HOME' },
   // GEMINI_CLI_HOME to katalog nadrzedny: CLI tworzy w nim `.gemini` (dokumentacja configuration).
   gemini: { dir: '.gemini', override: 'GEMINI_CLI_HOME', overrideIsParent: true },
@@ -237,7 +250,9 @@ export class FsLocationCatalog implements LocationCatalog {
         ? BASE_DIR[spec.base].overrideIsParent === true
           ? `$${override}/${dir}`
           : `$${override}`
-        : `~/${dir}`;
+        : dir === ''
+          ? '~'
+          : `~/${dir}`;
     return [prefix, ...spec.segments].join('/');
   }
 

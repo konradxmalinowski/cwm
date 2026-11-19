@@ -589,7 +589,7 @@ poziom się porusza, a kolumna ostatnia mówi, co go przesuwa.
 | Instrukcja globalna | partial | partial | Jeden plik na narzędzie (`CLAUDE.md`, `AGENTS.md`), więc zarządzany jest blok między markerami aplikacji, nie plik. Treść poza blokiem nie jest eksportowana ani kontrolowana (ADR 0025) |
 | Instrukcja projektowa | unsupported | unsupported | Rodzaj `project-instruction` jest nieużywany. `CLAUDE.md` projektu wchodzi jako `global-instruction` z zakresem `project` i wraca tylko do swojego projektu (ADR 0059) |
 | Hook | full | partial | Codex jest zawsze `partial`: czyta tylko `hooks.<Zdarzenie>` i po cichu pomija nieznane zdarzenia. Dla zdarzenia spoza listy znanych Codeksowi adapter dodaje ostrzeżenie |
-| Serwer MCP (`tool-setting`) | unsupported | unsupported | Decyzja polityczna, nie techniczna (ADR 0020) |
+| Serwer MCP (`tool-setting`) | partial albo unsupported | partial albo unsupported | Tylko jawny eksport z potwierdzeniem (ADR 0061). `partial`: wartości zmiennych i nagłówków nie są kopiowane, tylko odniesienia, a pola bez odpowiednika giną. `unsupported`: niekompletny opis, adres bez https, nagłówki, `$` albo tekst wyglądający na sekret, sse w Codeksie; Gemini CLI zawsze. Synchronizacja i ZIP: zawsze odmowa |
 | Pliki pomocnicze skilla | w poziomie skilla | w poziomie skilla | Kopiowane razem z elementem, nie mają własnego werdyktu (`reference-asset` jest `unsupported` jako samodzielny element) |
 | Pozostałe ustawienia narzędzia | unsupported | unsupported | Poza MVP |
 
@@ -754,8 +754,8 @@ Kanały z handlerem:
 | `import:scan-git` | `{ url, ref? }` | jak `import:scan`, plus `git`: adres bez danych logowania, ref, pełny SHA commita i liczba submoduli; pobranie i skan w main, kopia znika po skanie (ADR 0058) |
 | `import:scan-project` | `{ projectId }` | jak `import:scan`, plus `project` (identyfikator i nazwa); kandydaci zostaną przypięci do projektu (ADR 0059) |
 | `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged?, renames? }` | zaimportowane, pominięte z powodem, błędy |
-| `export:plan` | `{ tool, itemIds, resolutions?, projectId?, includeGlobal? }` | `planId`, `toolMissing`, `project` przy celu projektowym, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy (w tym odmowy zakresu), konflikty, sieroty, `applicable`; plan łamiący zakres to `scope-violation` (ADR 0059) |
-| `export:apply` | `{ planId, approved: true }` | raport per wpis, `backupId`, `verified`, `rolledBack` |
+| `export:plan` | `{ tool, itemIds, resolutions?, projectId?, includeGlobal? }` | `planId`, `toolMissing`, `project` przy celu projektowym, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy (w tym odmowy zakresu), konflikty, sieroty, `applicable`; plan łamiący zakres to `scope-violation` (ADR 0059); plan zapisujący serwer MCP ma `mcp` z podglądem serwerów i jednorazowym znacznikiem `confirmation` (ADR 0061) |
+| `export:apply` | `{ planId, approved: true, mcpConfirmation?, mcpGlobalToProject? }` | raport per wpis, `backupId`, `verified`, `rolledBack`; plan z serwerem MCP bez znacznika z `export:plan` to `mcp-confirmation-required` (ADR 0061) |
 | `export:zip-plan` | `{ tool, itemIds, confirmedItemIds? }` | jak `export:plan` (układ plików wybranego narzędzia, wpisy `create`) plus `zip`: `fileName`, `fileCount`, `sizeBytes` i `held` (elementy prywatne, z sekretem i projektowe z `confirmed`); archiwum jest budowane w main (ADR 0054) |
 | `export:zip-save` | `{ planId, approved: true }` | `{ status: 'saved', fileName, fileCount }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
 | `sync:status` | `{ tools? }` | `missingTools`, stan per element i narzędzie, sieroty |
@@ -1620,7 +1620,7 @@ przeniesione do ADR-ów. Otwarte zostaje jedno, z zapisem, który etap blokuje.
 | 12 modułów | Sekcja 6 |
 | Model kanoniczny i poziomy zgodności | Sekcja 4 |
 | Bezpieczeństwo (16 punktów) | Sekcja 8 |
-| Brak automatycznej synchronizacji MCP | ADR 0020 |
+| Brak automatycznej synchronizacji MCP | ADR 0020, reguły jawnego eksportu w ADR 0061 |
 | Interfejs i widoki | Sekcja 13 |
 | Centralna biblioteka: instrukcje globalne i projektowe | Sekcja 4.3, ADR 0025 |
 | Etapy 0 do 10 | `docs/ROADMAP.md` |

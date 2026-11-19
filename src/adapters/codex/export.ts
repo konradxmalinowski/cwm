@@ -32,7 +32,14 @@ import {
   worst,
 } from '../shared/export/verdicts';
 import type { YamlValue } from '../shared/frontmatter';
+import {
+  emitCodexConfig,
+  mcpCapabilities,
+  planCodexMcp,
+  type CodexConfigState,
+} from '../shared/export/mcp-export';
 import { SegmentTomlEditor, type AgentRegistration } from '../shared/toml/segment-editor';
+import { isMcpServerItem } from '../../core/services/mcp/mcp-server';
 import { TextDecodeError } from '../shared/text';
 import { EFFORT_DEPTH, agentEffort, parseAgentDraft, registryTarget } from './agents';
 
@@ -131,6 +138,8 @@ export function codexCapabilities(item: LibraryItem): CompatibilityVerdict {
       }
       return verdict('partial', reasons);
     }
+    case 'tool-setting':
+      return isMcpServerItem(item) ? mcpCapabilities(item, TOOL) : unsupportedKind(item);
     default:
       return unsupportedKind(item);
   }
@@ -197,6 +206,7 @@ export async function planCodex(
   const agents: LoadedItem[] = [];
   const instructions: LoadedItem[] = [];
   const hooks: LoadedItem[] = [];
+  const mcp: LoadedItem[] = [];
 
   for (const loaded of items) {
     const { item } = loaded;
@@ -220,13 +230,18 @@ export async function planCodex(
       case 'hook':
         hooks.push(loaded);
         break;
+      case 'tool-setting':
+        mcp.push(loaded);
+        break;
       default:
         break;
     }
   }
 
   await planSkills(b, ctx, skillLike);
-  await planAgents(b, ctx, agents);
+  // Agenci i serwery MCP edytuja ten sam config.toml: jeden tekst, jeden wpis planu.
+  const config = await planCodexMcp(b, ctx, mcp, await planAgents(b, ctx, agents));
+  emitCodexConfig(b, config);
   await planInstructions(
     b,
     ctx,
@@ -326,10 +341,11 @@ async function planAgents(
   b: PlanBuilder,
   ctx: ExportContext,
   agents: readonly LoadedItem[],
-): Promise<void> {
-  if (agents.length === 0) return;
-  const refuseAll = (reason: string): void => {
+): Promise<CodexConfigState | null> {
+  if (agents.length === 0) return null;
+  const refuseAll = (reason: string): null => {
     for (const a of agents) b.refuse(a.item, reason);
+    return null;
   };
   const dir = pickRoot(ctx, TOOL, 'agents');
   const registry = pickRoot(ctx, TOOL, 'agent-registry');
@@ -396,7 +412,7 @@ async function planAgents(
       },
     });
   }
-  if (prepared.length === 0) return;
+  if (prepared.length === 0) return null;
 
   const editor = new SegmentTomlEditor();
   const edit = editor.edit(
@@ -406,20 +422,21 @@ async function planAgents(
   );
   if (!edit.ok) {
     for (const p of prepared) b.refuse(p.loaded.item, edit.message);
-    return;
+    return null;
   }
   for (const p of prepared) {
     await planWholeFile(b, ctx, dir.root, p.loaded, p.file, p.bytes);
   }
-  b.entry({
+  return {
     rootId: registry.root.rootId,
-    relPath: 'config.toml',
-    action: configBytes === null ? 'create' : edit.changed ? 'modify' : 'unchanged',
-    scope: 'toml-segment',
-    itemIds: prepared.map((p) => p.loaded.item.id),
-    content: edit.changed || configBytes === null ? encode(edit.text) : configBytes,
     previous: configBytes,
-  });
+    text: edit.changed || configBytes === null ? edit.text : configText,
+    changed: edit.changed,
+    itemIds: prepared.map((p) => p.loaded.item.id),
+    warnings: [],
+    agentNames: prepared.map((p) => p.registration.name),
+    mcpNames: [],
+  };
 }
 
 /** Nazwa tabeli `[agents.<nazwa>]` zapamietana przy imporcie (snapshot `registry.entry`). */

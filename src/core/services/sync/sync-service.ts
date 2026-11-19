@@ -26,6 +26,11 @@ import { classifyCandidate, sameContent } from '../import/import-service';
 import type { LibraryService } from '../library/library-service';
 import { sha256Bytes } from '../normalization/hash';
 import { nameOf, parentOf } from './sync-hash';
+import { isMcpServerItem } from '../mcp/mcp-server';
+
+/** Serwery MCP nie sa synchronizowane (ADR 0020, 0061); eksport jest jawny i ma osobne potwierdzenie. */
+export const MCP_SYNC_REFUSAL =
+  'Serwery MCP nie są synchronizowane. Wyeksportuj serwer jawnie w kreatorze eksportu, z podglądem i potwierdzeniem (ADR 0061).';
 
 /**
  * Serwis synchronizacji (ARCHITECTURE 3.5, Etap 5). Stan elementu wzgledem narzedzia wynika z
@@ -234,6 +239,8 @@ export class SyncService {
     tool: ToolId,
     record: SyncRecord | null,
   ): Promise<SyncState> {
+    // Serwer MCP trafia do narzedzia tylko jawnym eksportem z potwierdzeniem, nigdy synchronizacja (ADR 0061).
+    if (isMcpServerItem(item)) return 'unsupported';
     if (record === null) {
       const exporter = this.exporters.get(tool);
       return exporter === undefined || exporter.capabilities(item).level === 'unsupported'
@@ -350,7 +357,9 @@ export class SyncService {
             skipped.push({
               itemId: id,
               tool,
-              reason: 'To narzędzie nie obsługuje tego rodzaju elementu.',
+              reason: isMcpServerItem(item)
+                ? MCP_SYNC_REFUSAL
+                : 'To narzędzie nie obsługuje tego rodzaju elementu.',
             });
             break;
           case 'never':

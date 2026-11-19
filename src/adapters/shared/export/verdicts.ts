@@ -1,5 +1,6 @@
 import type { LibraryItem, ToolId } from '../../../core/model/item';
 import type { CompatibilityLevel, CompatibilityVerdict } from '../../../core/model/plan';
+import { isMcpServerItem } from '../../../core/services/mcp/mcp-server';
 
 /** Wspolne skladanie werdyktow zgodnosci (ARCHITECTURE 4.3). Czyste, bez I/O. */
 
@@ -51,13 +52,16 @@ export function foreignUnmapped(item: LibraryItem, tool: ToolId, prefix?: string
 }
 
 export const MCP_REASON =
-  'Ustawienia narzędzia, w tym serwery MCP, nie są eksportowane. Przeniesienie zmieniłoby zakres z projektowego na globalny i nie przeniosłoby zmiennych środowiskowych (ADR 0020).';
+  'Eksport serwerów MCP do tego narzędzia nie jest jeszcze dostępny. Dziś serwer MCP trafia jawnie, z potwierdzeniem, tylko do Claude Code i Codeksa (ADR 0061).';
 
-/** Powody dla typow, ktorych zaden z dwoch adapterow nie eksportuje w tej wersji. */
+const SETTING_REASON =
+  'Ustawienia narzędzia inne niż serwery MCP nie są eksportowane (ADR 0020, 0061).';
+
+/** Powody dla typow, ktorych adapter nie eksportuje w tej wersji. */
 export function unsupportedKind(item: LibraryItem): CompatibilityVerdict {
   switch (item.kind) {
     case 'tool-setting':
-      return unsupported(MCP_REASON);
+      return unsupported(isMcpServerItem(item) ? MCP_REASON : SETTING_REASON);
     case 'project-instruction':
       return unsupported(
         'Instrukcje projektowe leżą w katalogu projektu, a eksport obejmuje wyłącznie konfigurację globalną narzędzia.',

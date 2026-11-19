@@ -11,6 +11,7 @@ import type {
 import type { JsonValue, LibraryItem, LoadedItem } from '../../core/model/item';
 import type { CompatibilityVerdict, WritePlan } from '../../core/model/plan';
 import { addHookCandidates, isRecord } from '../shared/hooks';
+import { scanCodexMcp } from '../shared/mcp-scan';
 import { scanInstructionFile } from '../shared/instructions';
 import type { ImportCandidate, RootScan } from '../../core/ports/tool-adapter';
 import type { MarkdownItem } from '../shared/markdown-item';
@@ -58,6 +59,8 @@ export class CodexAdapter implements ToolAdapter, ToolExporter {
         break;
       case 'agent-registry':
         // Root rejestru to sam config.toml, a pary z agentami wylicza `finalize` po skanie rootow.
+        // Serwery MCP z tego pliku sa osobnymi elementami (ADR 0061).
+        await scanCodexMcp(ctx, 'config.toml');
         break;
       case 'global-instructions':
         await scanInstructionFile(ctx, 'AGENTS.md', 'agents-md');

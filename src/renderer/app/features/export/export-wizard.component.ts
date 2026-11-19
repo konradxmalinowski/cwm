@@ -103,6 +103,31 @@ export class ExportWizardComponent {
   /** Okno zapisu zamkniete bez wyboru: plan zostaje, a uzytkownik dostaje o tym zdanie. */
   protected readonly zipCancelled = signal(false);
   protected readonly zipResult = signal<{ fileName: string; fileCount: number } | null>(null);
+  /**
+   * Potwierdzenie serwerow MCP (ADR 0061) jest przypiete do znacznika planu: nowy plan ma nowy znacznik,
+   * wiec pole wraca do stanu niezaznaczonego bez osobnego czyszczenia.
+   */
+  private readonly mcpAckFor = signal<string | null>(null);
+  private readonly mcpAckErrorFor = signal<string | null>(null);
+  private readonly mcpToken = computed(() => this.plan()?.mcp?.confirmation ?? null);
+  protected readonly mcpAck = computed(
+    () => this.mcpToken() !== null && this.mcpAckFor() === this.mcpToken(),
+  );
+  protected readonly mcpAckError = computed(
+    () => this.mcpToken() !== null && this.mcpAckErrorFor() === this.mcpToken(),
+  );
+  /** Globalny serwer MCP do repozytorium projektu: drugie, osobne potwierdzenie (ADR 0061). */
+  protected readonly mcpToProject = computed(
+    () => this.plan()?.mcp?.servers.some((s) => s.globalToProject) === true,
+  );
+  private readonly mcpProjectAckFor = signal<string | null>(null);
+  private readonly mcpProjectErrorFor = signal<string | null>(null);
+  protected readonly mcpProjectAck = computed(
+    () => this.mcpToken() !== null && this.mcpProjectAckFor() === this.mcpToken(),
+  );
+  protected readonly mcpProjectError = computed(
+    () => this.mcpToken() !== null && this.mcpProjectErrorFor() === this.mcpToken(),
+  );
 
   /** Wybory uzytkownika dla konfliktow z opcjami, po `decisionKey`. */
   private readonly choices = signal<ReadonlyMap<string, ConflictResolutionDto>>(new Map());
@@ -604,9 +629,30 @@ export class ExportWizardComponent {
     void this.preparePlan();
   }
 
+  protected onMcpAck(checked: boolean): void {
+    this.mcpAckFor.set(checked ? this.mcpToken() : null);
+    if (checked) this.mcpAckErrorFor.set(null);
+  }
+
+  protected onMcpProjectAck(checked: boolean): void {
+    this.mcpProjectAckFor.set(checked ? this.mcpToken() : null);
+    if (checked) this.mcpProjectErrorFor.set(null);
+  }
+
   protected openConfirm(): void {
     const plan = this.plan();
     if (plan === null || !plan.applicable || this.phase() !== 'plan' || this.replanning()) return;
+    // Zapis serwera MCP wymaga zaznaczenia; main i tak odmowi bez znacznika z planu (ADR 0061).
+    if (plan.mcp !== undefined && !this.mcpAck()) {
+      this.mcpAckErrorFor.set(plan.mcp.confirmation);
+      setTimeout(() => document.getElementById('export-mcp-ack')?.focus(), 0);
+      return;
+    }
+    if (plan.mcp !== undefined && this.mcpToProject() && !this.mcpProjectAck()) {
+      this.mcpProjectErrorFor.set(plan.mcp.confirmation);
+      setTimeout(() => document.getElementById('export-mcp-project-ack')?.focus(), 0);
+      return;
+    }
     this.confirming.set(true);
   }
 
@@ -621,7 +667,16 @@ export class ExportWizardComponent {
     const seq = ++this.seq;
     this.applyError.set(null);
     this.phase.set('applying');
-    const result = await this.exportApi.apply({ planId: plan.planId, approved: true });
+    const result = await this.exportApi.apply({
+      planId: plan.planId,
+      approved: true,
+      ...(plan.mcp !== undefined && this.mcpAck()
+        ? { mcpConfirmation: plan.mcp.confirmation }
+        : {}),
+      ...(plan.mcp !== undefined && this.mcpToProject() && this.mcpProjectAck()
+        ? { mcpGlobalToProject: true as const }
+        : {}),
+    });
     if (seq !== this.seq) return;
     if (!result.ok) {
       this.applyError.set(result.error.message);

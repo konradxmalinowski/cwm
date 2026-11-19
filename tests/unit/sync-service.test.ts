@@ -5,7 +5,11 @@ import type { SyncRecord, SyncStateStore } from '../../src/core/ports/sync-state
 import { SourceReadError, type SourceReader } from '../../src/core/ports/source-reader';
 import type { ToolExporter } from '../../src/core/ports/tool-adapter';
 import { sha256Bytes } from '../../src/core/services/normalization/hash';
-import { SyncError, SyncService } from '../../src/core/services/sync/sync-service';
+import {
+  MCP_SYNC_REFUSAL,
+  SyncError,
+  SyncService,
+} from '../../src/core/services/sync/sync-service';
 import { FakeCatalog, PROJECT_A, root } from './import-fakes';
 import { bytes, draft } from './library-fakes';
 import { exportHarness } from './export-fakes';
@@ -192,5 +196,37 @@ describe('SyncService: stany', () => {
     expect(plan.plans).toEqual([]);
     expect(plan.skipped.map((x) => [x.itemId, x.tool])).toEqual([[bound.item.id, 'claude-code']]);
     expect(plan.skipped[0]?.reason).toContain('projektu');
+  });
+
+  it('serwer MCP nie jest synchronizowany: stan unsupported i pominiecie z powodem (ADR 0061)', async () => {
+    const s = await setup();
+    const mcp = await s.library.create(
+      draft({
+        kind: 'tool-setting',
+        slug: 'mcp-acme',
+        body: '',
+        attributes: {
+          toolSetting: {
+            tool: 'claude-code',
+            key: 'mcpServers.acme',
+            value: {
+              transport: 'stdio',
+              command: 'acme-mcp',
+              args: [],
+              url: null,
+              env: [],
+              headers: [],
+            },
+          },
+        },
+      }),
+    );
+    const status = await s.sync.status(['claude-code']);
+    expect(status.items.find((i) => i.itemId === mcp.item.id)?.status).toBe('unsupported');
+    const plan = await s.sync.plan(['claude-code'], [mcp.item.id]);
+    expect(plan.plans).toEqual([]);
+    expect(plan.skipped).toEqual([
+      { itemId: mcp.item.id, tool: 'claude-code', reason: MCP_SYNC_REFUSAL },
+    ]);
   });
 });

@@ -9,6 +9,24 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ### Added
 
+- Reguły bezpieczeństwa i zakresów MCP (ADR 0061, częściowo zastępuje ADR 0020). Serwery MCP są importowane z
+  `mcpServers` w `~/.claude.json`, z `.mcp.json` w projekcie z listy projektów i z `[mcp_servers.<nazwa>]` w `config.toml`
+  Codeksa: do biblioteki trafia transport, polecenie, argumenty, adres i same nazwy zmiennych środowiskowych i nagłówków,
+  nigdy ich wartości, a serwer z poleceniem, argumentem albo adresem wyglądającym na sekret nie jest importowany wcale.
+  Eksport serwera do Claude Code i Codeksa jest zawsze jawny: plan pokazuje polecenie albo adres w całości i zmienne, które
+  serwer weźmie ze środowiska, a zapis wymaga zaznaczenia "Sprawdziłem polecenia i adresy serwerów MCP i chcę je zapisać".
+  Proces główny wydaje dla takiego planu jednorazowy znacznik i bez niego odmawia zapisu (`mcp-confirmation-required`).
+  Do plików trafiają odniesienia (`"${NAZWA}"` w Claude Code, `env_vars = ["NAZWA"]` w Codeksie); zmienna, której nie da
+  się tak wyrazić, jest pomijana z ostrzeżeniem. Serwer projektu trafia tylko do `.mcp.json` swojego projektu, a Codex,
+  który nie ma MCP w projekcie, odmawia. Serwer HTTP tylko przez `https` (albo `http` na `localhost`) i bez nagłówków;
+  `$` i tekst wyglądający na sekret to odmowa. W `~/.claude.json` i `.mcp.json` zmieniany jest tylko klucz `mcpServers`, a w
+  `config.toml` tylko bloki `[mcp_servers.<nazwa>]`, z weryfikacją, że reszta pliku się nie zmieniła. Serwer o tej samej
+  nazwie i innej definicji jest zastępowany tylko po decyzji "Zastąp istniejący serwer" w planie. Synchronizacja, archiwum
+  ZIP i Gemini CLI nadal pomijają serwery MCP z powodem. Tokeny szesnastkowe, UUID, flagi i nagłówki z danymi
+  logowania oraz niewidoczne znaki w poleceniu albo adresie blokują import i eksport serwera; globalny serwer do projektu
+  wymaga osobnego potwierdzenia; podgląd pokazuje tylko zmieniane serwery, nie cały plik; zapis jest przerywany, gdy
+  narzędzie zmieni plik tuż przed zamianą, a cofnięcie zapisu MCP z Historii jest zablokowane.
+
 - Wersjonowanie biblioteki w lokalnym Git (ADR 0060). W Diagnostyce nowa sekcja "Wersjonowanie biblioteki w Git": pole
   wyboru włącza opcjonalne repozytorium w katalogu danych aplikacji (osobny magazyn obiektów obok `library/`, bez zdalnego
   adresu i bez wysyłania czegokolwiek w sieć). Po każdej operacji, która zmienia bibliotekę (zapis, usunięcie, naprawa,

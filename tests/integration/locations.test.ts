@@ -48,6 +48,12 @@ describe('FsLocationCatalog na podstawionym katalogu domowym', () => {
       kind: 'skills',
       exists: false,
     });
+    // Serwery MCP Claude Code (ADR 0061): plik w katalogu domowym, nie w ~/.claude.
+    expect(find('~/.claude.json')).toMatchObject({
+      tool: 'claude-code',
+      kind: 'mcp',
+      exists: false,
+    });
   });
 
   it('drugi root skilli Codeksa: raz nie istnieje, raz istnieje i jest aktywny (ADR 0024)', async () => {
@@ -115,6 +121,8 @@ describe('FsLocationCatalog na podstawionym katalogu domowym', () => {
     const skills = roots.find((r) => r.label === '$CLAUDE_CONFIG_DIR/skills');
     expect(skills?.exists).toBe(true);
     expect(catalog.resolvePath(skills?.rootId ?? '')).toBe(join(custom, 'skills'));
+    const mcp = roots.find((r) => r.label === '$CLAUDE_CONFIG_DIR/.claude.json');
+    expect(catalog.resolvePath(mcp?.rootId ?? '')).toBe(join(custom, '.claude.json'));
     expect(roots.find((r) => r.label === '~/.codex/skills')).toBeDefined();
   });
 
@@ -407,7 +415,10 @@ describe('rejestr i rooty projektu (ADR 0059)', () => {
     const elsewhere = createTempTree('acme-elsewhere-');
     if (!trySymlink(elsewhere, join(t.repo, '.claude'))) return;
     const found = await t.catalog.roots(t.added.id);
-    expect(found.ok && found.roots.map((r) => r.label)).toEqual(['acme-app: CLAUDE.md']);
+    expect(found.ok && found.roots.map((r) => r.label)).toEqual([
+      'acme-app: CLAUDE.md',
+      'acme-app: .mcp.json',
+    ]);
 
     const before = await new FsProjectCatalog(t.registry, SALT_PROMISE).roots(t.added.id);
     const claudeMd = before.ok ? before.roots[0]?.rootId : undefined;

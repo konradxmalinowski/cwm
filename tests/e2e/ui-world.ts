@@ -181,6 +181,13 @@ export async function startWorld(name: WorldName): Promise<World> {
     const home = prepareHome();
     const launched = await launchAppWithHome(home, userData);
     const items = await buildSeeded(launched.page, home);
+    // Serwery MCP Claude Code (ADR 0061) dopiero po imporcie: biblioteka scen zostaje ta sama, a root
+    // `.claude.json` istnieje, wiec jego pole w kreatorze importu jest aktywne.
+    writeFileSync(
+      join(home, '.claude', '.claude.json'),
+      `${JSON.stringify({ mcpServers: { 'acme-docs': { command: 'acme-mcp', args: ['--serve'] } } }, null, 2)}\n`,
+      'utf8',
+    );
     return { ...launched, home, name, items };
   }
 

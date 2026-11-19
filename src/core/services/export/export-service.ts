@@ -12,6 +12,7 @@ import type {
 } from '../../ports/tool-adapter';
 import type { LinkCapability, WriteGate } from '../../ports/write-gate';
 import type { LibraryService } from '../library/library-service';
+import { isMcpServerItem, mcpPreview, type McpPreview } from '../mcp/mcp-server';
 import {
   GLOBAL_TARGET,
   boundProject,
@@ -41,7 +42,9 @@ export type ExportErrorCode =
   /** Cel "projekt" (ADR 0059): projekt nieznany, katalog niewazny albo rejestr niedostepny. */
   | 'unknown-project'
   | 'project-invalid'
-  | 'project-unavailable';
+  | 'project-unavailable'
+  /** Plan zapisuje serwer MCP, a zapis nie ma potwierdzenia z podgladu (ADR 0061). */
+  | 'mcp-confirmation-required';
 
 export class ExportError extends Error {
   constructor(
@@ -106,6 +109,8 @@ export interface PlannedItem {
   readonly projectId: string | null;
   /** Prywatny albo z trafieniem sekretow: nie trafia do repozytorium jako element globalny (ADR 0059). */
   readonly restricted: boolean;
+  /** Serwer MCP (ADR 0061): zapis wymaga osobnego potwierdzenia z podgladem. */
+  readonly mcp?: boolean;
 }
 
 /** Cel planu: katalog globalny narzedzia albo projekt z rejestru (ADR 0059). */
@@ -129,6 +134,18 @@ export interface ExportPlanReport {
   readonly rootLabels: ReadonlyMap<string, string>;
   /** Stabilne w obrebie planu: `e1`, `e2`, ... w kolejnosci wpisow. */
   readonly entryIds: readonly string[];
+  /**
+   * Serwery MCP, ktore plan zapisze (wpisy inne niz `unchanged`), z poleceniem albo adresem i nazwami
+   * zmiennych, bez wartosci. Niepusta lista oznacza, ze `apply` wymaga potwierdzenia (ADR 0061).
+   */
+  readonly mcp?: readonly McpPreview[];
+}
+
+export interface ExportApplyOptions {
+  /** Main sprawdzil jednorazowy znacznik z podgladu serwerow MCP tego planu. */
+  readonly mcpConfirmed?: boolean;
+  /** Osobne potwierdzenie zapisu globalnego serwera MCP do repozytorium projektu. */
+  readonly mcpGlobalToProject?: boolean;
 }
 
 export interface ExportApplyReport {
@@ -225,6 +242,7 @@ export class ExportService {
       contentHash: item.version.contentHash,
       projectId: boundProject(item),
       restricted: restrictedFromRepository(item),
+      mcp: isMcpServerItem(item),
     }));
 
     const destination = await this.destination(tool, target);
@@ -315,6 +333,7 @@ export class ExportService {
       items,
       rootLabels,
       entryIds: plan.entries.map((_e, i) => `e${i + 1}`),
+      mcp: mcpWrites(plan, loaded, tool, planTarget.kind === 'project'),
     };
     return report;
   }
@@ -366,7 +385,11 @@ export class ExportService {
     return report;
   }
 
-  async apply(planId: string, approved: boolean): Promise<ExportApplyReport> {
+  async apply(
+    planId: string,
+    approved: boolean,
+    options: ExportApplyOptions = {},
+  ): Promise<ExportApplyReport> {
     if (!approved) {
       throw new ExportError('not-approved', 'Zapis wymaga jawnego zatwierdzenia planu.');
     }
@@ -384,6 +407,21 @@ export class ExportService {
       throw new ExportError(
         'plan-not-applicable',
         'Tego planu nie da się zastosować. Usuń blokady i przygotuj plan jeszcze raz.',
+      );
+    }
+    // Druga kontrola niezalezna od kanalu: plan z serwerem MCP bez potwierdzenia nie zapisuje niczego,
+    // takze wtedy, gdy wola go synchronizacja, ktora MCP i tak pomija (ADR 0061).
+    const servers = stored.report.mcp ?? [];
+    if (servers.length > 0 && options.mcpConfirmed !== true) {
+      throw new ExportError(
+        'mcp-confirmation-required',
+        'Plan zapisuje serwer MCP. Potwierdź podgląd serwerów i przygotuj plan jeszcze raz.',
+      );
+    }
+    if (servers.some((s) => s.globalToProject === true) && options.mcpGlobalToProject !== true) {
+      throw new ExportError(
+        'mcp-confirmation-required',
+        'Plan zapisuje globalny serwer MCP do repozytorium projektu. Potwierdź to osobno i przygotuj plan jeszcze raz.',
       );
     }
 
@@ -472,6 +510,30 @@ export class ExportService {
     }
     this.plans.set(report.planId, { expiresAt: nowMs + this.ttlMs, report });
   }
+}
+
+/** Serwery MCP z wpisow, ktore cos zapisza; `unchanged` nie wymaga potwierdzenia. */
+function mcpWrites(
+  plan: WritePlan,
+  loaded: readonly LoadedItem[],
+  tool: ToolId,
+  toProject: boolean,
+): readonly McpPreview[] {
+  const writing = new Set<string>();
+  for (const entry of plan.entries) {
+    if (entry.action === 'unchanged') continue;
+    for (const id of entry.itemIds) writing.add(id);
+  }
+  const out: McpPreview[] = [];
+  for (const { item } of loaded) {
+    if (!writing.has(item.id) || !isMcpServerItem(item)) continue;
+    const preview = mcpPreview(item, tool);
+    if (preview === null) continue;
+    out.push(
+      toProject && boundProject(item) === null ? { ...preview, globalToProject: true } : preview,
+    );
+  }
+  return out;
 }
 
 function key(rootId: string, relPath: string): string {

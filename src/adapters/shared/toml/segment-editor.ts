@@ -252,7 +252,7 @@ function refuse(message: string): EditResult {
   return { ok: false, message };
 }
 
-function parseTree(text: string): Tree | string {
+export function parseTree(text: string): Tree | string {
   try {
     const tree: Tree = parse(stripBom(text));
     return tree;
