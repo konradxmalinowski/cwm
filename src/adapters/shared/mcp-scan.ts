@@ -5,6 +5,7 @@ import {
   describeLaunch,
   fromClaudeServer,
   fromCodexServer,
+  fromGeminiServer,
   mcpSettingKey,
   mcpSettingValue,
   type NativeResult,
@@ -16,7 +17,7 @@ import { TextDecodeError, encodeUtf8, toParsableText } from './text';
 import { parseTree } from './toml/segment-editor';
 
 /**
- * Import serwerow MCP (ADR 0061): jeden serwer to jeden element `tool-setting`. Do biblioteki trafia
+ * Import serwerow MCP (ADR 0061, ADR 0062): jeden serwer to jeden element `tool-setting`. Do biblioteki trafia
  * struktura (transport, polecenie, argumenty, adres) i nazwy zmiennych oraz naglowkow, nigdy ich wartosci.
  * Serwer, ktorego polecenie, argument albo adres wyglada na sekret, nie jest importowany wcale.
  * Snapshot to `server.json` z tym samym opisem bez wartosci: z pliku zrodla (np. `~/.claude.json`) nic
@@ -112,7 +113,23 @@ async function readText(ctx: ScanContext, file: string): Promise<string | null> 
 }
 
 /** `~/.claude.json` albo `.mcp.json`: czytany jest wylacznie klucz `mcpServers`. */
-export async function scanClaudeMcp(ctx: ScanContext, file: string): Promise<void> {
+export function scanClaudeMcp(ctx: ScanContext, file: string): Promise<void> {
+  return scanJsonMcp(ctx, file, fromClaudeServer);
+}
+
+/**
+ * `settings.json` Gemini CLI (ADR 0062), globalny albo projektu: wylacznie klucz `mcpServers`. Reszta
+ * pliku (ustawienia, uwierzytelnianie, hooki) nie trafia do elementu ani do snapshotu.
+ */
+export function scanGeminiMcp(ctx: ScanContext): Promise<void> {
+  return scanJsonMcp(ctx, 'settings.json', fromGeminiServer);
+}
+
+async function scanJsonMcp(
+  ctx: ScanContext,
+  file: string,
+  read: (name: string, raw: unknown) => NativeResult,
+): Promise<void> {
   const text = await readText(ctx, file);
   if (text === null) return;
   let parsed: unknown;
@@ -132,7 +149,7 @@ export async function scanClaudeMcp(ctx: ScanContext, file: string): Promise<voi
     ctx.skip(file, 'malformed', `Klucz "mcpServers" w "${file}" nie jest obiektem.`);
     return;
   }
-  addServers(ctx, servers, file, 'mcpServers', fromClaudeServer);
+  addServers(ctx, servers, file, 'mcpServers', read);
 }
 
 /** `config.toml` Codeksa: tabele `[mcp_servers.<nazwa>]`. */

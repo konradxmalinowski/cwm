@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import type { RootId } from '../../core/model/item';
 import type { ProjectRootCatalog, ProjectRootsResult } from '../../core/ports/project-roots';
-import type { DetectedRoot } from '../../core/ports/tool-adapter';
+import type { DetectedRoot, RootKind } from '../../core/ports/tool-adapter';
 import {
   probeSegments,
   projectRootIntactSync,
@@ -94,6 +94,11 @@ export class FsProjectCatalog implements ProjectRootCatalog {
   rootIntact(rootId: RootId): boolean {
     const hit = this.find(rootId);
     return hit === null || projectRootIntactSync(hit.project.dir, hit.spec.segments);
+  }
+
+  /** Rodzaj roota projektu (np. `mcp`, ADR 0062); `null` dla rootow spoza rejestru projektow. */
+  kindOf(rootId: RootId): RootKind | null {
+    return this.find(rootId)?.spec.kind ?? null;
   }
 
   ownerOf(rootId: RootId): { readonly projectId: string; readonly label: string } | null {

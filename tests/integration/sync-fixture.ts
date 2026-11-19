@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { createClaudeCodeAdapter } from '../../src/adapters/claude-code';
 import { createCodexAdapter } from '../../src/adapters/codex';
+import { createGeminiCliAdapter } from '../../src/adapters/gemini-cli';
 import { systemClock, type Clock } from '../../src/core/ports/clock';
 import { ExportService } from '../../src/core/services/export/export-service';
 import { HistoryService } from '../../src/core/services/history/history-service';
@@ -61,7 +62,7 @@ export function makeSyncStack(options: SyncStackOptions = {}) {
     ...(options.atomicOps === undefined ? {} : { atomicOps: options.atomicOps }),
     ...(options.gateClock === undefined ? {} : { clock: options.gateClock }),
   });
-  const adapters = [createClaudeCodeAdapter(), createCodexAdapter()];
+  const adapters = [createClaudeCodeAdapter(), createCodexAdapter(), createGeminiCliAdapter()];
   const exporters = createExporters(adapters);
   const exports = new ExportService({
     catalog,
@@ -90,6 +91,13 @@ export function makeSyncStack(options: SyncStackOptions = {}) {
     reader,
     exports,
     clock: systemClock,
+    // Jak w main (ADR 0062): plik celu MCP po rozwiazanej sciezce, takze z roota hookow Gemini CLI.
+    mcpTarget: async (rootId) => {
+      const roots = await catalog.detect();
+      const target = catalog.resolvePath(rootId);
+      if (target === null) return false;
+      return roots.some((r) => r.kind === 'mcp' && catalog.resolvePath(r.rootId) === target);
+    },
   });
   return {
     tree,

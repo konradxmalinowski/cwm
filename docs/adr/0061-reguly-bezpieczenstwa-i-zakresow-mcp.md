@@ -1,6 +1,6 @@
 # ADR 0061: reguły bezpieczeństwa i zakresów MCP, jawny eksport serwerów
 
-Status: zaakceptowane
+Status: zaakceptowane, uzupełnione przez ADR 0062 (Gemini CLI i nagłówki HTTP jako odniesienia)
 Data: 2026-11-19
 Zastępuje częściowo: ADR 0020 (brak automatycznej synchronizacji MCP), w części o imporcie i eksporcie
 Dotyczy: ADR 0011 (segmenty TOML), ADR 0012 (`WriteGate`), ADR 0025 (decyzje w konflikcie), ADR 0054 (eksport ZIP), ADR 0055 (Gemini CLI), ADR 0059 (projekty), ADR 0060 (jednorazowy znacznik zgody)
@@ -27,7 +27,7 @@ przyjęte, niepotwierdzone.
 | Claude Code | `.mcp.json` w korzeniu projektu, klucz `mcpServers` | projekt | jak wyżej | [D] |
 | Claude Code | `$CLAUDE_CONFIG_DIR/.claude.json` przy ustawionej zmiennej | użytkownik | jak wyżej | [?] |
 | Codex | `config.toml`, `[mcp_servers.<nazwa>]` | tylko globalny | `env_vars = ["NAZWA"]` | [D] |
-| Gemini CLI | `settings.json` (globalny i projektu), klucz `mcpServers` | oba | `$NAZWA` w `env` | [?] poza zakresem |
+| Gemini CLI | `settings.json` (globalny i projektu), klucz `mcpServers` | oba | `$NAZWA` w `env` | [D] w ADR 0062 |
 
 CLI (`cwm start`) ma już własny model serwera MCP (`core/cwm/resource.ts`): `env` to wyłącznie `envRef`, wartość wpisana
 wprost jest odrzucana, a `$` w `command`, `args` i `url` jest zabroniony, bo silnik rozwija `${...}`. Aplikacja nie
@@ -65,14 +65,14 @@ w repozytorium, czyli do Gita.
    jawnym "Dołącz elementy globalne", nigdy jako element prywatny albo z wykryciem sekretu. Import ustawia zakres
    prywatny, więc serwer globalny trafia do repozytorium dopiero po świadomej zmianie zakresu w formularzu. **Codex nie
    ma zakresu projektowego dla MCP**, więc eksport serwera do projektu w Codeksie jest odmową z tym powodem. Projekt w
-   Gemini CLI jest poza tym zakresem. Serwer globalny zapisywany do `.mcp.json` projektu wymaga dodatkowo osobnego,
+   Gemini CLI (`.gemini/settings.json`) dodaje ADR 0062 na tych samych zasadach. Serwer globalny zapisywany do `.mcp.json` projektu wymaga dodatkowo osobnego,
    jawnego potwierdzenia (`mcpGlobalToProject`, punkt 7), bo plik trafia do Gita.
 3. **Sekrety.** Eksport zapisuje odniesienia, nie wartości: Claude Code `"NAZWA": "${REF}"` w `env`, Codex
    `env_vars = ["NAZWA"]`. Zmienna, której nie da się wyrazić odniesieniem, jest pomijana z ostrzeżeniem w planie: w
    Codeksie zmienna biorąca wartość z innej (`ref` różny od nazwy), w obu narzędziach zmienna z listy zabronionych
-   (`PATH`, `NODE_OPTIONS`, `*_PROXY` itd.) i zmienna przy transporcie innym niż stdio. Serwer HTTP z nagłówkami jest
-   odmową: wartości nagłówków to zwykle dane logowania, a serwer bez nich nie zadziała, więc pominięcie dałoby zepsutą
-   konfigurację. Polecenie, argument albo adres ze znakiem `$` jest odmową (narzędzia rozwijają zmienne różnie, więc
+   (`PATH`, `NODE_OPTIONS`, `*_PROXY` itd.) i zmienna przy transporcie innym niż stdio. Nagłówki HTTP przechodzą jako
+   odniesienia do zmiennych według ADR 0062; nagłówek bez odniesienia nadal jest odmową, bo serwer bez niego nie
+   zadziała. Polecenie, argument albo adres ze znakiem `$` jest odmową (narzędzia rozwijają zmienne różnie, więc
    zmienne przechodzą tylko przez `env`), tak samo jak tekst wyglądający na sekret. `textHasSecret` nie widzi tokenów
    szesnastkowych i UUID (niska entropia), więc reguła MCP (`mcpCredentialProblem`) dodatkowo odmawia, gdy: argument
    stoi po fladze o nazwie sekretu (`nameLooksSecret`, np. `--api-key`, `--token`; bez `--path` i `--pattern`) albo po
@@ -158,11 +158,8 @@ Koszty, na które się godzimy:
 
 ## Otwarte (poza tym zakresem)
 
-- Gemini CLI: import i eksport `mcpServers` z `settings.json` (globalnie i w projekcie, z odniesieniem `$NAZWA` po
-  potwierdzeniu formatu w dokumentacji), z tymi samymi regułami. Wtedy reguła "projekt tylko do tego samego projektu w
-  innym narzędziu" dostaje drugie narzędzie z zakresem projektowym.
-- Nagłówki HTTP jako odniesienia (`env_http_headers` w Codeksie, `${NAZWA}` w nagłówkach Claude Code), z mapowaniem nazwy
-  nagłówka na nazwę zmiennej podanym przez użytkownika.
+- Gemini CLI (globalnie i w projekcie) oraz nagłówki HTTP jako odniesienia: rozstrzygnięte w ADR 0062. Mapowanie nazwy
+  nagłówka na zmienną podane przez użytkownika czeka na formularz edycji serwera.
 - Serwery zakresu `local` Claude Code (`projects.<ścieżka>.mcpServers` w `~/.claude.json`) i flagi
   `enabledMcpjsonServers`/`disabledMcpServers`.
 - Zastępowanie bloku Codeksa z podtabelami i usuwanie serwera z narzędzia (dziś aplikacja niczego nie usuwa).

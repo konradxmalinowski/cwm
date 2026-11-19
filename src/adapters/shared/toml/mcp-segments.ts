@@ -8,7 +8,8 @@ import { canonical, parseTree, tomlString } from './segment-editor';
  * parserem i porownany z wejsciem. Poza edytowanymi serwerami drzewo musi zostac identyczne.
  */
 
-export type McpTomlValue = string | readonly string[];
+/** Napis, lista napisow albo mapa napisow (tabela inline, np. `env_http_headers`, ADR 0062). */
+export type McpTomlValue = string | readonly string[] | Readonly<Record<string, string>>;
 
 export interface McpSegment {
   readonly name: string;
@@ -36,8 +37,20 @@ function refuse(message: string): McpSegmentResult {
   return { ok: false, message };
 }
 
+function isList(value: McpTomlValue): value is readonly string[] {
+  return Array.isArray(value);
+}
+
 function renderValue(value: McpTomlValue): string {
-  return typeof value === 'string' ? tomlString(value) : `[${value.map(tomlString).join(', ')}]`;
+  if (typeof value === 'string') return tomlString(value);
+  if (isList(value)) return `[${value.map(tomlString).join(', ')}]`;
+  const pairs = Object.entries(value).map(([k, v]) => `${tomlString(k)} = ${tomlString(v)}`);
+  return `{ ${pairs.join(', ')} }`;
+}
+
+function plain(value: McpTomlValue): unknown {
+  if (typeof value === 'string') return value;
+  return isList(value) ? [...value] : { ...value };
 }
 
 /** Linie bloku bez znakow konca linii; nazwa jest juz sprawdzona jako goly klucz TOML. */
@@ -117,9 +130,7 @@ export function editMcpSegments(text: string, segments: readonly McpSegment[]): 
   const expected: Tree = { ...servers };
 
   for (const segment of segments) {
-    const desired: Tree = Object.fromEntries(
-      segment.fields.map(([k, v]) => [k, typeof v === 'string' ? v : [...v]]),
-    );
+    const desired: Tree = Object.fromEntries(segment.fields.map(([k, v]) => [k, plain(v)]));
     const existing = Object.hasOwn(servers, segment.name) ? servers[segment.name] : undefined;
     if (existing === undefined) {
       appended.push(segment);

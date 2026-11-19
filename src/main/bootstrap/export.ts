@@ -139,6 +139,15 @@ export async function startExport(
         (loaded) => isMcpServerItem(loaded.item),
         () => false,
       ),
+    // Plik celu MCP po sciezce (ADR 0062): root hookow Gemini CLI pisze ten sam `settings.json` co root MCP.
+    mcpTarget: async (rootId) => {
+      if (projects?.kindOf(rootId) === 'mcp') return true;
+      // `detect` najpierw: dopiero on wypelnia mape sciezek rootow globalnych.
+      const roots = await catalog.detect();
+      const target = resolvePath(rootId);
+      if (target === null) return false;
+      return roots.some((r) => r.kind === 'mcp' && catalog.resolvePath(r.rootId) === target);
+    },
   });
   const zip = new ZipExportService({
     catalog,

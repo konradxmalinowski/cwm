@@ -3,11 +3,12 @@ import { redactSecrets } from '../security/secret-redactor';
 import type { ItemId, JsonValue, LibraryItem, ToolId } from '../../model/item';
 
 /**
- * Serwer MCP w bibliotece i reguly jego eksportu (ADR 0061). Czyste funkcje, bez I/O: adaptery
+ * Serwer MCP w bibliotece i reguly jego eksportu (ADR 0061, ADR 0062). Czyste funkcje, bez I/O: adaptery
  * tlumacza format narzedzia na `McpServerSpec` i z powrotem, a reguly tutaj decyduja, co wolno zapisac.
  *
- * Biblioteka nigdy nie trzyma wartosci zmiennych srodowiskowych ani naglowkow, tylko ich nazwy. Eksport
- * zapisuje odniesienia: `${NAZWA}` w Claude Code, `env_vars = ["NAZWA"]` w Codeksie. Ta sama zasada co
+ * Biblioteka nigdy nie trzyma wartosci zmiennych srodowiskowych ani naglowkow, tylko ich nazwy i
+ * odniesienia do zmiennych. Eksport zapisuje odniesienia: `${NAZWA}` w Claude Code i Gemini CLI,
+ * `env_vars = ["NAZWA"]`, `bearer_token_env_var` i `env_http_headers` w Codeksie. Ta sama zasada co
  * `envRef` w manifestach CLI (`core/cwm/resource.ts`), i ten sam test sekretu w tekscie (`textHasSecret`).
  */
 
@@ -19,6 +20,20 @@ export interface McpEnvRef {
   readonly ref: string;
 }
 
+/** Schemat przed odniesieniem w wartosci naglowka (`Bearer ${X}`); `null`: sama wartosc zmiennej. */
+export type McpHeaderScheme = 'Bearer' | 'Basic';
+
+/**
+ * Naglowek HTTP serwera (ADR 0062): nazwa, zmienna u uzytkownika i opcjonalny schemat. `ref` jest `null`,
+ * gdy zrodlo mialo wartosc wpisana wprost: wartosc nie trafia do biblioteki, a serwer bez odniesienia
+ * nie przechodzi eksportu.
+ */
+export interface McpHeaderRef {
+  readonly name: string;
+  readonly ref: string | null;
+  readonly scheme: McpHeaderScheme | null;
+}
+
 export interface McpServerSpec {
   readonly name: string;
   readonly transport: McpTransport;
@@ -26,8 +41,8 @@ export interface McpServerSpec {
   readonly args: readonly string[];
   readonly url: string | null;
   readonly env: readonly McpEnvRef[];
-  /** Nazwy naglowkow HTTP ze zrodla. Wartosci nie sa importowane. */
-  readonly headers: readonly string[];
+  /** Naglowki HTTP ze zrodla: nazwy i odniesienia do zmiennych, nigdy wartosci. */
+  readonly headers: readonly McpHeaderRef[];
 }
 
 /** Klucz `toolSetting.key` serwera MCP w danym narzedziu: `<prefiks>.<nazwa>`. */
@@ -43,6 +58,43 @@ export const MCP_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 /** `${NAZWA}` w Claude Code; Codex tej skladni nie rozwija. */
 const ENV_REFERENCE = /^\$\{([A-Za-z_][A-Za-z0-9_]{0,127})\}$/;
+/** Gemini CLI rozwija `$NAZWA` i `${NAZWA}` w napisach settings.json (dokumentacja configuration). */
+const GEMINI_REFERENCE =
+  /^\$(?:\{([A-Za-z_][A-Za-z0-9_]{0,127})\}|([A-Za-z_][A-Za-z0-9_]{0,127}))$/;
+/**
+ * Nazwa naglowka: token z RFC 7230 (bez spacji, dwukropka, CR i LF), dodatkowo bez `$`, bo Gemini CLI
+ * rozwija zmienne w napisach settings.json.
+ */
+const HEADER_NAME = /^[!#%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
+/** Naglowki, ktore steruja polaczeniem albo niosa sesje; serwer z nimi nie przechodzi eksportu. */
+const FORBIDDEN_HEADERS = new Set([
+  'host',
+  'content-length',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+  'upgrade',
+  'te',
+  'trailer',
+  'expect',
+  'cookie',
+  'proxy-authorization',
+  'proxy-connection',
+]);
+/**
+ * Zmienne z danymi logowania samych narzedzi i dostawcow chmury. Naglowek wysyla wartosc pod adres
+ * serwera, wiec odniesienie do nich byloby wyciekiem (Claude Code czyta je w naglowkach jako puste).
+ */
+const HEADER_REF_DENIED =
+  /^(?:ANTHROPIC_|CLAUDE_|OPENAI_|CODEX_|GEMINI_|GOOGLE_|GCLOUD_|AWS_|AZURE_)/i;
+/**
+ * Tokeny popularnych uslug (forge, rejestry pakietow, czaty, platnosci). Typowe serwery MCP ich uzywaja
+ * (np. GitHub: `Authorization: Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}`), wiec to nie odmowa, tylko zawsze
+ * jawne zdanie w podgladzie potwierdzenia, do jakiego hosta trafi wartosc (ADR 0062).
+ */
+const HEADER_REF_SERVICE_TOKEN =
+  /^(?:GITHUB_|GH_|GITLAB_|NPM_|HF_|HUGGING_FACE_|SLACK_|DOCKER_|DIGITALOCEAN_|CLOUDFLARE_|CF_|STRIPE_|TWILIO_|SENTRY_)/i;
+const MAX_HEADERS = 32;
 // eslint-disable-next-line no-control-regex -- kontrolujemy dokladnie znaki sterujace
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 const MAX_TEXT = 4096;
@@ -83,6 +135,15 @@ function flagCarriesSecret(arg: string): boolean {
 
 function tokenLike(text: string): boolean {
   return HEX_RUN.test(text) || UUID.test(text);
+}
+
+/**
+ * Odniesienie, ktore samo wyglada na token (wklejona wartosc zamiast nazwy zmiennej, np. znany prefiks,
+ * ciag szesnastkowy od 32 znakow, UUID albo dlugi ciag o wysokiej entropii). Takie odniesienie nie trafia
+ * do biblioteki ani do pliku, bo `${<token>}` w pliku to sam sekret (ADR 0062).
+ */
+export function refLooksLikeToken(ref: string): boolean {
+  return textHasSecret(ref) || tokenLike(ref);
 }
 
 /**
@@ -171,8 +232,34 @@ export function mcpSettingValue(spec: McpServerSpec): JsonValue {
     args: [...spec.args],
     url: spec.url,
     env: spec.env.map((e) => ({ name: e.name, ref: e.ref })),
-    headers: [...spec.headers],
+    headers: spec.headers.map((h) => ({ name: h.name, ref: h.ref, scheme: h.scheme })),
   };
+}
+
+/** Naglowki z `item.json`: lista nazw (zapis sprzed ADR 0062, bez odniesien) albo lista `{ name, ref, scheme }`. */
+function headerList(value: unknown): McpHeaderRef[] | null {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return null;
+  const out: McpHeaderRef[] = [];
+  for (const entry of value as unknown[]) {
+    if (typeof entry === 'string') {
+      out.push({ name: entry, ref: null, scheme: null });
+      continue;
+    }
+    if (!isRecord(entry) || typeof entry['name'] !== 'string') return null;
+    const ref = entry['ref'];
+    const scheme = entry['scheme'];
+    if (ref !== undefined && ref !== null && typeof ref !== 'string') return null;
+    if (scheme !== undefined && scheme !== null && scheme !== 'Bearer' && scheme !== 'Basic') {
+      return null;
+    }
+    out.push({
+      name: entry['name'],
+      ref: typeof ref === 'string' ? ref : null,
+      scheme: scheme === 'Bearer' || scheme === 'Basic' ? scheme : null,
+    });
+  }
+  return out;
 }
 
 export type McpRead =
@@ -202,7 +289,7 @@ export function readMcpServer(item: LibraryItem): McpRead {
   const command = typeof value['command'] === 'string' ? value['command'] : null;
   const url = typeof value['url'] === 'string' ? value['url'] : null;
   const args = value['args'] === undefined ? [] : stringList(value['args']);
-  const headers = value['headers'] === undefined ? [] : stringList(value['headers']);
+  const headers = headerList(value['headers']);
   if (args === null || headers === null) return { ok: false, reason: INCOMPLETE };
   const env: McpEnvRef[] = [];
   const rawEnv = value['env'];
@@ -232,12 +319,19 @@ export interface McpExportCheck {
   readonly url: string | null;
   /** Zmienne, ktore trafia do pliku jako odniesienia. */
   readonly env: readonly McpEnvRef[];
+  /** Naglowki, ktore trafia do pliku jako odniesienia (ADR 0062); zawsze z `ref`. */
+  readonly headers: readonly McpHeaderRef[];
   /** Ostrzezenia dla planu, po polsku, bez wartosci. */
   readonly warnings: readonly string[];
+  /**
+   * Naglowki, ktorych zmienna wyglada na dane logowania (`nameLooksSecret`): jawne zdanie, ze wartosc
+   * trafi do hosta serwera (ADR 0062). Pokazywane w podgladzie potwierdzenia.
+   */
+  readonly headerNotices: readonly string[];
 }
 
 function refuse(reason: string): McpExportCheck {
-  return { refusal: reason, url: null, env: [], warnings: [] };
+  return { refusal: reason, url: null, env: [], headers: [], warnings: [], headerNotices: [] };
 }
 
 function textProblem(label: string, text: string): string | null {
@@ -248,7 +342,7 @@ function textProblem(label: string, text: string): string | null {
     return `${label} zawiera niewidoczny znak (kierunek tekstu albo zerowa szerokość).`;
   }
   if (text.includes('$')) {
-    return `${label} zawiera znak $. Narzędzia rozwijają zmienne w różny sposób, więc eksport przenosi zmienne wyłącznie przez env.`;
+    return `${label} zawiera znak $. Narzędzia rozwijają zmienne w różny sposób, więc eksport przenosi zmienne wyłącznie przez env i nagłówki.`;
   }
   if (textHasSecret(text)) {
     return `${label} wygląda na sekret. Eksport nie kopiuje sekretów; przekaż wartość przez zmienną środowiskową.`;
@@ -294,18 +388,72 @@ function privateHost(hostname: string): boolean {
   return v6 === '::1' || /^f[cd]/.test(v6) || /^fe[89ab]/.test(v6) || v6.startsWith('::ffff:');
 }
 
+/** Powod odmowy nazwy naglowka albo `null` (token RFC 7230, poza lista zabroniona). */
+export function mcpHeaderNameProblem(name: string): string | null {
+  if (!HEADER_NAME.test(name)) {
+    return 'nazwa nagłówka HTTP ma znaki spoza tokenu HTTP (spacja, dwukropek, znak sterujący) albo jest za długa.';
+  }
+  if (FORBIDDEN_HEADERS.has(name.toLowerCase())) {
+    return `nagłówek ${name} steruje połączeniem albo niesie sesję i nie jest przenoszony.`;
+  }
+  return null;
+}
+
+/** Tekst naglowka do podgladu i powodow: nazwa, schemat i zmienna, nigdy wartosc. */
+export function describeHeader(header: McpHeaderRef): string {
+  if (header.ref === null) return `${header.name} (bez odniesienia)`;
+  return `${header.name}: ${header.scheme === null ? '' : `${header.scheme} `}\${${header.ref}}`;
+}
+
 /**
- * Reguly eksportu jednego serwera do jednego narzedzia (ADR 0061, punkty 2 i 3). Zakres (projekt czy
+ * Naglowki serwera http albo sse (ADR 0062). Kazdy musi byc odniesieniem do zmiennej, bo serwer bez
+ * naglowka zwykle nie dziala, a wartosci eksport nie kopiuje. Codex wyraza tylko `Bearer` w
+ * `Authorization` (`bearer_token_env_var`) i sama wartosc zmiennej (`env_http_headers`).
+ */
+function headerProblem(spec: McpServerSpec, tool: ToolId): string | null {
+  if (spec.headers.length > MAX_HEADERS) return 'serwer ma za dużo nagłówków HTTP.';
+  const seen = new Set<string>();
+  for (const header of spec.headers) {
+    const name = mcpHeaderNameProblem(header.name);
+    if (name !== null) return name;
+    const lower = header.name.toLowerCase();
+    if (seen.has(lower)) return `nagłówek ${header.name} występuje więcej niż raz.`;
+    seen.add(lower);
+    if (header.ref === null) {
+      return `nagłówki HTTP bez odniesienia do zmiennej (${header.name}). Wartość wpisana wprost nie jest kopiowana, a serwer bez nagłówka nie zadziała. Zapisz w narzędziu źródłowym odniesienie, np. "Bearer \${NAZWA}", i zaimportuj serwer ponownie.`;
+    }
+    if (!ENV_NAME.test(header.ref)) {
+      return `nagłówek ${header.name} ma niepoprawną nazwę zmiennej.`;
+    }
+    if (refLooksLikeToken(header.ref)) {
+      return `nagłówek ${header.name} ma zamiast nazwy zmiennej tekst, który wygląda na token. Wpisz w narzędziu źródłowym nazwę zmiennej i zaimportuj serwer ponownie.`;
+    }
+    if (isSettingsEnvNameDenied(header.ref) || HEADER_REF_DENIED.test(header.ref)) {
+      return `nagłówek ${header.name} bierze wartość ze zmiennej ${header.ref}, która niesie dane logowania narzędzia albo chmury albo zmienia ruch sieciowy. Taka wartość nie jest wysyłana do serwera MCP.`;
+    }
+    if (tool === 'codex') {
+      if (header.scheme === 'Basic') {
+        return `nagłówek ${header.name} ma schemat Basic, którego Codex nie wyraża odniesieniem do zmiennej (env_http_headers przekazuje samą wartość zmiennej).`;
+      }
+      if (header.scheme === 'Bearer' && lower !== 'authorization') {
+        return `nagłówek ${header.name} ma schemat Bearer, a Codex dodaje go tylko do nagłówka Authorization (bearer_token_env_var).`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Reguly eksportu jednego serwera do jednego narzedzia (ADR 0061, ADR 0062). Zakres (projekt czy
  * katalog globalny) sprawdza wczesniej `project-scope.ts`, a wybor pliku adapter.
  */
 export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportCheck {
   const nameProblem = mcpNameProblem(spec.name);
   if (nameProblem !== null) return refuse(nameProblem);
-  if (tool === 'gemini-cli') {
-    return refuse('Eksport serwerów MCP do Gemini CLI nie jest jeszcze dostępny (ADR 0061).');
-  }
   const warnings: string[] = [];
   let url: string | null = null;
+  let headers: readonly McpHeaderRef[] = [];
+  const headerNotices: string[] = [];
   if (spec.transport === 'stdio') {
     const command = spec.command ?? '';
     const problem =
@@ -317,6 +465,11 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
     warnings.push(
       `Serwer MCP „${spec.name}” uruchamia program na tym komputerze: ${describeLaunch(spec)}`,
     );
+    if (spec.headers.length > 0) {
+      warnings.push(
+        `Nagłówki HTTP dotyczą tylko serwerów http i sse i zostaną pominięte: ${spec.headers.map((h) => h.name.slice(0, 64)).join(', ')}.`,
+      );
+    }
   } else {
     if (tool === 'codex' && spec.transport === 'sse') {
       return refuse(
@@ -332,12 +485,24 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
         `Serwer MCP „${spec.name}” ma adres w sieci prywatnej, pętli zwrotnej albo link-local. Sprawdź, czy to ten serwer, którego się spodziewasz.`,
       );
     }
-    if (spec.headers.length > 0) {
-      return refuse(
-        `Serwer MCP „${spec.name}” ma nagłówki HTTP (${spec.headers.join(', ')}). Ich wartości to zwykle dane logowania, których eksport nie kopiuje, a serwer bez nich nie zadziała.`,
+    const header = headerProblem(spec, tool);
+    if (header !== null) return refuse(`Serwer MCP „${spec.name}”: ${header}`);
+    headers = spec.headers;
+    warnings.push(`Serwer MCP „${spec.name}” łączy się z adresem: ${url}`);
+    if (headers.length > 0) {
+      warnings.push(
+        `Wartości nagłówków HTTP nie są kopiowane. Serwer wyśle pod ten adres wartości zmiennych: ${headers.map(describeHeader).join(', ')}.`,
       );
     }
-    warnings.push(`Serwer MCP „${spec.name}” łączy się z adresem: ${url}`);
+    for (const h of headers) {
+      if (h.ref === null || !(nameLooksSecret(h.ref) || HEADER_REF_SERVICE_TOKEN.test(h.ref))) {
+        continue;
+      }
+      headerNotices.push(
+        `Nagłówek ${h.name} wyśle wartość zmiennej ${h.ref}, która wygląda na dane logowania, do hosta ${parsed.host}. Zapisz ten serwer tylko, jeśli ufasz temu hostowi.`,
+      );
+    }
+    warnings.push(...headerNotices);
   }
   const secret = mcpSecretProblem({ ...spec, url });
   if (secret !== null) return refuse(`Serwer MCP „${spec.name}”: ${secret}`);
@@ -346,6 +511,12 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
     if (!ENV_NAME.test(entry.name) || !ENV_NAME.test(entry.ref)) {
       warnings.push(
         `Zmienna „${entry.name.slice(0, 64)}” ma niepoprawną nazwę i zostanie pominięta.`,
+      );
+      continue;
+    }
+    if (refLooksLikeToken(entry.ref)) {
+      warnings.push(
+        `Zmienna ${entry.name.slice(0, 64)} ma zamiast nazwy zmiennej źródłowej tekst, który wygląda na token, i zostanie pominięta.`,
       );
       continue;
     }
@@ -372,7 +543,7 @@ export function checkMcpExport(spec: McpServerSpec, tool: ToolId): McpExportChec
       `Wartości zmiennych nie są kopiowane. Serwer weźmie je ze środowiska: ${env.map((e) => e.ref).join(', ')}.`,
     );
   }
-  return { refusal: null, url, env, warnings };
+  return { refusal: null, url, env, headers, warnings, headerNotices };
 }
 
 /** Polecenie w calosci, do podgladu: argumenty ze spacja albo cudzyslowem w cudzyslowach JSON. */
@@ -391,22 +562,31 @@ function normalUrl(url: string | null): string | null {
   }
 }
 
+function headerKey(h: McpHeaderRef): string {
+  return `${h.name.toLowerCase()}=${h.scheme ?? ''}:${h.ref ?? ''}`;
+}
+
 /** Te same pola po obu stronach: nazwa, transport, polecenie, argumenty, adres, zmienne i naglowki. */
 export function sameMcpServer(a: McpServerSpec, b: McpServerSpec): boolean {
   const key = (s: McpServerSpec): string =>
     JSON.stringify([
       s.transport,
-      s.command,
-      s.args,
+      // Polecenie i argumenty dotycza tylko stdio; serwer http zapisany bez nich jest ten sam.
+      s.transport === 'stdio' ? s.command : null,
+      s.transport === 'stdio' ? s.args : [],
       normalUrl(s.url),
       [...s.env].map((e) => `${e.name}=${e.ref}`).sort(),
-      [...s.headers].sort(),
+      s.transport === 'stdio' ? [] : s.headers.map(headerKey).sort(),
     ]);
   return key(a) === key(b);
 }
 
 /** Roznica do pokazania w konflikcie nadpisania: same pola opisu, nigdy wartosci zmiennych. */
-export function describeMcpDifference(current: McpServerSpec, next: McpServerSpec): string {
+export function describeMcpDifference(
+  current: McpServerSpec,
+  next: McpServerSpec,
+  notes: readonly string[] = [],
+): string {
   const lines: string[] = [];
   const show = (s: McpServerSpec): string => `${s.transport}: ${describeLaunch(s)}`;
   if (show(current) !== show(next)) lines.push(`teraz ${show(current)}; po zamianie ${show(next)}`);
@@ -415,7 +595,14 @@ export function describeMcpDifference(current: McpServerSpec, next: McpServerSpe
   if (envOf(current) !== envOf(next)) {
     lines.push(`zmienne teraz: ${envOf(current)}; po zamianie: ${envOf(next)}`);
   }
-  if (current.headers.length > 0) lines.push(`nagłówki znikną: ${current.headers.join(', ')}`);
+  const headersOf = (s: McpServerSpec): string =>
+    s.transport === 'stdio' || s.headers.length === 0
+      ? 'brak'
+      : s.headers.map(describeHeader).join(', ');
+  if (headersOf(current) !== headersOf(next)) {
+    lines.push(`nagłówki teraz: ${headersOf(current)}; po zamianie: ${headersOf(next)}`);
+  }
+  lines.push(...notes);
   return lines.length === 0 ? 'inne pola definicji' : lines.join('; ');
 }
 
@@ -440,6 +627,63 @@ function nativeTextProblem(spec: McpServerSpec): string | null {
   return problem === null
     ? null
     : `${problem.charAt(0).toUpperCase()}${problem.slice(1)} Serwer nie jest importowany, żeby wartość nie trafiła do biblioteki.`;
+}
+
+const HEADER_VALUE = /^(?:(bearer|basic) +)?(\S+)$/i;
+
+interface HeadersRead {
+  readonly headers: McpHeaderRef[];
+  readonly warnings: string[];
+}
+
+/**
+ * Naglowki z obiektu `headers` (Claude Code, Gemini CLI). Wartosc bedaca czystym odniesieniem
+ * (`${X}`, `Bearer ${X}`, `Basic ${X}`) daje `ref`; kazda inna (token wpisany wprost, `${X:-domyslna}`,
+ * tekst wokol odniesienia) zostawia sama nazwe z ostrzezeniem. Nazwa spoza tokenu HTTP odrzuca serwer:
+ * napis ze znakami sterujacymi nie trafia do biblioteki. Powody nie zawieraja wartosci.
+ */
+function readHeaders(raw: unknown, reference: RegExp): HeadersRead | string {
+  const headers: McpHeaderRef[] = [];
+  const warnings: string[] = [];
+  if (!isRecord(raw)) return { headers, warnings };
+  const literal: string[] = [];
+  for (const [key, value] of Object.entries(raw)) {
+    if (!HEADER_NAME.test(key)) {
+      return `nazwa nagłówka HTTP ma znaki spoza tokenu HTTP albo jest za długa. Serwer nie jest importowany.`;
+    }
+    const match = typeof value === 'string' ? HEADER_VALUE.exec(value) : null;
+    const ref = match === null ? null : reference.exec(match[2] ?? '');
+    const variable = ref === null ? undefined : (ref[1] ?? ref[2]);
+    if (match === null || variable === undefined || refLooksLikeToken(variable)) {
+      literal.push(key);
+      headers.push({ name: key, ref: null, scheme: null });
+      continue;
+    }
+    const scheme = match[1]?.toLowerCase();
+    headers.push({
+      name: key,
+      ref: variable,
+      scheme: scheme === 'bearer' ? 'Bearer' : scheme === 'basic' ? 'Basic' : null,
+    });
+  }
+  if (literal.length > 0) {
+    warnings.push(
+      `Nagłówki HTTP ${literal.join(', ')} mają wartość wpisaną wprost, która nie została zaimportowana. Bez odniesienia do zmiennej (np. "Bearer \${NAZWA}") serwer nie przejdzie eksportu.`,
+    );
+  }
+  if (headers.some((h) => h.ref !== null)) {
+    warnings.push(
+      'Z nagłówków HTTP zaimportowane zostały tylko nazwy i odniesienia do zmiennych, bez wartości.',
+    );
+  }
+  return { headers, warnings };
+}
+
+/** Obiekt `headers` z odniesieniami dla Claude Code i Gemini CLI (`"Bearer ${REF}"`). */
+function headerObject(headers: readonly McpHeaderRef[]): Record<string, JsonValue> {
+  return Object.fromEntries(
+    headers.map((h) => [h.name, `${h.scheme === null ? '' : `${h.scheme} `}\${${h.ref ?? ''}}`]),
+  );
 }
 
 /**
@@ -473,7 +717,8 @@ export function fromClaudeServer(name: string, raw: unknown): NativeResult {
   let literal = false;
   if (isRecord(raw['env'])) {
     for (const [key, value] of Object.entries(raw['env'])) {
-      const ref = typeof value === 'string' ? ENV_REFERENCE.exec(value)?.[1] : undefined;
+      const found = typeof value === 'string' ? ENV_REFERENCE.exec(value)?.[1] : undefined;
+      const ref = found !== undefined && refLooksLikeToken(found) ? undefined : found;
       if (ref === undefined) literal = true;
       env.push({ name: key, ref: ref ?? key });
     }
@@ -483,10 +728,9 @@ export function fromClaudeServer(name: string, raw: unknown): NativeResult {
       'Wartości zmiennych środowiskowych serwera nie zostały zaimportowane, tylko ich nazwy. Po eksporcie serwer weźmie je ze środowiska.',
     );
   }
-  const headers = isRecord(raw['headers']) ? Object.keys(raw['headers']) : [];
-  if (headers.length > 0) {
-    warnings.push('Wartości nagłówków HTTP nie zostały zaimportowane, tylko ich nazwy.');
-  }
+  const read = readHeaders(raw['headers'], ENV_REFERENCE);
+  if (typeof read === 'string') return { ok: false, reason: `Serwer MCP „${name}”: ${read}` };
+  warnings.push(...read.warnings);
   const spec: McpServerSpec = {
     name,
     transport,
@@ -494,7 +738,7 @@ export function fromClaudeServer(name: string, raw: unknown): NativeResult {
     args,
     url: typeof raw['url'] === 'string' ? raw['url'] : null,
     env,
-    headers,
+    headers: read.headers,
   };
   if (transport === 'stdio' ? spec.command === null : spec.url === null) {
     return { ok: false, reason: `Serwer MCP „${name}” nie ma polecenia ani adresu.` };
@@ -506,7 +750,11 @@ export function fromClaudeServer(name: string, raw: unknown): NativeResult {
 }
 
 /** Wpis Claude Code z odniesieniami zamiast wartosci. */
-export function toClaudeServer(spec: McpServerSpec, env: readonly McpEnvRef[]): JsonValue {
+export function toClaudeServer(
+  spec: McpServerSpec,
+  env: readonly McpEnvRef[],
+  headers: readonly McpHeaderRef[] = [],
+): JsonValue {
   if (spec.transport === 'stdio') {
     const out: Record<string, JsonValue> = {
       type: 'stdio',
@@ -518,7 +766,9 @@ export function toClaudeServer(spec: McpServerSpec, env: readonly McpEnvRef[]): 
     }
     return out;
   }
-  return { type: spec.transport, url: spec.url ?? '' };
+  const out: Record<string, JsonValue> = { type: spec.transport, url: spec.url ?? '' };
+  if (headers.length > 0) out['headers'] = headerObject(headers);
+  return out;
 }
 
 /** Tabela `[mcp_servers.<nazwa>]` Codeksa. `env` z wartosciami daje same nazwy. */
@@ -573,13 +823,59 @@ export function fromCodexServer(name: string, raw: unknown): NativeResult {
     seen.add(key);
     env.push({ name: key, ref: key });
   }
-  const headers = [
-    ...(isRecord(raw['http_headers']) ? Object.keys(raw['http_headers']) : []),
-    ...(isRecord(raw['env_http_headers']) ? Object.keys(raw['env_http_headers']) : []),
-    ...(typeof raw['bearer_token_env_var'] === 'string' ? ['Authorization'] : []),
-  ];
-  if (headers.length > 0) {
-    warnings.push('Wartości nagłówków HTTP nie zostały zaimportowane, tylko ich nazwy.');
+  // Naglowki (ADR 0062): `bearer_token_env_var` to `Authorization: Bearer ${X}`, `env_http_headers`
+  // mapuje nazwe naglowka na nazwe zmiennej, a `http_headers` ma wartosci wprost: zostaje sama nazwa.
+  const headers: McpHeaderRef[] = [];
+  const bearer = raw['bearer_token_env_var'];
+  if (typeof bearer === 'string') {
+    headers.push({
+      name: 'Authorization',
+      ref: ENV_NAME.test(bearer) && !refLooksLikeToken(bearer) ? bearer : null,
+      scheme: 'Bearer',
+    });
+  }
+  const fromEnv = isRecord(raw['env_http_headers']) ? raw['env_http_headers'] : {};
+  const fixed = isRecord(raw['http_headers']) ? Object.keys(raw['http_headers']) : [];
+  for (const key of [...Object.keys(fromEnv), ...fixed]) {
+    if (!HEADER_NAME.test(key)) {
+      return {
+        ok: false,
+        reason: `Serwer MCP „${name}”: nazwa nagłówka HTTP ma znaki spoza tokenu HTTP albo jest za długa. Serwer nie jest importowany.`,
+      };
+    }
+  }
+  for (const [key, value] of Object.entries(fromEnv)) {
+    if (headers.some((h) => h.name.toLowerCase() === key.toLowerCase())) continue;
+    headers.push({
+      name: key,
+      ref:
+        typeof value === 'string' && ENV_NAME.test(value) && !refLooksLikeToken(value)
+          ? value
+          : null,
+      scheme: null,
+    });
+  }
+  const literal: string[] = [];
+  // Tu `headers` ma jeszcze tylko odniesienia (bearer i env_http_headers); `null` to wartosc zamiast nazwy.
+  if (headers.some((h) => h.ref === null)) {
+    warnings.push(
+      'Część nagłówków HTTP ma zamiast nazwy zmiennej wartość, która nie jest poprawną nazwą albo wygląda na token. Nie została zaimportowana, a serwer bez odniesienia nie przejdzie eksportu.',
+    );
+  }
+  for (const key of fixed) {
+    if (headers.some((h) => h.name.toLowerCase() === key.toLowerCase())) continue;
+    literal.push(key);
+    headers.push({ name: key, ref: null, scheme: null });
+  }
+  if (literal.length > 0) {
+    warnings.push(
+      `Nagłówki HTTP ${literal.join(', ')} z http_headers mają wartość wpisaną wprost, która nie została zaimportowana. Bez odniesienia do zmiennej (env_http_headers) serwer nie przejdzie eksportu.`,
+    );
+  }
+  if (headers.some((h) => h.ref !== null)) {
+    warnings.push(
+      'Z nagłówków HTTP zaimportowane zostały tylko nazwy i odniesienia do zmiennych, bez wartości.',
+    );
   }
   const spec: McpServerSpec = {
     name,
@@ -588,7 +884,7 @@ export function fromCodexServer(name: string, raw: unknown): NativeResult {
     args,
     url,
     env,
-    headers: [...new Set(headers)],
+    headers,
   };
   const secret = nativeTextProblem(spec);
   if (secret !== null) return { ok: false, reason: `Serwer MCP „${name}”: ${secret}` };
@@ -596,16 +892,116 @@ export function fromCodexServer(name: string, raw: unknown): NativeResult {
   return { ok: true, spec, unmapped, warnings };
 }
 
-/** Pola tabeli Codeksa w kolejnosci zapisu; wartosci to napisy albo listy napisow. */
+/** Wartosc pola tabeli Codeksa: napis, lista napisow albo mapa napisow (tabela inline). */
+export type CodexFieldValue = string | readonly string[] | Readonly<Record<string, string>>;
+
+/** Pola tabeli Codeksa w kolejnosci zapisu. */
 export function toCodexServer(
   spec: McpServerSpec,
   env: readonly McpEnvRef[],
-): readonly (readonly [string, string | readonly string[]])[] {
-  if (spec.transport !== 'stdio') return [['url', spec.url ?? '']];
-  const fields: [string, string | readonly string[]][] = [['command', spec.command ?? '']];
+  headers: readonly McpHeaderRef[] = [],
+): readonly (readonly [string, CodexFieldValue])[] {
+  if (spec.transport !== 'stdio') {
+    const fields: [string, CodexFieldValue][] = [['url', spec.url ?? '']];
+    // `checkMcpExport` przepuszcza do Codeksa tylko `Bearer` w Authorization i naglowki bez schematu.
+    const bearer = headers.find((h) => h.scheme === 'Bearer' && h.ref !== null);
+    if (bearer?.ref !== undefined && bearer.ref !== null) {
+      fields.push(['bearer_token_env_var', bearer.ref]);
+    }
+    const plain = headers.filter((h) => h.scheme === null && h.ref !== null);
+    if (plain.length > 0) {
+      fields.push([
+        'env_http_headers',
+        Object.fromEntries(plain.map((h) => [h.name, h.ref ?? ''])),
+      ]);
+    }
+    return fields;
+  }
+  const fields: [string, CodexFieldValue][] = [['command', spec.command ?? '']];
   if (spec.args.length > 0) fields.push(['args', [...spec.args]]);
   if (env.length > 0) fields.push(['env_vars', env.map((e) => e.name)]);
   return fields;
+}
+
+/**
+ * Wpis z `mcpServers` Gemini CLI (`~/.gemini/settings.json`, `.gemini/settings.json`, ADR 0062).
+ * Transport wynika z pola: `command` to stdio, `url` to sse, `httpUrl` to streamable HTTP. `trust`
+ * (pomija potwierdzenia narzedzi) nie jest importowany nigdy, takze jako nazwa pola.
+ */
+export function fromGeminiServer(name: string, raw: unknown): NativeResult {
+  if (!isRecord(raw)) return { ok: false, reason: `Serwer MCP „${name}” nie jest obiektem.` };
+  const known = new Set(['command', 'args', 'env', 'url', 'httpUrl', 'headers', 'trust']);
+  const command = typeof raw['command'] === 'string' ? raw['command'] : null;
+  const sse = typeof raw['url'] === 'string' ? raw['url'] : null;
+  const http = typeof raw['httpUrl'] === 'string' ? raw['httpUrl'] : null;
+  const present = [command, sse, http].filter((v) => v !== null).length;
+  if (present !== 1) {
+    return {
+      ok: false,
+      reason: `Serwer MCP „${name}” musi mieć dokładnie jedno z pól command, url albo httpUrl, więc nie jest importowany.`,
+    };
+  }
+  const args = raw['args'] === undefined ? [] : stringList(raw['args']);
+  if (args === null) {
+    return { ok: false, reason: `Argumenty serwera MCP „${name}” nie są listą napisów.` };
+  }
+  const warnings: string[] = [];
+  if (raw['trust'] === true) {
+    warnings.push(
+      'Serwer ma w Gemini CLI trust: true (pomija potwierdzenia wywołań narzędzi). To ustawienie nie zostało zaimportowane i eksport go nie zapisze.',
+    );
+  }
+  const env: McpEnvRef[] = [];
+  let literal = false;
+  if (isRecord(raw['env'])) {
+    for (const [key, value] of Object.entries(raw['env'])) {
+      const match = typeof value === 'string' ? GEMINI_REFERENCE.exec(value) : null;
+      const found = match === null ? undefined : (match[1] ?? match[2]);
+      const ref = found !== undefined && refLooksLikeToken(found) ? undefined : found;
+      if (ref === undefined) literal = true;
+      env.push({ name: key, ref: ref ?? key });
+    }
+  }
+  if (literal) {
+    warnings.push(
+      'Wartości zmiennych środowiskowych serwera nie zostały zaimportowane, tylko ich nazwy. Po eksporcie serwer weźmie je ze środowiska.',
+    );
+  }
+  const read = readHeaders(raw['headers'], GEMINI_REFERENCE);
+  if (typeof read === 'string') return { ok: false, reason: `Serwer MCP „${name}”: ${read}` };
+  warnings.push(...read.warnings);
+  const spec: McpServerSpec = {
+    name,
+    transport: command !== null ? 'stdio' : http !== null ? 'http' : 'sse',
+    command,
+    args,
+    url: http ?? sse,
+    env,
+    headers: read.headers,
+  };
+  const secret = nativeTextProblem(spec);
+  if (secret !== null) return { ok: false, reason: `Serwer MCP „${name}”: ${secret}` };
+  const unmapped = Object.keys(raw).filter((k) => !known.has(k));
+  return { ok: true, spec, unmapped, warnings };
+}
+
+/** Wpis Gemini CLI z odniesieniami zamiast wartosci; bez `trust`, `cwd` i limitow czasu. */
+export function toGeminiServer(
+  spec: McpServerSpec,
+  env: readonly McpEnvRef[],
+  headers: readonly McpHeaderRef[] = [],
+): JsonValue {
+  if (spec.transport === 'stdio') {
+    const out: Record<string, JsonValue> = { command: spec.command ?? '', args: [...spec.args] };
+    if (env.length > 0) {
+      out['env'] = Object.fromEntries(env.map((e) => [e.name, `\${${e.ref}}`]));
+    }
+    return out;
+  }
+  const out: Record<string, JsonValue> =
+    spec.transport === 'http' ? { httpUrl: spec.url ?? '' } : { url: spec.url ?? '' };
+  if (headers.length > 0) out['headers'] = headerObject(headers);
+  return out;
 }
 
 /** Opis serwera dla podgladu potwierdzenia (bez wartosci). */
@@ -616,6 +1012,10 @@ export interface McpPreview {
   /** Polecenie z argumentami albo adres. */
   readonly launch: string;
   readonly env: readonly string[];
+  /** Naglowki jako `Nazwa: Bearer ${ZMIENNA}` (ADR 0062), nigdy wartosci. */
+  readonly headers: readonly string[];
+  /** Jawne zdania dla naglowkow ze zmienna wygladajaca na dane logowania: wartosc trafi do hosta. */
+  readonly headerNotices: readonly string[];
   readonly warnings: readonly string[];
   /** Serwer globalny zapisywany do repozytorium projektu: osobne, jawne potwierdzenie (ADR 0061). */
   readonly globalToProject?: boolean;
@@ -631,6 +1031,8 @@ export function mcpPreview(item: LibraryItem, tool: ToolId): McpPreview | null {
     transport: read.spec.transport,
     launch: read.spec.transport === 'stdio' ? describeLaunch(read.spec) : (check.url ?? ''),
     env: check.env.map((e) => e.ref),
+    headers: check.headers.map(describeHeader),
+    headerNotices: check.headerNotices,
     warnings: check.warnings,
   };
 }

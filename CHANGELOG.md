@@ -9,6 +9,21 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
 
 ### Added
 
+- Serwery MCP w Gemini CLI i nagłówki HTTP jako odniesienia (ADR 0062, uzupełnia ADR 0061). Import i jawny eksport
+  `mcpServers` z `~/.gemini/settings.json` i z `.gemini/settings.json` w projekcie z listy projektów (z pliku czytany i
+  zmieniany jest tylko ten klucz), z tymi samymi regułami zakresu, sekretów i potwierdzenia co dla Claude Code.
+  `trust: true` z Gemini CLI nie jest importowany ani eksportowany, a import ostrzega o nim. Nagłówki HTTP przechodzą
+  jako odniesienia do zmiennych: `"Bearer ${NAZWA}"` w Claude Code i Gemini CLI, `bearer_token_env_var` i
+  `env_http_headers` w Codeksie. Nagłówek z wartością wpisaną wprost zostaje tylko z nazwą i blokuje eksport serwera
+  z powodem; odmową są też nagłówki sterujące połączeniem (`Host`, `Cookie` i inne), nazwy spoza tokenu HTTP, zmienne
+  z danymi logowania narzędzi i chmury oraz `Basic` do Codeksa. Plan pokazuje nagłówki jako nazwę i zmienną. Kreator
+  eksportu ma cel "Projekt (Gemini CLI, serwery MCP)", a cofnięcie z Historii zapisu do `settings.json` Gemini CLI
+  (serwerów MCP i hooków, bo to ten sam plik) jest zablokowane. Odniesienie, które samo wygląda na token (wklejona
+  wartość zamiast nazwy zmiennej), nie trafia do biblioteki ani do pliku, a nagłówek ze zmienną o nazwie sekretu albo
+  z tokenem popularnej usługi (`GITHUB_*`, `NPM_*`, `SLACK_*` i inne) ma w podglądzie zdanie, do którego hosta trafi
+  wartość. `trust: true` przy tej samej definicji daje ostrzeżenie, a
+  `includeTools` i `excludeTools` zostają po zastąpieniu serwera.
+
 - Reguły bezpieczeństwa i zakresów MCP (ADR 0061, częściowo zastępuje ADR 0020). Serwery MCP są importowane z
   `mcpServers` w `~/.claude.json`, z `.mcp.json` w projekcie z listy projektów i z `[mcp_servers.<nazwa>]` w `config.toml`
   Codeksa: do biblioteki trafia transport, polecenie, argumenty, adres i same nazwy zmiennych środowiskowych i nagłówków,

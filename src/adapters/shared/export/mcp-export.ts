@@ -1,4 +1,4 @@
-import type { ItemId, LibraryItem, LoadedItem, ToolId } from '../../../core/model/item';
+import type { ItemId, JsonValue, LibraryItem, LoadedItem, ToolId } from '../../../core/model/item';
 import type {
   CompatibilityVerdict,
   ConflictResolution,
@@ -10,12 +10,16 @@ import {
   describeMcpDifference,
   fromClaudeServer,
   fromCodexServer,
+  fromGeminiServer,
   readMcpServer,
   sameMcpServer,
   toClaudeServer,
   toCodexServer,
+  toGeminiServer,
   type McpEnvRef,
+  type McpHeaderRef,
   type McpServerSpec,
+  type NativeResult,
 } from '../../../core/services/mcp/mcp-server';
 import { TextDecodeError, encodeUtf8 } from '../text';
 import { editMcpSegments, type McpSegment } from '../toml/mcp-segments';
@@ -26,9 +30,10 @@ import { PlanBuilder, TargetReadError, pickRoot, readTarget } from './plan-suppo
 import { verdict } from './verdicts';
 
 /**
- * Eksport serwerow MCP (ADR 0061). Wspolne dla Claude Code (klucz `mcpServers` w `~/.claude.json` albo
- * w `.mcp.json` projektu) i Codeksa (segmenty `[mcp_servers.<nazwa>]` w `config.toml`). Reguly i mapowanie
- * sa w core (`mcp-server.ts`); tu jest tylko odczyt celu i edycja pliku istniejacymi mechanizmami.
+ * Eksport serwerow MCP (ADR 0061, ADR 0062). Wspolne dla Claude Code (klucz `mcpServers` w `~/.claude.json`
+ * albo w `.mcp.json` projektu), Gemini CLI (klucz `mcpServers` w `settings.json` globalnym albo projektu)
+ * i Codeksa (segmenty `[mcp_servers.<nazwa>]` w `config.toml`). Reguly i mapowanie sa w core
+ * (`mcp-server.ts`); tu jest tylko odczyt celu i edycja pliku istniejacymi mechanizmami.
  */
 
 const BOM = '\uFEFF';
@@ -50,7 +55,7 @@ export function mcpCapabilities(item: LibraryItem, tool: ToolId): CompatibilityV
   return verdict(
     'partial',
     [
-      'Eksport serwera MCP jest zawsze jawny i wymaga osobnego potwierdzenia. Wartości zmiennych środowiskowych nie są kopiowane, tylko odniesienia do nich (ADR 0061).',
+      'Eksport serwera MCP jest zawsze jawny i wymaga osobnego potwierdzenia. Wartości zmiennych środowiskowych i nagłówków nie są kopiowane, tylko odniesienia do nich (ADR 0061, ADR 0062).',
       ...(lost.length > 0
         ? ['Część pól serwera nie ma odpowiednika w bibliotece i nie trafi do pliku.']
         : []),
@@ -63,7 +68,13 @@ interface Prepared {
   readonly loaded: LoadedItem;
   readonly spec: McpServerSpec;
   readonly env: readonly McpEnvRef[];
+  readonly headers: readonly McpHeaderRef[];
   readonly warnings: readonly string[];
+}
+
+/** Opis serwera po eksporcie: to on jest porownywany z serwerem w pliku celu. */
+function written(p: Prepared): McpServerSpec {
+  return { ...p.spec, env: p.env, headers: p.headers };
 }
 
 /** Serwery, ktore przeszly reguly; reszta trafia do odmow planu. Dwa elementy o tej samej nazwie to konflikt. */
@@ -87,7 +98,7 @@ function prepare(
     }
     // Adres po normalizacji (`URL.href`), nie surowy tekst ze zrodla (ADR 0061).
     const spec = check.url === null ? read.spec : { ...read.spec, url: check.url };
-    out.push({ loaded, spec, env: check.env, warnings: check.warnings });
+    out.push({ loaded, spec, env: check.env, headers: check.headers, warnings: check.warnings });
   }
   const byName = new Map<string, Prepared[]>();
   for (const p of out) byName.set(p.spec.name, [...(byName.get(p.spec.name) ?? []), p]);
@@ -133,14 +144,15 @@ function compare(
   current: McpServerSpec | null,
   unreadable: string | null,
   relPath: string,
+  notes: readonly string[] = [],
 ): Existing {
   if (current === null && unreadable === null) return 'absent';
-  if (current !== null && sameMcpServer(current, { ...p.spec, env: p.env })) return 'same';
+  if (current !== null && sameMcpServer(current, written(p))) return 'same';
   if (decided(ctx, p.loaded.item.id, relPath)) return 'replace';
   const difference =
     current === null
       ? `obecnej definicji aplikacja nie umie odczytać (${unreadable ?? ''})`
-      : describeMcpDifference(current, { ...p.spec, env: p.env });
+      : describeMcpDifference(current, written(p), notes);
   b.conflict(
     [p.loaded.item.id],
     relPath,
@@ -150,21 +162,89 @@ function compare(
   return 'conflict';
 }
 
+/** `includeTools` i `excludeTools` Gemini CLI z obecnego wpisu, jesli sa listami napisow. */
+function toolFilters(raw: JsonRecord): JsonRecord {
+  const out: JsonRecord = {};
+  for (const key of ['includeTools', 'excludeTools']) {
+    const value = raw[key];
+    if (Array.isArray(value) && (value as unknown[]).every((v) => typeof v === 'string')) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/** Pola Gemini CLI spoza opisu serwera, ktore zmieniaja jego uprawnienia: opis w konflikcie. */
+function differenceNotes(trusted: boolean, narrowing: JsonRecord): string[] {
+  const notes: string[] = [];
+  if (trusted) notes.push('obecny wpis ma trust: true, zastąpienie je usunie');
+  const kept = Object.keys(narrowing);
+  if (kept.length > 0) notes.push(`obecne ${kept.join(' i ')} zostaną zachowane`);
+  return notes;
+}
+
+/** Narzedzie z serwerami MCP pod kluczem `mcpServers` w pliku JSON: odczyt i zapis wpisu. */
+interface JsonMcpFormat {
+  readonly tool: 'claude-code' | 'gemini-cli';
+  readonly fileName: (root: DetectedRoot) => string;
+  readonly read: (name: string, raw: unknown) => NativeResult;
+  readonly write: (p: Prepared) => JsonValue;
+}
+
+const CLAUDE_FORMAT: JsonMcpFormat = {
+  tool: 'claude-code',
+  fileName: mcpFileName,
+  read: fromClaudeServer,
+  write: (p) => toClaudeServer(p.spec, p.env, p.headers),
+};
+
+const GEMINI_FORMAT: JsonMcpFormat = {
+  tool: 'gemini-cli',
+  fileName: () => 'settings.json',
+  read: fromGeminiServer,
+  write: (p) => toGeminiServer(p.spec, p.env, p.headers),
+};
+
 /** Claude Code: klucz `mcpServers` w `~/.claude.json` albo w `.mcp.json` projektu. Reszta pliku bez zmian. */
-export async function planClaudeMcp(
+export function planClaudeMcp(
   b: PlanBuilder,
   ctx: ExportContext,
   items: readonly LoadedItem[],
 ): Promise<void> {
+  return planJsonMcp(b, ctx, items, CLAUDE_FORMAT);
+}
+
+export const GEMINI_HOOKS_AND_MCP_REFUSAL =
+  'Hooki i serwery MCP Gemini CLI leżą w tym samym settings.json, a jeden plan zapisuje plik jednym wpisem. Wyeksportuj serwery MCP osobnym planem, bez hooków (ADR 0062).';
+
+/**
+ * Gemini CLI (ADR 0062): klucz `mcpServers` w `~/.gemini/settings.json` albo w `.gemini/settings.json`
+ * projektu. Reszta pliku (w tym `hooks` i ustawienia narzedzia) semantycznie bez zmian. `trust` nie
+ * jest zapisywany nigdy; zastapienie serwera, ktory go ma, usuwa to pole.
+ */
+export function planGeminiMcp(
+  b: PlanBuilder,
+  ctx: ExportContext,
+  items: readonly LoadedItem[],
+): Promise<void> {
+  return planJsonMcp(b, ctx, items, GEMINI_FORMAT);
+}
+
+async function planJsonMcp(
+  b: PlanBuilder,
+  ctx: ExportContext,
+  items: readonly LoadedItem[],
+  format: JsonMcpFormat,
+): Promise<void> {
   if (items.length === 0) return;
-  const choice = pickRoot(ctx, 'claude-code', 'mcp');
+  const choice = pickRoot(ctx, format.tool, 'mcp');
   if (choice.root === null) {
     for (const l of items) b.refuse(l.item, choice.missing);
     return;
   }
   const root = choice.root;
-  const fileName = mcpFileName(root);
-  const prepared = prepare(b, 'claude-code', items, fileName);
+  const fileName = format.fileName(root);
+  const prepared = prepare(b, format.tool, items, fileName);
   if (prepared.length === 0) return;
   const refuseAll = (reason: string): void => {
     for (const p of prepared) b.refuse(p.loaded.item, reason);
@@ -198,10 +278,15 @@ export async function planClaudeMcp(
   }
   const servers: JsonRecord = structuredClone<JsonRecord>(existing ?? {});
   const used: Prepared[] = [];
+  const notes: string[] = [];
   let changed = false;
   for (const p of prepared) {
     const raw = Object.hasOwn(servers, p.spec.name) ? servers[p.spec.name] : undefined;
-    const read = raw === undefined ? null : fromClaudeServer(p.spec.name, raw);
+    const read = raw === undefined ? null : format.read(p.spec.name, raw);
+    // `trust`, `includeTools` i `excludeTools` to pola Gemini CLI (ADR 0062).
+    const gemini = format.tool === 'gemini-cli' && isJsonRecord(raw) ? raw : null;
+    const trusted = gemini?.['trust'] === true;
+    const narrowing = gemini === null ? {} : toolFilters(gemini);
     const state = compare(
       b,
       ctx,
@@ -209,16 +294,38 @@ export async function planClaudeMcp(
       read !== null && read.ok ? read.spec : null,
       read !== null && !read.ok ? read.reason : null,
       fileName,
+      differenceNotes(trusted, narrowing),
     );
     if (state === 'conflict') continue;
     used.push(p);
-    if (state === 'same') continue;
-    servers[p.spec.name] = toClaudeServer(p.spec, p.env);
+    if (state === 'same') {
+      // Ta sama definicja nie jest zapisywana, ale `trust` w pliku pomija potwierdzenia (ADR 0062).
+      if (trusted) {
+        notes.push(
+          `Serwer MCP „${p.spec.name}” ma w pliku trust: true, więc Gemini CLI nie pyta o wywołania jego narzędzi. Definicja jest taka sama, więc aplikacja go nie zmienia; usuń trust ręcznie, jeśli chcesz potwierdzeń.`,
+        );
+      }
+      continue;
+    }
+    if (trusted) {
+      notes.push(
+        `Serwer MCP „${p.spec.name}” ma teraz trust: true. Zastąpienie usuwa to pole, więc Gemini CLI znowu zapyta o wywołania narzędzi.`,
+      );
+    }
+    const next = format.write(p);
+    // includeTools i excludeTools tylko zawezaja narzedzia serwera: zastapienie je zachowuje (ADR 0062).
+    servers[p.spec.name] =
+      isJsonRecord(next) && Object.keys(narrowing).length > 0 ? { ...next, ...narrowing } : next;
+    if (Object.keys(narrowing).length > 0) {
+      notes.push(
+        `Serwer MCP „${p.spec.name}” zachowuje obecne ${Object.keys(narrowing).join(' i ')}, które zawężają jego narzędzia.`,
+      );
+    }
     changed = true;
   }
   if (used.length === 0) return;
   const ids = used.map((p) => p.loaded.item.id);
-  const warnings = used.flatMap((p) => p.warnings);
+  const warnings = [...used.flatMap((p) => p.warnings), ...notes];
   const names = used.map((p) => p.spec.name);
   const preview = {
     before: renderJsonExcerpt(isJsonRecord(existing) ? existing : {}, names),
@@ -374,7 +481,7 @@ export async function planCodexMcp(
     if (state === 'same') continue;
     segments.push({
       name: p.spec.name,
-      fields: toCodexServer(p.spec, p.env),
+      fields: toCodexServer(p.spec, p.env, p.headers),
       replace: state === 'replace',
     });
   }
@@ -429,7 +536,9 @@ export function emitCodexConfig(b: PlanBuilder, state: CodexConfigState | null):
 
 const HIDDEN = '<wartość pominięta>';
 const VALUE_TABLES = new Set(['env', 'headers', 'http_headers', 'env_http_headers']);
-const REFERENCE = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+/** Odniesienie (z opcjonalnym schematem naglowka) albo, w `env_http_headers`, sama nazwa zmiennej. */
+const REFERENCE = /^(?:(?:Bearer|Basic) )?\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** Kopia serwera z ukrytymi wartosciami `env` i naglowkow; odniesienia `${NAZWA}` zostaja. */
 function masked(server: unknown): unknown {
@@ -437,11 +546,11 @@ function masked(server: unknown): unknown {
   const out: JsonRecord = {};
   for (const [key, value] of Object.entries(server)) {
     if (VALUE_TABLES.has(key) && isJsonRecord(value)) {
+      const shown = (v: unknown): boolean =>
+        typeof v === 'string' &&
+        (REFERENCE.test(v) || (key === 'env_http_headers' && VARIABLE_NAME.test(v)));
       out[key] = Object.fromEntries(
-        Object.entries(value).map(([k, v]) => [
-          k,
-          typeof v === 'string' && REFERENCE.test(v) ? v : HIDDEN,
-        ]),
+        Object.entries(value).map(([k, v]) => [k, shown(v) ? v : HIDDEN]),
       );
     } else out[key] = value;
   }

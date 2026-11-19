@@ -15,6 +15,7 @@ import {
   text,
   toLoaded,
 } from '../contract/support/export-helpers';
+import { SECRETS } from './security-secrets';
 
 const adapter = createCodexAdapter() as ToolAdapter & ToolExporter;
 const codex = resolve(__dirname, '..', 'fixtures', 'codex', 'home', '.codex');
@@ -386,6 +387,94 @@ describe('eksport Codeksa: hooki i serwery MCP', () => {
     const blocked = await adapter.plan([item], { ...ctx(target(nested)), decisions });
     expect(blocked.entries).toEqual([]);
     expect(blocked.refusals[0]?.reason).toMatch(/podtabele/);
+  });
+
+  it('MCP naglowki (ADR 0062): Bearer w Authorization to bearer_token_env_var, reszta env_http_headers, Basic odmowa', async () => {
+    const http = {
+      ...stdio,
+      transport: 'http',
+      command: null,
+      url: 'https://mcp.acme.test/mcp',
+      env: [],
+    };
+    const items = [
+      server('api', {
+        ...http,
+        headers: [
+          { name: 'Authorization', ref: 'ACME_API_KEY', scheme: 'Bearer' },
+          { name: 'X-Acme-Tenant', ref: 'ACME_TENANT', scheme: null },
+        ],
+      }),
+      server('basic', {
+        ...http,
+        headers: [{ name: 'Authorization', ref: 'ACME_BASIC', scheme: 'Basic' }],
+      }),
+      server('custom', {
+        ...http,
+        headers: [{ name: 'X-Token', ref: 'ACME_TOKEN', scheme: 'Bearer' }],
+      }),
+    ];
+    const plan = await adapter.plan(items, ctx(target()));
+    const reasons = new Map(plan.refusals.map((r) => [r.slug, r.reason]));
+    expect(reasons.has('mcp-api')).toBe(false);
+    expect(reasons.get('mcp-basic')).toMatch(/Basic/);
+    expect(reasons.get('mcp-custom')).toMatch(/bearer_token_env_var/);
+    const cfg = entryFor(plan, id('agent-registry'), 'config.toml')!;
+    const tree = parse(text(cfg.content)) as Record<string, Record<string, unknown>>;
+    expect(tree['mcp_servers']).toEqual({
+      api: {
+        url: 'https://mcp.acme.test/mcp',
+        bearer_token_env_var: 'ACME_API_KEY',
+        env_http_headers: { 'X-Acme-Tenant': 'ACME_TENANT' },
+      },
+    });
+    // Nazwy zmiennych w env_http_headers nie sa wartosciami: podglad je pokazuje.
+    expect(cfg.preview?.after).toContain('ACME_TENANT');
+
+    const reader = target();
+    reader.apply(plan);
+    const again = await adapter.plan([items[0]!], ctx(reader));
+    expect(entryFor(again, id('agent-registry'), 'config.toml')?.action).toBe('unchanged');
+  });
+
+  it('MCP import naglowkow Codeksa: odniesienia z bearer_token_env_var i env_http_headers, http_headers bez wartosci', async () => {
+    const literal = 'acme-region-literal';
+    const config = [
+      '[mcp_servers.api]',
+      'url = "https://mcp.acme.test/mcp"',
+      'bearer_token_env_var = "ACME_API_KEY"',
+      'env_http_headers = { "X-Acme-Tenant" = "ACME_TENANT" }',
+      `http_headers = { "X-Region" = "${literal}" }`,
+      '',
+      // Token wklejony zamiast nazwy zmiennej (przeglad bezpieczenstwa, L1): nie trafia do biblioteki.
+      '[mcp_servers.pasted]',
+      'url = "https://mcp.acme.test/other"',
+      `bearer_token_env_var = "${SECRETS.github}"`,
+      `env_http_headers = { "X-Key" = "${SECRETS.github}" }`,
+      '',
+    ].join('\n');
+    const reader = new MemoryReader();
+    reader.file(id('agent-registry'), 'config.toml', config);
+    const root = roots[KINDS.indexOf('agent-registry')]!;
+    const result = await adapter.scan(root, reader);
+    const dump = JSON.stringify(result, (_k, v: unknown) =>
+      v instanceof Uint8Array ? new TextDecoder().decode(v) : v,
+    );
+    expect(dump).not.toContain(literal);
+    expect(dump).not.toContain(SECRETS.github);
+    const valueOf = (slug: string) =>
+      result.candidates.find((c) => c.draft.identity.slug === slug)?.draft.attributes?.toolSetting
+        ?.value as { headers: unknown };
+    expect(valueOf('mcp-pasted').headers).toEqual([
+      { name: 'Authorization', ref: null, scheme: 'Bearer' },
+      { name: 'X-Key', ref: null, scheme: null },
+    ]);
+    const value = valueOf('mcp-api');
+    expect(value.headers).toEqual([
+      { name: 'Authorization', ref: 'ACME_API_KEY', scheme: 'Bearer' },
+      { name: 'X-Acme-Tenant', ref: 'ACME_TENANT', scheme: null },
+      { name: 'X-Region', ref: null, scheme: null },
+    ]);
   });
 });
 

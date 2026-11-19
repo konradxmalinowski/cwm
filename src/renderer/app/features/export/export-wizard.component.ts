@@ -404,9 +404,12 @@ export class ExportWizardComponent {
     this.projectTarget.set(null);
   }
 
-  /** Rooty projektu sa dzis tylko dla Claude Code (`.claude/`, `CLAUDE.md`). */
-  protected onProject(projectId: string): void {
-    this.tool.set('claude-code');
+  /**
+   * Rooty projektu: Claude Code (`.claude/`, `CLAUDE.md`, `.mcp.json`) i Gemini CLI (tylko serwery MCP
+   * w `.gemini/settings.json`, ADR 0062).
+   */
+  protected onProject(projectId: string, tool: ToolIdDto = 'claude-code'): void {
+    this.tool.set(tool);
     this.zip.set(false);
     this.projectTarget.set(projectId);
   }

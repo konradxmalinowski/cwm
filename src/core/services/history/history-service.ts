@@ -48,13 +48,19 @@ export interface HistoryServiceDeps {
   readonly clock: Clock;
   /** Czy element jest serwerem MCP (ADR 0061); brak portu: rozpoznanie tylko po pliku MCP w kopii. */
   readonly mcpItem?: (itemId: string) => Promise<boolean>;
+  /**
+   * Czy root zapisuje plik, ktory jest celem serwerow MCP (ADR 0062), po rozwiazanej sciezce, nie po
+   * rodzaju roota. Gemini CLI trzyma hooki i serwery MCP w tym samym `settings.json`: cofniecie zapisu
+   * hookow przywrociloby tez `mcpServers` bez potwierdzenia MCP. Element moze byc juz usuniety z biblioteki.
+   */
+  readonly mcpTarget?: (rootId: string) => Promise<boolean>;
 }
 
-/** Pliki, ktore zapisuje wylacznie eksport MCP (ADR 0061). */
+/** Pliki, ktore zapisuje wylacznie eksport MCP (ADR 0061); `settings.json` Gemini CLI rozpoznaje `mcpTarget`. */
 const MCP_FILES = new Set(['.claude.json', '.mcp.json']);
 
 export const MCP_ROLLBACK_REFUSAL =
-  'Tej operacji nie da się cofnąć z Historii: zapisała serwer MCP do pliku, który zmienia też samo narzędzie, a cofnięcie przywróciłoby cały plik. Zmień albo usuń serwer w narzędziu ręcznie; kopia zapasowa pliku jest w katalogu danych aplikacji (ADR 0061).';
+  'Tej operacji nie da się cofnąć z Historii: zapisała serwer MCP do pliku, który zmienia też samo narzędzie, a cofnięcie przywróciłoby cały plik. Zmień albo usuń serwer w narzędziu ręcznie; kopia zapasowa pliku jest w katalogu danych aplikacji (ADR 0061, ADR 0062).';
 
 const DEFAULT_LIMIT = 50;
 export const MAX_HISTORY_LIMIT = 200;
@@ -222,6 +228,11 @@ export class HistoryService {
     // zbyt szeroko (plik zmienia tez dzialajace narzedzie), wiec jest zablokowane (ADR 0061).
     if (manifest.entries.some((m) => MCP_FILES.has(m.relPath.split('/').pop() ?? ''))) {
       throw new HistoryError('not-revertible', MCP_ROLLBACK_REFUSAL);
+    }
+    for (const m of manifest.entries) {
+      if ((await this.deps.mcpTarget?.(m.rootId)) === true) {
+        throw new HistoryError('not-revertible', MCP_ROLLBACK_REFUSAL);
+      }
     }
     for (const id of itemIds) {
       if ((await this.deps.mcpItem?.(id)) === true) {

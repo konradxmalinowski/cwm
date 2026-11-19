@@ -35,7 +35,7 @@ z utratą, zależnie od tego, co ma we frontmatterze.
 | Instrukcja globalna | częściowa | częściowa | Aplikacja zarządza jednym blokiem między markerami w `CLAUDE.md` albo `AGENTS.md`, nie całym plikiem. Treść poza blokiem nie jest eksportowana ani kontrolowana (niżej) |
 | Hook | pełna | częściowa | Hooki typu `command` w kluczu `hooks` pliku `settings.json` (Claude Code) albo `hooks.json` (Codex). Codex czyta tylko zdarzenia `SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit` i `Stop` i po cichu pomija inne. Dla innego zdarzenia plan ostrzega, że może być pominięte. Hooków innego typu niż `command` oraz dopisanych ręcznie aplikacja nie rusza |
 | Instrukcja projektowa | nieobsługiwana | nieobsługiwana | Osobny rodzaj jest nieużywany. `CLAUDE.md` projektu z rejestru wchodzi jako instrukcja z zakresem projektu i wraca tylko do swojego projektu; `AGENTS.md` i `GEMINI.md` w repozytoriach nie są jeszcze czytane (ADR 0059) |
-| Serwer MCP | częściowa | częściowa | Tylko jawny eksport z potwierdzeniem, bez wartości zmiennych i nagłówków; bez synchronizacji i archiwum ZIP (niżej, ADR 0061) |
+| Serwer MCP | częściowa | częściowa | Tylko jawny eksport z potwierdzeniem, bez wartości zmiennych i nagłówków; bez synchronizacji i archiwum ZIP (niżej, ADR 0061, 0062) |
 | Pozostałe ustawienia narzędzia | nieobsługiwana | nieobsługiwana | Niżej |
 | Reguły (rules) | nie są czytane | nie są czytane | Żadna lokalizacja reguł nie jest wykrywana, więc nic nie trafia do biblioteki ani do narzędzia |
 
@@ -146,32 +146,52 @@ pliku, daje konflikt z punktu 4 bez wyboru: otocz treść markerami ręcznie.
 
 Usunięcie elementu z biblioteki nie usuwa bloku z pliku.
 
-## Serwery MCP i ustawienia narzędzi (ADR 0020, 0061)
+## Serwery MCP i ustawienia narzędzi (ADR 0020, 0061, 0062)
 
 Serwery MCP są importowane z `mcpServers` w `~/.claude.json`, z `.mcp.json` w projekcie z listy
-projektów i z `[mcp_servers.<nazwa>]` w `config.toml` Codeksa. Do biblioteki trafia polecenie,
-argumenty, adres i **same nazwy** zmiennych środowiskowych i nagłówków, nigdy ich wartości. Serwer,
+projektów, z `mcpServers` w `settings.json` Gemini CLI (globalnym i `.gemini/settings.json` projektu)
+i z `[mcp_servers.<nazwa>]` w `config.toml` Codeksa. Do biblioteki trafia polecenie, argumenty, adres
+oraz **same nazwy** zmiennych środowiskowych i nagłówków z odniesieniami do zmiennych, nigdy ich
+wartości. Serwer,
 którego polecenie, argument albo adres wygląda na sekret, nie jest importowany wcale.
 
 Eksport serwera jest zawsze jawny: plan pokazuje polecenie albo adres w całości i zmienne, które
 serwer weźmie ze środowiska, a zapis wymaga zaznaczenia potwierdzenia przy tym planie. Do pliku
-trafiają odniesienia: `"${NAZWA}"` w Claude Code, `env_vars = ["NAZWA"]` w Codeksie. Ograniczenia:
+trafiają odniesienia: `"${NAZWA}"` w Claude Code i Gemini CLI, `env_vars = ["NAZWA"]` w Codeksie, a
+nagłówki jako `"Bearer ${NAZWA}"` (Claude Code, Gemini CLI) albo `bearer_token_env_var` i
+`env_http_headers` (Codex). Ograniczenia:
 
 - Serwer projektu trafia tylko do `.mcp.json` tego samego projektu. Codex nie ma serwerów MCP w
-  projekcie, więc eksport do projektu w Codeksie jest odmową. Gemini CLI nie jest jeszcze obsługiwany.
-- Serwer HTTP tylko przez `https` (albo `http` na `localhost`) i bez nagłówków: ich wartości to
-  zwykle dane logowania, których aplikacja nie kopiuje. Codex nie obsługuje transportu sse.
+  projekcie, więc eksport do projektu w Codeksie jest odmową. Serwer z `.gemini/settings.json`
+  trafia tylko do swojego projektu, w Claude Code albo w Gemini CLI.
+- Serwer HTTP tylko przez `https` (albo `http` na `localhost`). Nagłówek przechodzi tylko jako
+  odniesienie do zmiennej: nagłówek z wartością wpisaną wprost (np. token w `Authorization`) blokuje
+  eksport serwera, bo serwer bez niego nie zadziała. Popraw go w narzędziu źródłowym na
+  `"Bearer ${NAZWA}"` i zaimportuj ponownie. Odmową są też nagłówki `Host`, `Cookie` i inne
+  sterujące połączeniem, odniesienia do zmiennych z danymi logowania samych narzędzi i chmury
+  (`ANTHROPIC_*`, `GEMINI_*`, `OPENAI_*`, `AWS_*` itd.) oraz odniesienia, które same wyglądają na
+  token (wklejona wartość zamiast nazwy zmiennej; taki tekst nie trafia też do biblioteki przy
+  imporcie). Nagłówek ze zmienną o nazwie sekretu (np. `ACME_API_KEY`) albo z tokenem popularnej
+  usługi (`GITHUB_*`, `GH_*`, `NPM_*`, `SLACK_*`, `STRIPE_*` itd.) przechodzi, ale plan mówi wprost,
+  do którego hosta trafi jej wartość. Codex nie obsługuje transportu sse ani schematu `Basic` w nagłówku.
+- `trust: true` z Gemini CLI (pomijanie potwierdzeń wywołań narzędzi) nie jest importowany ani
+  eksportowany. Zastąpienie serwera, który go ma, usuwa to pole; gdy definicja jest taka sama,
+  aplikacja niczego nie zapisuje, ale plan ostrzega, że serwer ma `trust: true`. `includeTools` i
+  `excludeTools` istniejącego serwera zostają po zastąpieniu.
+- Hooki i serwery MCP Gemini CLI leżą w tym samym `settings.json`, więc trzeba je eksportować
+  osobnymi planami.
 - Polecenie, argument albo adres ze znakiem `$`, wyglądające na sekret, z tokenem szesnastkowym albo UUID, z flagą
   przekazującą dane logowania (np. `--api-key`, `--header`), z nagłówkiem autoryzacji albo z niewidocznym znakiem
   kierunku tekstu są odmową, przy imporcie i przy eksporcie.
 - Serwer globalny zapisywany do `.mcp.json` projektu wymaga osobnego potwierdzenia.
-- Zapisu serwera MCP nie da się cofnąć z widoku Historia: cofnięcie przywróciłoby cały plik. Kopia zapasowa pliku
-  jest w katalogu danych aplikacji.
+- Zapisu serwera MCP nie da się cofnąć z widoku Historia: cofnięcie przywróciłoby cały plik. Dotyczy to
+  także zapisu hooków Gemini CLI, bo leżą w tym samym `settings.json`. Kopia zapasowa pliku jest w
+  katalogu danych aplikacji.
 - Zmienna biorąca wartość z innej zmiennej (`"TOKEN": "${INNY}"`) nie przejdzie do Codeksa, który
   przekazuje zmienną tylko pod tą samą nazwą: zostaje pominięta z ostrzeżeniem.
 - Serwer o tej samej nazwie i innej definicji jest zastępowany tylko po Twojej decyzji w planie.
   Blok Codeksa z podtabelą (np. `[mcp_servers.<nazwa>.env]`) trzeba zmienić ręcznie.
-- Pola bez odpowiednika (limity czasu, `oauth`, `enabled_tools`) nie przechodzą eksportu.
+- Pola bez odpowiednika (limity czasu, `oauth`, `enabled_tools`, `cwd`, `includeTools`) nie przechodzą eksportu.
 - W `~/.claude.json` aplikacja zmienia tylko klucz `mcpServers` i zapisuje go w całości, więc
   formatowanie innych serwerów może się zmienić, ich treść nie. Claude Code często przepisuje ten
   plik; gdy zmieni się między planem a zapisem, zapis jest odrzucony i trzeba przygotować plan od nowa.
