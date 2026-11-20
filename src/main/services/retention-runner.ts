@@ -264,7 +264,7 @@ export class RetentionRunner {
     if (release === null) return err('busy', BUSY_MESSAGE);
     try {
       // Okno trwalo poza blokada: limity i waznosc podgladu moglyby sie zmienic w trakcie decyzji.
-      const { recheck } = options;
+      const { recheck, ...serviceOptions } = options;
       if (
         recheck !== undefined &&
         (recheck.expiresAt <= this.now() ||
@@ -272,7 +272,7 @@ export class RetentionRunner {
       ) {
         return err('stale-plan', STALE_AFTER_DIALOG_MESSAGE);
       }
-      const report = await service.run(options);
+      const report = await service.run(serviceOptions);
       let token: string | null = null;
       if (!options.apply && report.blocked === null) {
         token = this.issueToken(report, options.settings ?? (await this.deps.settings.load()));

@@ -769,7 +769,10 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
       error: { code: 'stale-plan' },
     });
     expect(h.run).not.toHaveBeenCalledWith(expect.objectContaining({ apply: true }));
-    expect(h.lock.tryEnterExclusive()).not.toBeNull();
+    // Blokada wylaczna zwolniona po odmowie.
+    const exclusive = h.lock.tryEnterExclusive();
+    expect(exclusive).not.toBeNull();
+    exclusive?.();
 
     h.replaceSettings(NO_RETENTION_LIMITS);
     const expiring = await tokenOf(h);

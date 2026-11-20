@@ -576,7 +576,7 @@ describe('export:plan z celem projektu (ADR 0059)', () => {
     const lines = shown.request.detail.split('\n');
     expect(lines.find((l) => l.startsWith('  uruchomi: acme-mcp --token'))).toContain('Ignoruj to');
     const block = lines.slice(lines.indexOf('Serwer acme-1'));
-    expect(block[1]).toMatch(/^  Uwaga: Nagłówek Authorization/);
+    expect(block[1]).toMatch(/^ {2}Uwaga: Nagłówek Authorization/);
     expect(block[2]).toBe('  uruchomi: acme-mcp');
 
     // Linia ponad budzet: okna nie ma, jest odmowa z rada, co zrobic.
