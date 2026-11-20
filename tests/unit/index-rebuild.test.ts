@@ -36,7 +36,11 @@ import {
 import { PREVIEW_TOKEN_TTL_MS, RetentionRunner } from '../../src/main/services/retention-runner';
 import {
   TEST_CONFIRM_ENV,
+  fixedConfirmPort,
+  isAccepted,
+  singleDialog,
   testConfirmAnswer,
+  type ConfirmOutcome,
   type ConfirmPort,
   type ConfirmRequest,
 } from '../../src/main/services/native-confirm';
@@ -568,11 +572,11 @@ describe('kanaly nie przyjmuja sciezki (ADR 0030)', () => {
 function fakeConfirm(): {
   port: ConfirmPort;
   asked: ConfirmRequest[];
-  answers: boolean[];
+  answers: ConfirmOutcome[];
   during: (() => void)[];
 } {
   const asked: ConfirmRequest[] = [];
-  const answers: boolean[] = [];
+  const answers: ConfirmOutcome[] = [];
   const during: (() => void)[] = [];
   return {
     asked,
@@ -582,7 +586,7 @@ function fakeConfirm(): {
       confirm: (request) => {
         asked.push(request);
         during.shift()?.();
-        return Promise.resolve(answers.shift() ?? true);
+        return Promise.resolve(answers.shift() ?? 'accept');
       },
     },
   };
@@ -599,6 +603,38 @@ describe('natywne okno potwierdzenia: odpowiedz testowa (ADR 0063)', () => {
       expect(testConfirmAnswer({ [TEST_CONFIRM_ENV]: value }, false)).toBeNull();
     }
     expect(testConfirmAnswer({}, false)).toBeNull();
+  });
+
+  it('zgoda tylko z przyciskiem zgody i zaznaczonym polem; odpowiedz testowa idzie ta sama sciezka', async () => {
+    expect(isAccepted(1, true)).toBe(true);
+    expect(isAccepted(1, false)).toBe(false);
+    expect(isAccepted(0, true)).toBe(false);
+    expect(isAccepted(0, false)).toBe(false);
+    const request: ConfirmRequest = { message: 'm', detail: 'd', confirmLabel: 'Zapisz' };
+    expect(await fixedConfirmPort('accept').confirm(request)).toBe('accept');
+    expect(await fixedConfirmPort('cancel').confirm(request)).toBe('cancel');
+  });
+
+  it('najwyzej jedno okno: kolejna prosba w trakcie dostaje busy od razu, bez kolejki', async () => {
+    let close: (value: { response: number; checkboxChecked: boolean }) => void = () => undefined;
+    const show = vi.fn(
+      () =>
+        new Promise<{ response: number; checkboxChecked: boolean }>((resolve) => {
+          close = resolve;
+        }),
+    );
+    const port = singleDialog(show);
+    const request: ConfirmRequest = { message: 'm', detail: 'd', confirmLabel: 'Zapisz' };
+    const first = port.confirm(request);
+    expect(await port.confirm(request)).toBe('busy');
+    expect(await port.confirm(request)).toBe('busy');
+    expect(show).toHaveBeenCalledTimes(1);
+    close({ response: 1, checkboxChecked: true });
+    expect(await first).toBe('accept');
+    // Po zamknieciu okna nastepna prosba znow je otwiera; blad okna to odmowa.
+    show.mockImplementationOnce(() => Promise.reject(new Error('okno')));
+    expect(await port.confirm(request)).toBe('cancel');
+    expect(show).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -652,6 +688,9 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
       answers: confirm.answers,
       during: confirm.during,
       stored: () => stored,
+      replaceSettings: (next: RetentionSettings) => {
+        stored = next;
+      },
       advance: (ms: number) => {
         clock += ms;
       },
@@ -692,7 +731,7 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
   it('natywne okno przed usunieciem: liczby z podgladu w main, anulowanie nic nie usuwa i zuzywa token', async () => {
     const h = retention();
     const token = await tokenOf(h);
-    h.answers.push(false);
+    h.answers.push('cancel');
     expect(await h.runner.apply(true, token)).toMatchObject({
       ok: false,
       error: { code: 'confirmation-cancelled' },
@@ -717,6 +756,37 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
     });
     expect(await h.runner.apply(true, second)).toMatchObject({ ok: true });
     expect(writerDuringDialog).not.toBeNull();
+  });
+
+  it('po oknie pod blokada wylaczna: zmiana limitow albo wygasniecie w trakcie decyzji to stale-plan', async () => {
+    const h = retention();
+    const changed = await tokenOf(h);
+    h.during.push(() => {
+      h.replaceSettings({ ...NO_RETENTION_LIMITS, maxEntries: 10 });
+    });
+    expect(await h.runner.apply(true, changed)).toMatchObject({
+      ok: false,
+      error: { code: 'stale-plan' },
+    });
+    expect(h.run).not.toHaveBeenCalledWith(expect.objectContaining({ apply: true }));
+    expect(h.lock.tryEnterExclusive()).not.toBeNull();
+
+    h.replaceSettings(NO_RETENTION_LIMITS);
+    const expiring = await tokenOf(h);
+    h.during.push(() => {
+      h.advance(PREVIEW_TOKEN_TTL_MS + 1);
+    });
+    expect(await h.runner.apply(true, expiring)).toMatchObject({
+      ok: false,
+      error: { code: 'stale-plan' },
+    });
+    expect(h.run).not.toHaveBeenCalledWith(expect.objectContaining({ apply: true }));
+
+    // Inne okno otwarte: busy, nic nie usuniete.
+    const third = await tokenOf(h);
+    h.answers.push('busy');
+    expect(await h.runner.apply(true, third)).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(h.run).not.toHaveBeenCalledWith(expect.objectContaining({ apply: true }));
   });
 
   it('token wygasa po kilku minutach, a zmiana ustawien uniewaznia podglad', async () => {
@@ -826,7 +896,7 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
       error: { code: 'confirmation-required' },
     });
     // Anulowanie w oknie natywnym zostawia stare ustawienia.
-    h.answers.push(false);
+    h.answers.push('cancel');
     expect(
       await h.runner.setSettings({ maxEntries: 20, maxStoreMiB: 100, confirmed: true }),
     ).toMatchObject({ ok: false, error: { code: 'confirmation-cancelled' } });
@@ -1156,7 +1226,7 @@ describe('wersjonowanie biblioteki w Git: ustawienia, zgoda i blokada (ADR 0060)
 
     // Anulowanie w natywnym oknie (ADR 0063): ustawienia i repozytorium bez zmian, znacznik zuzyty.
     const cancelledNonce = await nonceOf(h);
-    h.answers.push(false);
+    h.answers.push('cancel');
     const cancelled = await h.runner.setSettings({
       ...request,
       acknowledged: true,

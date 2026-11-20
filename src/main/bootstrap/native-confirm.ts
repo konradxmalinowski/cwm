@@ -2,15 +2,16 @@ import { app, BrowserWindow, dialog } from 'electron';
 
 import {
   CANCEL_LABEL,
+  CHECKBOX_LABEL,
   fixedConfirmPort,
+  singleDialog,
   testConfirmAnswer,
   type ConfirmPort,
-  type ConfirmRequest,
 } from '../services/native-confirm';
 
 /**
- * Port potwierdzen (ADR 0063): modalne okno systemowe przypiete do okna aplikacji. Jedno okno naraz,
- * kolejne czeka w kolejce. "Anuluj" jest domyslny i jest odpowiedzia na Esc i zamkniecie okna.
+ * Port potwierdzen (ADR 0063): modalne okno systemowe przypiete do okna aplikacji, najwyzej jedno naraz.
+ * "Anuluj" jest domyslny i jest odpowiedzia na Esc i zamkniecie okna; zgoda wymaga zaznaczonego pola.
  */
 export function createConfirmPort(warn: (message: string) => void): ConfirmPort {
   const answer = testConfirmAnswer(process.env, app.isPackaged);
@@ -18,8 +19,7 @@ export function createConfirmPort(warn: (message: string) => void): ConfirmPort 
     warn(`[cwm] potwierdzenia natywne zastapione odpowiedzia testowa: ${answer}`);
     return fixedConfirmPort(answer);
   }
-  let queue: Promise<unknown> = Promise.resolve();
-  const show = async (request: ConfirmRequest): Promise<boolean> => {
+  return singleDialog(async (request) => {
     const options = {
       type: 'warning' as const,
       title: 'CWM',
@@ -29,26 +29,14 @@ export function createConfirmPort(warn: (message: string) => void): ConfirmPort 
       defaultId: 0,
       cancelId: 0,
       noLink: true,
+      checkboxLabel: CHECKBOX_LABEL,
+      checkboxChecked: false,
     };
     const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
-    try {
-      const result =
-        parent === undefined
-          ? await dialog.showMessageBox(options)
-          : await dialog.showMessageBox(parent, options);
-      return result.response === 1;
-    } catch {
-      return false;
-    }
-  };
-  return {
-    confirm(request) {
-      const run = queue.then(
-        () => show(request),
-        () => show(request),
-      );
-      queue = run;
-      return run;
-    },
-  };
+    const result =
+      parent === undefined
+        ? await dialog.showMessageBox(options)
+        : await dialog.showMessageBox(parent, options);
+    return { response: result.response, checkboxChecked: result.checkboxChecked };
+  });
 }

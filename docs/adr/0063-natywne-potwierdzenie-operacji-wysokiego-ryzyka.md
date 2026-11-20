@@ -45,18 +45,21 @@ odwracalne, a drugie okno po każdym eksporcie uczy klikania bez czytania, co os
 1. **Port w main.** `ConfirmPort` (`src/main/services/native-confirm.ts`) z jedną metodą `confirm(request)`, gdzie
    `request` to pytanie, szczegóły i czasownik przycisku zgody. Implementacja Electron
    (`src/main/bootstrap/native-confirm.ts`) pokazuje `dialog.showMessageBox` typu `warning`, modalne do okna aplikacji,
-   z przyciskami "Anuluj" i czasownikiem, `defaultId` i `cancelId` na "Anuluj", `noLink`. Esc i zamknięcie okna to
-   odmowa, błąd okna też. Okna idą jedno po drugim w kolejce. Usługi (`RetentionRunner`, `LibraryGitRunner`, handler
-   eksportu) dostają port jako wymaganą zależność, bez wartości domyślnej.
+   z przyciskami "Anuluj" i czasownikiem, `defaultId` i `cancelId` na "Anuluj", `noLink` i polem "Rozumiem skutki",
+   domyślnie niezaznaczonym. Zgoda (`accept`) to wyłącznie przycisk zgody **i** zaznaczone pole (`isAccepted`), więc
+   przypadkowe podwójne kliknięcie nie wystarczy. Esc, zamknięcie okna i błąd okna to `cancel`. **Najwyżej jedno okno
+   naraz, bez kolejki** (`singleDialog`): prośba w trakcie otwartego okna dostaje od razu `busy`, nie czeka i nie trzyma
+   blokady zapisu. Usługi (`RetentionRunner`, `LibraryGitRunner`, handler eksportu) dostają port jako wymaganą zależność,
+   bez wartości domyślnej.
 2. **Kolejność: znacznik, potem okno.** Pole w rendererze i znacznik zostają jako pierwszy krok: bez ważnego znacznika
    main odmawia jak dotąd i okno się nie pokazuje, więc renderer nie wywoła okna bez planu. Okno jest drugim,
    autorytatywnym krokiem; zgoda w nim jest warunkiem wykonania niezależnie od pól w ładunku.
 3. **Treść z danych main.** Treść okna nie zawiera żadnego pola z ładunku renderera:
    - MCP: przy wydaniu znacznika w `export:plan` main zapamiętuje obok niego listę serwerów z raportu planu, narzędzie i
      nazwę projektu (`McpConfirmations.issue`). `take` zwraca tę listę tylko dla ważnego znacznika. Okno: "Zapisać N
-     serwerów MCP do <narzędzie>[, projekt <nazwa>]?", zdanie o tym, co robią serwery stdio i http, i po linii na serwer
-     (nazwa, transport, polecenie albo adres w całości), nagłówki jako nazwa i zmienna, zdania o hostach z ADR 0062,
-     nazwy zmiennych i znak, że serwer globalny trafi do projektu. Przycisk "Zapisz serwery MCP".
+     serwerów MCP do <narzędzie>[, projekt <nazwa>]?", zdanie o tym, co robią serwery stdio i http, i blok na serwer:
+     nazwa, **najpierw ostrzeżenia** (serwer globalny trafi do projektu, zdania o hostach z ADR 0062), potem polecenie
+     albo adres w całości, nagłówki jako nazwa i zmienna i nazwy zmiennych. Przycisk "Zapisz serwery MCP".
    - Czyszczenie: liczby wpisów, obiektów i bajtów z podglądu zapisane w main przy wydaniu tokenu. "Usunąć trwale N
      wpisów historii i M obiektów?", przycisk "Usuń wpisy historii".
    - Zaostrzenie limitu: obecne limity z pliku ustawień i nowe po walidacji w main, tylko zmienione, w postaci
@@ -64,23 +67,31 @@ odwracalne, a drugie okno po każdym eksporcie uczy klikania bez czytania, co os
    - Zgoda Git: liczba elementów wykluczonych dziś wyłącznie jako prywatne albo projektowe, z nowego skanu biblioteki w
      main (`LibraryGit.status(false, true)`), nie z odczytu stanu w rendererze. Przycisk "Dołącz do historii". Okno
      pokazuje się po sprawdzeniu dostępności `git`, więc brak `git` daje najpierw powód.
-4. **Redakcja i limity.** Każda linia przechodzi zamianę znaków sterujących, separatorów linii, znaków niewidocznych i
-   znaków kierunku tekstu na spację (nazwa ani polecenie nie złamie układu okna i nie odwróci tekstu), potem
-   `redactSecrets`. Ścieżek okno nie redaguje: polecenie serwera stdio ma być widoczne w całości, tak jak w planie.
-   Linia ma najwyżej 300 znaków, dłuższa kończy się "... (i N znaków więcej)". Lista serwerów ma najwyżej 24 linie;
-   pierwszy serwer jest zawsze, kolejne tylko w całości, a reszta to "i N serwerów więcej".
-5. **Anulowanie.** Znacznik, token i znacznik zgody są zużyte także po anulowaniu, tak jak po każdej innej próbie.
-   Nic nie jest zapisane ani usunięte, a odpowiedź to `confirmation-cancelled` z komunikatem. Plan MCP zostaje w
-   serwisie do wygaśnięcia, ale bez znacznika jego zapis kończy się `mcp-confirmation-required`, więc ponowienie wymaga
+4. **Redakcja i żadnej ukrytej treści.** Każda linia przechodzi zamianę znaków niewidocznych na spację (nazwa ani
+   polecenie nie złamie układu okna i nie odwróci tekstu), potem `redactSecrets`. Znaki niewidoczne to jedna definicja
+   wspólna z regułami MCP w core (`core/services/security/invisible-chars.ts`): cała klasa `Cf` (kierunek tekstu, zerowa
+   szerokość, U+061C, U+2060 do U+2064, miękki dywiz, U+180E, znaczniki U+E0001 do U+E007F), `Cc`, `Zl`, `Zp`, selektory
+   wariantu (U+FE00 do U+FE0F, U+E0100 do U+E01EF, mongolskie) i wypełniacze Hangul (U+115F, U+1160, U+3164, U+FFA0).
+   Polecenie, argument albo adres z takim znakiem core odrzuca już w planie, więc okno go nie zobaczy. Ścieżek okno nie
+   redaguje: polecenie serwera stdio ma być widoczne w całości. **Okno nigdy nie prosi o zgodę na treść, której nie
+   pokazuje:** nic nie jest skracane ani zwijane do "i N więcej". Gdy linia ma ponad 600 znaków, treść ponad 40 linii
+   albo ponad 6000 znaków, okna nie ma, a `export:apply` odmawia (`confirmation-too-long`) z prośbą o eksport mniejszej
+   liczby serwerów w jednym planie albo skrócenie polecenia w narzędziu źródłowym.
+5. **Anulowanie, odmowa i `busy`.** Znacznik, token i znacznik zgody są zużyte także wtedy, tak jak po każdej innej
+   próbie. Nic nie jest zapisane ani usunięte; odpowiedź to `confirmation-cancelled`, `confirmation-too-long` albo
+   `busy` z komunikatem. Plan MCP jest przy tym usuwany z serwisu (`ExportService.discard`), więc ponowienie wymaga
    nowego planu; podgląd retencji wymaga nowego podglądu; zgoda Git nowego odczytu stanu (renderer pobiera go sam po
    błędzie). Wybrane, bo nie ma stanu, w którym raz pokazane i odrzucone potwierdzenie da się przyjąć później bez
    ponownego przejścia przez plan.
-6. **Blokady.** Okno retencji pokazuje się przed wejściem w blokadę wyłączną, a wykonanie i tak przelicza plan z sufitem
-   z podglądu (`plan-changed`), więc zmiana stanu w trakcie decyzji nie usunie więcej, niż pokazało okno. Okno zgody Git
+6. **Blokady.** Okno retencji pokazuje się przed wejściem w blokadę wyłączną. Po zgodzie, już pod blokadą wyłączną,
+   wykonanie sprawdza jeszcze raz ważność podglądu i zgodność zapisanych limitów z limitami podglądu; zmiana albo
+   wygaśnięcie w trakcie decyzji to `stale-plan` bez usunięcia czegokolwiek. Wykonanie i tak przelicza plan z sufitem z
+   podglądu (`plan-changed`), więc zmiana stanu nie usunie więcej, niż pokazało okno. Okno zgody Git
    pokazuje się przed kolejką synchronizacji. Okno MCP pokazuje się w handlerze `export:apply`, który trzyma wspólną
    blokadę zapisu: inne zapisy przechodzą, a odbudowa indeksu i czyszczenie odpowiadają `busy`, dopóki okno jest otwarte.
 7. **Testowalność bez furtki w produkcji.** Zmienna środowiskowa `CWM_TEST_CONFIRM` (`accept` albo `cancel`) zastępuje
-   okno stałą odpowiedzią, wyłącznie gdy `app.isPackaged === false`. Zapakowana aplikacja ignoruje zmienną i zawsze
+   okno stałą odpowiedzią, wyłącznie gdy `app.isPackaged === false`. Odpowiedź idzie tą samą ścieżką co okno
+   (`singleDialog` i `isAccepted`): `accept` to przycisk zgody z zaznaczonym polem, `cancel` to "Anuluj" bez pola. Zapakowana aplikacja ignoruje zmienną i zawsze
    pokazuje okno. Zmienną czyta main przy starcie z `process.env`; renderer działa w sandboksie bez dostępu do
    środowiska i nie ma kanału, który by ją ustawił albo zmienił. Użycie odpowiedzi testowej zostawia ostrzeżenie w logu
    aplikacji. Harness E2E (`tests/e2e/launch.ts`) ustawia `accept` przy każdym uruchomieniu, bo okno systemowe
@@ -98,8 +109,11 @@ Koszty, na które się godzimy:
 
 - Jedno kliknięcie więcej dla każdej z pięciu operacji. "Zapisz i wyczyść teraz" z zaostrzonym limitem pokazuje dwa
   okna po sobie: zapis limitu (skutek przy następnym starcie) i czyszczenie teraz, bo to dwie różne decyzje.
-- Przejęty renderer może wywoływać okna wielokrotnie (każde wymaga nowego planu albo podglądu). To uciążliwość, nie
-  obejście: bez kliknięcia nic się nie dzieje.
+- Przejęty renderer może wywoływać okna wielokrotnie, jedno po drugim (MCP, czyszczenie i zgoda Git wymagają nowego
+  planu albo podglądu, zaostrzenie limitu nie). To uciążliwość, nie obejście: naraz jest najwyżej jedno okno, kolejne
+  prośby dostają `busy`, a bez kliknięcia i zaznaczenia pola nic się nie dzieje.
+- Plan MCP, którego pełna treść nie mieści się w oknie (bardzo długie polecenie, kilkanaście serwerów naraz), nie
+  zapisze się wcale; trzeba go podzielić albo skrócić polecenie w narzędziu źródłowym.
 - Okno MCP trzyma wspólną blokadę zapisu, więc odbudowa indeksu i czyszczenie czekają na decyzję.
 - **Ryzyko szczątkowe odpowiedzi testowej:** aplikacja uruchomiona z kodu źródłowego (`electron .`, `npm run dev`) z
   ustawionym `CWM_TEST_CONFIRM=accept` przyjmuje potwierdzenia bez okna. Ustawić zmienną dla procesu main może tylko

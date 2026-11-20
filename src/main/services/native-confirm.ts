@@ -1,6 +1,7 @@
 import type { RetentionSettings } from '../../core/model/retention';
 import type { ToolId } from '../../core/model/item';
 import type { McpPreview } from '../../core/services/mcp/mcp-server';
+import { isInvisibleCodePoint } from '../../core/services/security/invisible-chars';
 import { redactSecrets } from '../../core/services/security/secret-redactor';
 
 /**
@@ -12,22 +13,61 @@ import { redactSecrets } from '../../core/services/security/secret-redactor';
 export interface ConfirmRequest {
   /** Pytanie w jednym zdaniu, pierwsza linia okna. */
   readonly message: string;
-  /** Szczegoly po redakcji i z limitem dlugosci. */
+  /** Szczegoly po redakcji, w calosci: okno nigdy nie prosi o zgode na tresc, ktorej nie pokazuje. */
   readonly detail: string;
   /** Czasownik na przycisku zgody. "Anuluj" jest zawsze przyciskiem domyslnym i odpowiedzia na Esc. */
   readonly confirmLabel: string;
 }
 
+/** `busy`: inne okno potwierdzenia jest otwarte, a ta prosba nie czeka w kolejce. */
+export type ConfirmOutcome = 'accept' | 'cancel' | 'busy';
+
 export interface ConfirmPort {
-  /** `true` tylko po wyborze przycisku zgody; zamkniecie okna i blad to odmowa. */
-  confirm(request: ConfirmRequest): Promise<boolean>;
+  /** `accept` tylko po zaznaczeniu pola i wyborze przycisku zgody; zamkniecie okna i blad to `cancel`. */
+  confirm(request: ConfirmRequest): Promise<ConfirmOutcome>;
 }
 
 export const CANCEL_LABEL = 'Anuluj';
-export const MAX_LINE_CHARS = 300;
-export const MAX_SERVER_LINES = 24;
+export const CHECKBOX_LABEL = 'Rozumiem skutki';
+
+/** Budzet okna: przekroczenie oznacza odmowe operacji, nigdy skrocenie tresci. */
+export const MAX_LINE_CHARS = 600;
+export const MAX_DETAIL_LINES = 40;
+export const MAX_DETAIL_CHARS = 6000;
 
 export const CONFIRM_CANCELLED_CODE = 'confirmation-cancelled';
+export const CONFIRM_TOO_LONG_CODE = 'confirmation-too-long';
+export const CONFIRM_BUSY_MESSAGE =
+  'Inne okno potwierdzenia jest otwarte. Zamknij je i spróbuj ponownie od podglądu albo planu.';
+
+/** Zgoda wymaga przycisku zgody i zaznaczonego pola: przypadkowe podwojne klikniecie nie wystarczy. */
+export function isAccepted(response: number, checkboxChecked: boolean): boolean {
+  return response === 1 && checkboxChecked;
+}
+
+/**
+ * Najwyzej jedno okno otwarte, bez kolejki: kolejna prosba w trakcie dostaje od razu `busy`, wiec
+ * przejety renderer nie ustawi dziesiatek okien i nie trzyma blokady zapisu w oczekiwaniu.
+ */
+export function singleDialog(
+  show: (request: ConfirmRequest) => Promise<{ response: number; checkboxChecked: boolean }>,
+): ConfirmPort {
+  let open = false;
+  return {
+    async confirm(request) {
+      if (open) return 'busy';
+      open = true;
+      try {
+        const result = await show(request);
+        return isAccepted(result.response, result.checkboxChecked) ? 'accept' : 'cancel';
+      } catch {
+        return 'cancel';
+      } finally {
+        open = false;
+      }
+    },
+  };
+}
 
 /** Odpowiedz bez okna, tylko dla testow E2E; zmienna srodowiskowa ustawiana przez harness. */
 export const TEST_CONFIRM_ENV = 'CWM_TEST_CONFIRM';
@@ -47,35 +87,26 @@ export function testConfirmAnswer(
   return value === 'accept' || value === 'cancel' ? value : null;
 }
 
+/** Ta sama sciezka co okno: odpowiedz jak klikniecie, z polem zaznaczonym tylko przy zgodzie. */
 export function fixedConfirmPort(answer: TestConfirmAnswer): ConfirmPort {
-  return { confirm: () => Promise.resolve(answer === 'accept') };
-}
-
-function isUnsafeChar(code: number): boolean {
-  return (
-    code < 0x20 ||
-    code === 0x7f ||
-    (code >= 0x80 && code < 0xa0) ||
-    code === 0x2028 ||
-    code === 0x2029 ||
-    (code >= 0x200b && code <= 0x200f) ||
-    (code >= 0x202a && code <= 0x202e) ||
-    (code >= 0x2066 && code <= 0x2069) ||
-    code === 0xfeff
+  return singleDialog(() =>
+    Promise.resolve(
+      answer === 'accept'
+        ? { response: 1, checkboxChecked: true }
+        : { response: 0, checkboxChecked: false },
+    ),
   );
 }
 
 /**
- * Jedna linia: znaki sterujace i kierunku tekstu na spacje, potem redakcja sekretow i limit dlugosci.
- * Sciezek nie redagujemy: polecenie serwera stdio ma byc widoczne w calosci, jak w podgladzie planu.
+ * Jedna linia: znaki niewidoczne i sterujace na spacje (nie zlamia ukladu okna i nie odwroca tekstu),
+ * potem redakcja sekretow. Sciezek nie redagujemy: polecenie serwera stdio ma byc widoczne w calosci.
+ * Polecenia i adresu redakcja nie zmienia, bo core odmawia takiego serwera juz w planie (ADR 0061).
  */
 export function confirmLine(text: string): string {
   let flat = '';
-  for (const ch of text) flat += isUnsafeChar(ch.codePointAt(0) ?? 0) ? ' ' : ch;
-  const clean = redactSecrets(flat).text;
-  if (clean.length <= MAX_LINE_CHARS) return clean;
-  const rest = clean.length - MAX_LINE_CHARS;
-  return `${clean.slice(0, MAX_LINE_CHARS)} ... (i ${rest} ${plural(rest, 'znak', 'znaki', 'znaków')} więcej)`;
+  for (const ch of text) flat += isInvisibleCodePoint(ch.codePointAt(0) ?? 0) ? ' ' : ch;
+  return redactSecrets(flat).text;
 }
 
 export function plural(n: number, one: string, few: string, many: string): string {
@@ -100,45 +131,66 @@ export interface McpConfirmSummary {
   readonly servers: readonly McpPreview[];
 }
 
+/** Ostrzezenia na poczatku bloku serwera, przed poleceniem. */
 function serverLines(server: McpPreview): string[] {
-  const kind = server.transport === 'stdio' ? 'uruchomi' : `${server.transport}, połączy się z`;
-  const lines = [`${server.name} (${kind}): ${server.launch}`];
+  const lines = [`Serwer ${server.name}`];
+  if (server.globalToProject === true) lines.push('  Uwaga: serwer globalny trafi do projektu.');
+  for (const notice of server.headerNotices) lines.push(`  Uwaga: ${notice}`);
+  lines.push(
+    server.transport === 'stdio'
+      ? `  uruchomi: ${server.launch}`
+      : `  ${server.transport}, połączy się z: ${server.launch}`,
+  );
   for (const header of server.headers) lines.push(`  nagłówek ${header}`);
-  for (const notice of server.headerNotices) lines.push(`  ${notice}`);
   if (server.env.length > 0) lines.push(`  zmienne: ${server.env.join(', ')}`);
-  if (server.globalToProject === true) lines.push('  serwer globalny trafi do projektu');
   return lines;
 }
 
-export function mcpExportConfirmation(summary: McpConfirmSummary): ConfirmRequest {
+export type McpConfirmation =
+  | { readonly ok: true; readonly request: ConfirmRequest }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Okno z pelna trescia albo odmowa. Gdy linia, liczba linii albo calosc przekracza budzet okna, okna nie
+ * ma: zgoda na tresc, ktorej uzytkownik nie widzi, nie jest zgoda.
+ */
+export function mcpExportConfirmation(summary: McpConfirmSummary): McpConfirmation {
   const count = summary.servers.length;
   const where =
     summary.project === null
       ? TOOL_NAMES[summary.tool]
       : `${TOOL_NAMES[summary.tool]}, projekt ${summary.project}`;
-  // Pierwszy serwer zawsze, kolejne tylko w calosci, dopoki mieszcza sie w limicie linii.
-  const lines: string[] = [];
-  let shown = 0;
-  for (const server of summary.servers) {
-    const own = serverLines(server);
-    if (shown > 0 && lines.length + own.length > MAX_SERVER_LINES) break;
-    lines.push(...own.slice(0, MAX_SERVER_LINES).map(confirmLine));
-    shown += 1;
-  }
-  const hidden = count - shown;
-  if (hidden > 0) {
-    lines.push(`i ${hidden} ${plural(hidden, 'serwer', 'serwery', 'serwerów')} więcej`);
+  const lines = summary.servers.flatMap((server, i) => [
+    ...(i === 0 ? [] : ['']),
+    ...serverLines(server).map(confirmLine),
+  ]);
+  const detail = [
+    'Serwer stdio uruchamia polecenie na tym komputerze przy starcie narzędzia, a serwer http i sse wysyła nagłówki pod podany adres.',
+    '',
+    ...lines,
+  ].join('\n');
+  const longest = Math.max(0, ...lines.map((l) => l.length));
+  if (
+    longest > MAX_LINE_CHARS ||
+    lines.length > MAX_DETAIL_LINES ||
+    detail.length > MAX_DETAIL_CHARS
+  ) {
+    return {
+      ok: false,
+      reason:
+        `Okno potwierdzenia nie zmieści pełnej treści tego planu (${count} ${plural(count, 'serwer', 'serwery', 'serwerów')} MCP, najdłuższa linia ${longest} znaków), a aplikacja nie prosi o zgodę na treść, której nie pokazuje. ` +
+        'Nic nie zostało zapisane. Eksportuj mniej serwerów MCP w jednym planie albo skróć polecenie serwera w narzędziu źródłowym i zaimportuj go ponownie.',
+    };
   }
   return {
-    message: confirmLine(
-      `Zapisać ${count} ${plural(count, 'serwer', 'serwery', 'serwerów')} MCP do ${where}?`,
-    ),
-    detail: [
-      'Serwer stdio uruchamia polecenie na tym komputerze przy starcie narzędzia, a serwer http i sse wysyła nagłówki pod podany adres.',
-      '',
-      ...lines,
-    ].join('\n'),
-    confirmLabel: 'Zapisz serwery MCP',
+    ok: true,
+    request: {
+      message: confirmLine(
+        `Zapisać ${count} ${plural(count, 'serwer', 'serwery', 'serwerów')} MCP do ${where}?`,
+      ),
+      detail,
+      confirmLabel: 'Zapisz serwery MCP',
+    },
   };
 }
 

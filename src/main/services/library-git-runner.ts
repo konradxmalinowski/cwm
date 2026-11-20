@@ -11,6 +11,7 @@ import type { IpcChannel } from '../../shared/ipc/channels';
 import type { VersioningStateDto } from '../../shared/ipc/versioning-contract';
 import type { OperationLock } from './write-lock';
 import {
+  CONFIRM_BUSY_MESSAGE,
   CONFIRM_CANCELLED_CODE,
   versioningPrivateConfirmation,
   type ConfirmPort,
@@ -119,10 +120,11 @@ export class LibraryGitRunner {
         if (newConsent) {
           // Liczba z biezacego skanu biblioteki w main, nie z odczytu stanu w rendererze (ADR 0063).
           const scan = await this.deps.git.status(false, true);
-          const accepted = await this.deps.confirm.confirm(
+          const outcome = await this.deps.confirm.confirm(
             versioningPrivateConfirmation(scan.items.excludedPrivate),
           );
-          if (!accepted) return err(CONFIRM_CANCELLED_CODE, CONSENT_CANCELLED_MESSAGE);
+          if (outcome === 'busy') return err('busy', CONFIRM_BUSY_MESSAGE);
+          if (outcome !== 'accept') return err(CONFIRM_CANCELLED_CODE, CONSENT_CANCELLED_MESSAGE);
         }
         if (!current.enabled || current.includePrivate !== next.includePrivate) {
           const result = await this.enqueue(() =>

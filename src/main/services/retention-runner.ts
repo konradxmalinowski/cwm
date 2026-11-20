@@ -13,6 +13,7 @@ import type { Result } from '../../shared/ipc/library-contract';
 import type { RetentionReportDto, RetentionStateDto } from '../../shared/ipc/retention-contract';
 import type { OperationLock } from './write-lock';
 import {
+  CONFIRM_BUSY_MESSAGE,
   CONFIRM_CANCELLED_CODE,
   retentionCleanConfirmation,
   retentionTightenConfirmation,
@@ -43,6 +44,8 @@ const UNAVAILABLE_MESSAGE =
 const INTERNAL_MESSAGE =
   'Wystąpił nieoczekiwany błąd czyszczenia historii. Szczegóły są w logu aplikacji.';
 const CANCELLED_MESSAGE = 'Anulowano w oknie potwierdzenia. Nic nie zostało zmienione.';
+const STALE_AFTER_DIALOG_MESSAGE =
+  'Ustawienia zmieniły się albo podgląd wygasł w trakcie potwierdzania. Nic nie zostało usunięte. Sprawdź, ile zwolni, jeszcze raz.';
 
 function ok<T>(value: T): Result<T> {
   return { ok: true, value };
@@ -141,10 +144,11 @@ export class RetentionRunner {
           );
         }
         // Przebieg przy starcie usuwa bez pytania, wiec to okno jest ostatnim potwierdzeniem (ADR 0063).
-        const accepted = await this.deps.confirm.confirm(
+        const outcome = await this.deps.confirm.confirm(
           retentionTightenConfirmation(current, parsed.value),
         );
-        if (!accepted) return err(CONFIRM_CANCELLED_CODE, CANCELLED_MESSAGE);
+        if (outcome === 'busy') return err('busy', CONFIRM_BUSY_MESSAGE);
+        if (outcome !== 'accept') return err(CONFIRM_CANCELLED_CODE, CANCELLED_MESSAGE);
       }
       await this.deps.settings.save(parsed.value);
       return ok(this.state(parsed.value));
@@ -193,17 +197,19 @@ export class RetentionRunner {
       return this.internal(error);
     }
     // Okno przed blokada wylaczna: decyzja uzytkownika nie wstrzymuje zapisow. Liczby z podgladu w main.
-    const accepted = await this.deps.confirm.confirm(
+    const outcome = await this.deps.confirm.confirm(
       retentionCleanConfirmation({
         entries: pending.entries,
         objects: pending.objects,
         bytes: pending.bytes,
       }),
     );
-    if (!accepted) return err(CONFIRM_CANCELLED_CODE, CANCELLED_MESSAGE);
+    if (outcome === 'busy') return err('busy', CONFIRM_BUSY_MESSAGE);
+    if (outcome !== 'accept') return err(CONFIRM_CANCELLED_CODE, CANCELLED_MESSAGE);
     const result = await this.run({
       apply: true,
       ceiling: { entries: pending.entries, objects: pending.objects },
+      recheck: pending,
     });
     if (result.ok && result.value.blocked === 'plan-changed') {
       return err(
@@ -249,12 +255,23 @@ export class RetentionRunner {
     settings?: RetentionSettings;
     unattended?: boolean;
     ceiling?: { entries: number; objects: number };
+    /** Podglad, ktory potwierdzono w oknie: sprawdzany jeszcze raz pod blokada wylaczna. */
+    recheck?: PendingPreview;
   }): Promise<Result<RetentionReportDto>> {
     const service = this.deps.service();
     if (service === null) return err('unavailable', UNAVAILABLE_MESSAGE);
     const release = this.deps.lock.tryEnterExclusive();
     if (release === null) return err('busy', BUSY_MESSAGE);
     try {
+      // Okno trwalo poza blokada: limity i waznosc podgladu moglyby sie zmienic w trakcie decyzji.
+      const { recheck } = options;
+      if (
+        recheck !== undefined &&
+        (recheck.expiresAt <= this.now() ||
+          !sameSettings(await this.deps.settings.load(), recheck.settings))
+      ) {
+        return err('stale-plan', STALE_AFTER_DIALOG_MESSAGE);
+      }
       const report = await service.run(options);
       let token: string | null = null;
       if (!options.apply && report.blocked === null) {

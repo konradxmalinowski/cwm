@@ -30,7 +30,7 @@ async function planPayload(entries: ReturnType<typeof entry>[]): Promise<{
   });
   registerExportHandlers(registry, {
     service: () => h.service,
-    confirm: { confirm: () => Promise.resolve(false) },
+    confirm: { confirm: () => Promise.resolve('cancel' as const) },
   });
   const r = (await handlers.get('export:plan')?.(
     {},

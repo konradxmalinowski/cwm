@@ -13,8 +13,11 @@ numeracja wersji na [Semantic Versioning](https://semver.org/lang/pl/).
   włączenie albo zaostrzenie limitu retencji i zgoda na elementy prywatne w historii Git pytają o zgodę w oknie
   pokazanym przez proces główny, po zaznaczeniu pola na ekranie. Treść okna pochodzi z planu i liczb zapamiętanych w
   procesie głównym (lista serwerów z poleceniem albo adresem, nagłówkami i zmiennymi, liczba usuwanych wpisów, zmienione
-  limity, liczba elementów prywatnych), po redakcji sekretów i z limitem długości. "Anuluj" jest domyślny, a anulowanie
-  niczego nie zmienia (`confirmation-cancelled`). Zamyka znane ograniczenie, w którym przejęte okno aplikacji mogło
+  limity, liczba elementów prywatnych), po redakcji sekretów, w całości: plan MCP, którego treść nie mieści się w oknie,
+  jest odrzucany (`confirmation-too-long`) zamiast skracany. "Anuluj" jest domyślny, zgoda wymaga zaznaczenia
+  "Rozumiem skutki", naraz jest najwyżej jedno okno (kolejne prośby dostają `busy`), a anulowanie niczego nie zmienia
+  (`confirmation-cancelled`). Reguły MCP odrzucają teraz pełną klasę znaków niewidocznych (formatujące, sterujące,
+  selektory wariantu, znaczniki Unicode, wypełniacze Hangul). Zamyka znane ograniczenie, w którym przejęte okno aplikacji mogło
   samo potwierdzić plan po jego odczytaniu.
 
 - Serwery MCP w Gemini CLI i nagłówki HTTP jako odniesienia (ADR 0062, uzupełnia ADR 0061). Import i jawny eksport

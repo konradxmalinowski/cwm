@@ -1,4 +1,5 @@
 import { isSettingsEnvNameDenied, nameLooksSecret, textHasSecret } from '../../cwm/env-policy';
+import { hasInvisibleChar } from '../security/invisible-chars';
 import { redactSecrets } from '../security/secret-redactor';
 import type { ItemId, JsonValue, LibraryItem, ToolId } from '../../model/item';
 
@@ -100,8 +101,6 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 const MAX_TEXT = 4096;
 const MAX_ARGS = 128;
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
-/** Znaki kierunku tekstu i zerowej szerokosci: polecenie wyglada w podgladzie inaczej, niz sie wykona. */
-const INVISIBLE = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/;
 /** Nazwy z `Object.prototype` (np. `__proto__`, `constructor`) nie sa nazwami serwerow. */
 const PROTOTYPE_NAMES = new Set([...Object.getOwnPropertyNames(Object.prototype), 'prototype']);
 
@@ -184,7 +183,7 @@ export function mcpCredentialProblem(spec: McpServerSpec): string | null {
 /** Wspolna dla importu i eksportu: tekst serwera nie moze niesc sekretu ani byc maskowany w podgladzie. */
 export function mcpSecretProblem(spec: McpServerSpec): string | null {
   const texts = [spec.command, spec.url, ...spec.args].filter((t): t is string => t !== null);
-  if (texts.some((t) => INVISIBLE.test(t))) {
+  if (texts.some((t) => hasInvisibleChar(t))) {
     return 'polecenie, argument albo adres zawiera niewidoczny znak (kierunek tekstu albo zerowa szerokość).';
   }
   if (texts.some((t) => textHasSecret(t))) {
@@ -338,7 +337,7 @@ function textProblem(label: string, text: string): string | null {
   if (text.length === 0 || text.length > MAX_TEXT || CONTROL_CHARS.test(text)) {
     return `${label} jest puste, za długie albo zawiera znak sterujący.`;
   }
-  if (INVISIBLE.test(text)) {
+  if (hasInvisibleChar(text)) {
     return `${label} zawiera niewidoczny znak (kierunek tekstu albo zerowa szerokość).`;
   }
   if (text.includes('$')) {

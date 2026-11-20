@@ -22,7 +22,9 @@ import type { Result } from '../../../shared/ipc/library-contract';
 import type { IpcRegistry } from '../registry';
 import { McpConfirmations } from '../../services/mcp-confirmation';
 import {
+  CONFIRM_BUSY_MESSAGE,
   CONFIRM_CANCELLED_CODE,
+  CONFIRM_TOO_LONG_CODE,
   mcpExportConfirmation,
   type ConfirmPort,
 } from '../../services/native-confirm';
@@ -304,8 +306,20 @@ export function registerExportHandlers(registry: IpcRegistry, deps: ExportHandle
     guarded(parseExportApplyRequest, async (service, request) => {
       const summary = confirmations.take(request.planId, request.mcpConfirmation);
       // Pole w rendererze jest pierwszym krokiem; autorytatywne jest okno z trescia z planu w main.
-      if (summary !== null && !(await deps.confirm.confirm(mcpExportConfirmation(summary)))) {
-        return err(CONFIRM_CANCELLED_CODE, MCP_CANCELLED_MESSAGE);
+      // Kazda odpowiedz poza zgoda zuzywa plan, wiec ponowienie idzie przez nowy plan i nowy znacznik.
+      if (summary !== null) {
+        const confirmation = mcpExportConfirmation(summary);
+        if (!confirmation.ok) {
+          service.discard(request.planId);
+          return err(CONFIRM_TOO_LONG_CODE, confirmation.reason);
+        }
+        const outcome = await deps.confirm.confirm(confirmation.request);
+        if (outcome !== 'accept') {
+          service.discard(request.planId);
+          return outcome === 'busy'
+            ? err('busy', CONFIRM_BUSY_MESSAGE)
+            : err(CONFIRM_CANCELLED_CODE, MCP_CANCELLED_MESSAGE);
+        }
       }
       const mcpConfirmed = summary !== null;
       return ok(

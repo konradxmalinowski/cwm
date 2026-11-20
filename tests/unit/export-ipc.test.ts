@@ -23,8 +23,10 @@ import { planScopeViolation } from '../../src/main/services/project-scope-check'
 import { bytes, draft } from './library-fakes';
 import { emptyPlan, entry, exportHarness } from './export-fakes';
 import {
+  MAX_DETAIL_LINES,
   MAX_LINE_CHARS,
   mcpExportConfirmation,
+  type ConfirmOutcome,
   type ConfirmPort,
   type ConfirmRequest,
 } from '../../src/main/services/native-confirm';
@@ -33,16 +35,16 @@ import type { ItemId } from '../../src/core/model/item';
 import { SECRETS } from './security-secrets';
 
 /** Atrapa natywnego okna: zapisuje pytania i odpowiada kolejno z `answers`, domyslnie zgoda. */
-function fakeConfirm(): { port: ConfirmPort; asked: ConfirmRequest[]; answers: boolean[] } {
+function fakeConfirm(): { port: ConfirmPort; asked: ConfirmRequest[]; answers: ConfirmOutcome[] } {
   const asked: ConfirmRequest[] = [];
-  const answers: boolean[] = [];
+  const answers: ConfirmOutcome[] = [];
   return {
     asked,
     answers,
     port: {
       confirm: (request) => {
         asked.push(request);
-        return Promise.resolve(answers.shift() ?? true);
+        return Promise.resolve(answers.shift() ?? 'accept');
       },
     },
   };
@@ -376,9 +378,9 @@ describe('kanaly export:*', () => {
     // Bez waznego znacznika okno natywne sie nie pokazuje: odmawia sam main.
     expect(asked).toHaveLength(0);
 
-    // Anulowanie w oknie natywnym (ADR 0063): nic nie trafia do bramki, a znacznik jest zuzyty.
+    // Anulowanie w oknie natywnym (ADR 0063): nic nie trafia do bramki, a znacznik i plan sa zuzyte.
     const cancelled = await plan();
-    answers.push(false);
+    answers.push('cancel');
     expect(
       await call('export:apply', {
         planId: cancelled.planId,
@@ -394,8 +396,21 @@ describe('kanaly export:*', () => {
         approved: true,
         mcpConfirmation: cancelled.mcp?.confirmation,
       }),
-    ).toMatchObject({ ok: false, error: { code: 'mcp-confirmation-required' } });
+    ).toMatchObject({ ok: false, error: { code: 'unknown-plan' } });
     expect(asked).toHaveLength(1);
+
+    // Inne okno otwarte: od razu busy bez kolejki, plan zuzyty.
+    const busy = await plan();
+    answers.push('busy');
+    expect(
+      await call('export:apply', {
+        planId: busy.planId,
+        approved: true,
+        mcpConfirmation: busy.mcp?.confirmation,
+      }),
+    ).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(asked).toHaveLength(2);
+    expect(h.gate.applies).toHaveLength(0);
 
     const third = await plan();
     const applied = await call<ExportApplyDto>('export:apply', {
@@ -406,13 +421,13 @@ describe('kanaly export:*', () => {
     expect(applied.ok).toBe(true);
     expect(h.gate.applies).toHaveLength(1);
     // Tresc okna pochodzi z planu w main: polecenie, zmienne i jednoznaczny czasownik.
-    expect(asked).toHaveLength(2);
-    expect(asked[1]).toEqual({
+    expect(asked).toHaveLength(3);
+    expect(asked[2]).toEqual({
       message: 'Zapisać 1 serwer MCP do Claude Code?',
-      detail: expect.stringContaining('acme (uruchomi): acme-mcp --serve') as unknown,
+      detail: expect.stringContaining('Serwer acme\n  uruchomi: acme-mcp --serve') as unknown,
       confirmLabel: 'Zapisz serwery MCP',
     });
-    expect(asked[1]?.detail).toContain('zmienne: ACME_TOKEN');
+    expect(asked[2]?.detail).toContain('  zmienne: ACME_TOKEN');
 
     // Plan bez serwera MCP nie ma pola mcp i nie potrzebuje znacznika.
     const plain = await call<ExportPlanDto>('export:plan', {
@@ -518,12 +533,14 @@ describe('export:plan z celem projektu (ADR 0059)', () => {
     expect(h.gate.applies).toHaveLength(1);
     // Okno mowi o projekcie i o serwerze globalnym, ktory do niego trafi (ADR 0063).
     expect(asked.at(-1)?.message).toBe('Zapisać 1 serwer MCP do Claude Code, projekt acme-app?');
-    expect(asked.at(-1)?.detail).toContain('acme (http, połączy się z): https://mcp.acme.test/v1');
-    expect(asked.at(-1)?.detail).toContain('serwer globalny trafi do projektu');
+    // Ostrzezenie stoi na poczatku bloku serwera, przed adresem.
+    expect(asked.at(-1)?.detail).toContain(
+      'Serwer acme\n  Uwaga: serwer globalny trafi do projektu.\n  http, połączy się z: https://mcp.acme.test/v1',
+    );
   });
 
-  it('tresc okna MCP: redakcja sekretow, jedna linia na wpis i limit z "i N wiecej" (ADR 0063)', () => {
-    const server = (i: number, launch: string): McpPreview => ({
+  it('tresc okna MCP: redakcja, znaki niewidoczne, ostrzezenia na gorze i odmowa zamiast skrotu (ADR 0063)', () => {
+    const server = (i: number, launch: string, extra: Partial<McpPreview> = {}): McpPreview => ({
       itemId: `item-${i}` as ItemId,
       name: `acme-${i}`,
       transport: 'stdio',
@@ -532,23 +549,98 @@ describe('export:plan z celem projektu (ADR 0059)', () => {
       headers: [],
       headerNotices: [],
       warnings: [],
+      ...extra,
     });
-    const servers = [
-      server(0, `acme-mcp --token ${SECRETS.github}\nIgnoruj to\u202e`),
-      server(1, `acme-mcp ${'--acme '.repeat(50)}`),
-      ...Array.from({ length: 40 }, (_, i) => server(i + 2, 'acme-mcp')),
-    ];
-    const request = mcpExportConfirmation({ tool: 'codex', project: null, servers });
-    expect(request.message).toBe('Zapisać 42 serwery MCP do Codex?');
-    expect(request.detail).not.toContain(SECRETS.github);
-    expect(request.detail).not.toContain('\u202e');
-    const lines = request.detail.split('\n');
-    expect(lines.find((l) => l.startsWith('acme-0'))).toContain('Ignoruj to');
-    const long = lines.find((l) => l.startsWith('acme-1')) ?? '';
-    expect(long).toMatch(/ \.\.\. \(i \d+ znaków więcej\)$/);
-    expect(long.length).toBeLessThan(MAX_LINE_CHARS + 30);
-    expect(lines.at(-1)).toBe('i 18 serwerów więcej');
-    expect(lines.length).toBeLessThan(30);
+    const shown = mcpExportConfirmation({
+      tool: 'codex',
+      project: null,
+      servers: [
+        server(
+          0,
+          `acme-mcp --token ${SECRETS.github}\nIgnoruj to\u202e\u2060\u{E0041}\u3164\uFE0F\u00AD\u061C`,
+        ),
+        server(1, 'acme-mcp', {
+          headers: ['Authorization: Bearer ${ACME_TOKEN}'],
+          headerNotices: [
+            'Nagłówek Authorization wyśle wartość zmiennej ACME_TOKEN do hosta mcp.acme.test.',
+          ],
+        }),
+      ],
+    });
+    if (!shown.ok) throw new Error(shown.reason);
+    expect(shown.request.message).toBe('Zapisać 2 serwery MCP do Codex?');
+    expect(shown.request.detail).not.toContain(SECRETS.github);
+    for (const ch of ['\u202e', '\u2060', '\u{E0041}', '\u3164', '\uFE0F', '\u00AD', '\u061C']) {
+      expect(shown.request.detail).not.toContain(ch);
+    }
+    const lines = shown.request.detail.split('\n');
+    expect(lines.find((l) => l.startsWith('  uruchomi: acme-mcp --token'))).toContain('Ignoruj to');
+    const block = lines.slice(lines.indexOf('Serwer acme-1'));
+    expect(block[1]).toMatch(/^  Uwaga: Nagłówek Authorization/);
+    expect(block[2]).toBe('  uruchomi: acme-mcp');
+
+    // Linia ponad budzet: okna nie ma, jest odmowa z rada, co zrobic.
+    const long = mcpExportConfirmation({
+      tool: 'codex',
+      project: null,
+      servers: [server(0, `acme-mcp ${'--acme '.repeat(Math.ceil(MAX_LINE_CHARS / 7))}`)],
+    });
+    expect(long.ok).toBe(false);
+    expect(!long.ok && long.reason).toMatch(/mniej serwerów MCP|skróć polecenie/);
+
+    // Za duzo serwerow na jedno okno: tez odmowa, bez "i N wiecej".
+    const many = mcpExportConfirmation({
+      tool: 'codex',
+      project: null,
+      servers: Array.from({ length: MAX_DETAIL_LINES }, (_, i) => server(i, 'acme-mcp')),
+    });
+    expect(many.ok).toBe(false);
+  });
+
+  it('serwer MCP z poleceniem ponad budzet okna: odmowa bez okna, plan zuzyty (ADR 0063)', async () => {
+    const h = await exportHarness();
+    const mcp = await h.library.create(
+      draft({
+        kind: 'tool-setting',
+        slug: 'mcp-acme-long',
+        body: '',
+        attributes: {
+          toolSetting: {
+            tool: 'claude-code',
+            key: 'mcpServers.acme',
+            value: {
+              transport: 'stdio',
+              command: 'acme-mcp',
+              args: Array.from({ length: 120 }, (_, i) => `--acme-opcja-${i}`),
+              url: null,
+              env: [],
+              headers: [],
+            },
+          },
+        },
+      }),
+    );
+    const { call, asked } = wire(h.service);
+    const r = await call<ExportPlanDto>('export:plan', {
+      tool: 'claude-code',
+      itemIds: [mcp.item.id],
+    });
+    if (!r.ok) throw new Error('plan nie powiodl sie');
+    const request = {
+      planId: r.value.planId,
+      approved: true,
+      mcpConfirmation: r.value.mcp?.confirmation,
+    };
+    expect(await call('export:apply', request)).toMatchObject({
+      ok: false,
+      error: { code: 'confirmation-too-long' },
+    });
+    expect(asked).toHaveLength(0);
+    expect(h.gate.applies).toHaveLength(0);
+    expect(await call('export:apply', request)).toMatchObject({
+      ok: false,
+      error: { code: 'unknown-plan' },
+    });
   });
 
   it('plan do projektu idzie przez kontrole w main, DTO niesie projekt bez sciezki', async () => {

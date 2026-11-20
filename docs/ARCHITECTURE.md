@@ -755,7 +755,7 @@ Kanały z handlerem:
 | `import:scan-project` | `{ projectId }` | jak `import:scan`, plus `project` (identyfikator i nazwa); kandydaci zostaną przypięci do projektu (ADR 0059) |
 | `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged?, renames? }` | zaimportowane, pominięte z powodem, błędy |
 | `export:plan` | `{ tool, itemIds, resolutions?, projectId?, includeGlobal? }` | `planId`, `toolMissing`, `project` przy celu projektowym, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy (w tym odmowy zakresu), konflikty, sieroty, `applicable`; plan łamiący zakres to `scope-violation` (ADR 0059); plan zapisujący serwer MCP ma `mcp` z podglądem serwerów i jednorazowym znacznikiem `confirmation` (ADR 0061) |
-| `export:apply` | `{ planId, approved: true, mcpConfirmation?, mcpGlobalToProject? }` | raport per wpis, `backupId`, `verified`, `rolledBack`; plan z serwerem MCP bez znacznika z `export:plan` to `mcp-confirmation-required` (ADR 0061); z ważnym znacznikiem main pokazuje natywne okno z listą serwerów z planu, a odmowa w nim to `confirmation-cancelled` (ADR 0063) |
+| `export:apply` | `{ planId, approved: true, mcpConfirmation?, mcpGlobalToProject? }` | raport per wpis, `backupId`, `verified`, `rolledBack`; plan z serwerem MCP bez znacznika z `export:plan` to `mcp-confirmation-required` (ADR 0061); z ważnym znacznikiem main pokazuje natywne okno z listą serwerów z planu, a odmowa w nim to `confirmation-cancelled`, treść ponad budżet okna to `confirmation-too-long`, inne otwarte okno to `busy` (ADR 0063) |
 | `export:zip-plan` | `{ tool, itemIds, confirmedItemIds? }` | jak `export:plan` (układ plików wybranego narzędzia, wpisy `create`) plus `zip`: `fileName`, `fileCount`, `sizeBytes` i `held` (elementy prywatne, z sekretem i projektowe z `confirmed`); archiwum jest budowane w main (ADR 0054) |
 | `export:zip-save` | `{ planId, approved: true }` | `{ status: 'saved', fileName, fileCount }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
 | `sync:status` | `{ tools? }` | `missingTools`, stan per element i narzędzie, sieroty |
@@ -921,7 +921,8 @@ Niezaufane dane, bez wyjątku. Konkretnie:
 - Operacje wysokiego ryzyka (zapis serwerów MCP, czyszczenie historii, włączenie albo zaostrzenie limitu retencji,
   elementy prywatne w historii Git) wymagają zgody w natywnym oknie systemowym pokazanym przez main (ADR 0063), po
   sprawdzeniu jednorazowego znacznika. Treść okna main buduje z danych, które trzyma sam (plan, liczby z podglądu, skan
-  biblioteki), nigdy z ładunku renderera; "Anuluj" jest domyślny. Port `ConfirmPort` (`main/services/native-confirm.ts`)
+  biblioteki), nigdy z ładunku renderera, i w całości: treść, która się nie mieści, to odmowa, nie skrót. "Anuluj" jest
+  domyślny, zgoda wymaga zaznaczonego pola "Rozumiem skutki", a naraz jest najwyżej jedno okno (kolejne prośby: `busy`). Port `ConfirmPort` (`main/services/native-confirm.ts`)
   ma implementację Electron w `main/bootstrap/native-confirm.ts`. Odpowiedź testowa ze zmiennej `CWM_TEST_CONFIRM` działa
   tylko w aplikacji niezapakowanej (`app.isPackaged === false`) i jest dla harnessu E2E.
 
