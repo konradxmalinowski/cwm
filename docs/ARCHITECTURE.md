@@ -755,7 +755,7 @@ Kanały z handlerem:
 | `import:scan-project` | `{ projectId }` | jak `import:scan`, plus `project` (identyfikator i nazwa); kandydaci zostaną przypięci do projektu (ADR 0059) |
 | `import:apply` | `{ scanToken, candidateIds, confirmedSecrets?, replaceChanged?, renames? }` | zaimportowane, pominięte z powodem, błędy |
 | `export:plan` | `{ tool, itemIds, resolutions?, projectId?, includeGlobal? }` | `planId`, `toolMissing`, `project` przy celu projektowym, verdykty zgodności, wpisy z `before` i `after` po redakcji, odmowy (w tym odmowy zakresu), konflikty, sieroty, `applicable`; plan łamiący zakres to `scope-violation` (ADR 0059); plan zapisujący serwer MCP ma `mcp` z podglądem serwerów i jednorazowym znacznikiem `confirmation` (ADR 0061) |
-| `export:apply` | `{ planId, approved: true, mcpConfirmation?, mcpGlobalToProject? }` | raport per wpis, `backupId`, `verified`, `rolledBack`; plan z serwerem MCP bez znacznika z `export:plan` to `mcp-confirmation-required` (ADR 0061) |
+| `export:apply` | `{ planId, approved: true, mcpConfirmation?, mcpGlobalToProject? }` | raport per wpis, `backupId`, `verified`, `rolledBack`; plan z serwerem MCP bez znacznika z `export:plan` to `mcp-confirmation-required` (ADR 0061); z ważnym znacznikiem main pokazuje natywne okno z listą serwerów z planu, a odmowa w nim to `confirmation-cancelled`, treść ponad budżet okna to `confirmation-too-long`, inne otwarte okno to `busy` (ADR 0063) |
 | `export:zip-plan` | `{ tool, itemIds, confirmedItemIds? }` | jak `export:plan` (układ plików wybranego narzędzia, wpisy `create`) plus `zip`: `fileName`, `fileCount`, `sizeBytes` i `held` (elementy prywatne, z sekretem i projektowe z `confirmed`); archiwum jest budowane w main (ADR 0054) |
 | `export:zip-save` | `{ planId, approved: true }` | `{ status: 'saved', fileName, fileCount }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
 | `sync:status` | `{ tools? }` | `missingTools`, stan per element i narzędzie, sieroty |
@@ -767,11 +767,11 @@ Kanały z handlerem:
 | `diagnostics:report-preview` | brak | `{ previewId, text, fileName, lineCount, logLineCount }`: pełna treść raportu po redakcji (ADR 0053) |
 | `diagnostics:report-save` | `{ previewId }` | `{ status: 'saved', fileName }` albo `{ status: 'cancelled' }`; ścieżkę wybiera main systemowym oknem zapisu |
 | `retention:get` | brak | `{ maxEntries, maxAgeDays, maxStoreMiB, startupNotice }`, limity liczbą albo `null` (bez limitu), `startupNotice` to powód, dla którego czyszczenie przy starcie tej sesji nic nie zrobiło (ADR 0056) |
-| `retention:set` | `{ maxEntries, maxAgeDays, maxStoreMiB, confirmed? }` | zapisane ustawienia; zakresy sprawdza main, nieznane pola przepadają; włączenie albo zaostrzenie limitu bez `confirmed: true` to `confirmation-required` |
+| `retention:set` | `{ maxEntries, maxAgeDays, maxStoreMiB, confirmed? }` | zapisane ustawienia; zakresy sprawdza main, nieznane pola przepadają; włączenie albo zaostrzenie limitu bez `confirmed: true` to `confirmation-required`, a z nim wymaga zgody w natywnym oknie main (`confirmation-cancelled` przy odmowie, ADR 0063) |
 | `retention:preview` | `{ settings? }` | suchy przebieg na podanych (albo zapisanych) limitach: `blocked`, liczby wpisów, obiektów i bajtów do usunięcia, `sizeLimitUnmet`, `ageRuleSkipped` i `previewToken` (jednorazowy, 5 minut) |
-| `retention:apply` | `{ confirmed: true, token }` | te same liczby po wykonaniu, `objectsFailed`; przerywa się (`plan-changed`), gdy przeliczony plan usuwa więcej niż podgląd |
+| `retention:apply` | `{ confirmed: true, token }` | te same liczby po wykonaniu, `objectsFailed`; przerywa się (`plan-changed`), gdy przeliczony plan usuwa więcej niż podgląd; przed wykonaniem natywne okno main z liczbami z podglądu (`confirmation-cancelled` przy odmowie, ADR 0063) |
 | `versioning:get` | brak | `{ enabled, includePrivate, available, unavailableMessage, repository, commits, lastCommitAt, lastCommitSubject, itemsIncluded, itemsExcludedPrivate, itemsExcludedSecrets, itemsExcludedGitEntry, itemsExcludedUnreadable, warning, consentNonce }`; bez ścieżek, `warning` to ostatnia awaria `git` w tej sesji, `consentNonce` to jednorazowy znacznik zgody (ADR 0060) |
-| `versioning:set` | `{ enabled, includePrivate, acknowledged?, nonce? }` | stan jak w `versioning:get`; oba pola ustawień logiczne; włączenie z elementami prywatnymi wymaga `acknowledged: true` i znacznika `nonce` z ostatniego odczytu (inaczej `consent-required` albo `consent-expired`); pierwsza synchronizacja przed zapisem ustawień, brak `git` to `git-unavailable` |
+| `versioning:set` | `{ enabled, includePrivate, acknowledged?, nonce? }` | stan jak w `versioning:get`; oba pola ustawień logiczne; włączenie z elementami prywatnymi wymaga `acknowledged: true` i znacznika `nonce` z ostatniego odczytu (inaczej `consent-required` albo `consent-expired`); pierwsza synchronizacja przed zapisem ustawień, brak `git` to `git-unavailable`; nowa zgoda na elementy prywatne wymaga też zgody w natywnym oknie main (`confirmation-cancelled` przy odmowie, ADR 0063) |
 | `projects:list` | brak | `{ projects }`: identyfikator, nazwa i `invalid` (powód niedostępności wpisu, który nie przeszedł polityki katalogu), bez katalogu (ADR 0059) |
 | `projects:add` | brak (ładunek ignorowany) | `{ status: 'added', project }` albo `{ status: 'cancelled' }`; katalog wybiera natywne okno w main i sprawdza `checkChosenProjectDir` |
 | `projects:rename` | `{ projectId, name }` | projekt po zmianie nazwy |
@@ -918,6 +918,13 @@ Niezaufane dane, bez wyjątku. Konkretnie:
 - Proces `git` ma jeden kod uruchamiania (`infra/cwm/git-process.ts`): pobieranie z ADR 0048 i 0058 oraz lokalne
   repozytorium biblioteki z ADR 0060. Lokalne repozytorium działa w tym samym czystym środowisku, ale z
   `protocol.https.allow=never`, więc żadne jego polecenie nie dotyka sieci, a `git-fetch.ts` nie zyskał nowego importera.
+- Operacje wysokiego ryzyka (zapis serwerów MCP, czyszczenie historii, włączenie albo zaostrzenie limitu retencji,
+  elementy prywatne w historii Git) wymagają zgody w natywnym oknie systemowym pokazanym przez main (ADR 0063), po
+  sprawdzeniu jednorazowego znacznika. Treść okna main buduje z danych, które trzyma sam (plan, liczby z podglądu, skan
+  biblioteki), nigdy z ładunku renderera, i w całości: treść, która się nie mieści, to odmowa, nie skrót. "Anuluj" jest
+  domyślny, zgoda wymaga zaznaczonego pola "Rozumiem skutki", a naraz jest najwyżej jedno okno (kolejne prośby: `busy`). Port `ConfirmPort` (`main/services/native-confirm.ts`)
+  ma implementację Electron w `main/bootstrap/native-confirm.ts`. Odpowiedź testowa ze zmiennej `CWM_TEST_CONFIRM` działa
+  tylko w aplikacji niezapakowanej (`app.isPackaged === false`) i jest dla harnessu E2E.
 
 ### 8.3 Granica 3: zapis
 

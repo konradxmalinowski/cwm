@@ -212,6 +212,11 @@ export class ExportService {
     if (!report.toolMissing) this.remember(report);
   }
 
+  /** Usuwa plan bez zapisu: odmowa albo anulowanie w oknie potwierdzenia zuzywa plan (ADR 0063). */
+  discard(planId: string): void {
+    this.plans.delete(planId);
+  }
+
   /** Jak `plan`, ale plan nie jest zapamietany: do odczytu stanu (sieroty, status) bez wypierania planow. */
   async preview(
     tool: ToolId,

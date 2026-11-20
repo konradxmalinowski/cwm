@@ -10,6 +10,12 @@ import type { Result } from '../../shared/ipc/library-contract';
 import type { IpcChannel } from '../../shared/ipc/channels';
 import type { VersioningStateDto } from '../../shared/ipc/versioning-contract';
 import type { OperationLock } from './write-lock';
+import {
+  CONFIRM_BUSY_MESSAGE,
+  CONFIRM_CANCELLED_CODE,
+  versioningPrivateConfirmation,
+  type ConfirmPort,
+} from './native-confirm';
 
 /**
  * Kanaly zapisujace biblioteke i typ operacji w temacie commita (ADR 0060). `history:rollback`,
@@ -27,6 +33,8 @@ export interface LibraryGitRunnerDeps {
   readonly settings: LibraryGitSettingsStore;
   readonly git: LibraryGit;
   readonly lock: OperationLock;
+  /** Natywne okno w main (ADR 0063): autorytatywna zgoda na elementy prywatne w historii Git. */
+  readonly confirm: ConfirmPort;
   readonly logUnexpected?: (error: unknown) => void;
   readonly logInfo?: (message: string) => void;
   readonly logWarn?: (message: string) => void;
@@ -42,6 +50,8 @@ const CONSENT_REQUIRED_MESSAGE =
   'Dołączenie elementów prywatnych wymaga potwierdzenia, że ich treść trafi do historii Git i w niej zostanie.';
 const CONSENT_EXPIRED_MESSAGE =
   'Potwierdzenie wygasło albo zostało już użyte. Odśwież stan i potwierdź jeszcze raz.';
+const CONSENT_CANCELLED_MESSAGE =
+  'Anulowano w oknie potwierdzenia. Ustawienia wersjonowania nie zostały zmienione.';
 
 /** Jednorazowy znacznik zgody zyje krotko: wydaje go odczyt stanu, a zapis zgody go zuzywa (ADR 0060, punkt 6). */
 export const CONSENT_NONCE_TTL_MS = 5 * 60 * 1000;
@@ -99,13 +109,23 @@ export class LibraryGitRunner {
       // Zgoda na prywatne elementy jest decyzja uzytkownika, wiec main sprawdza ja sam: potwierdzenie i
       // jednorazowy znacznik z odczytu stanu. Renderer nie moze jej "przeskoczyc" pojedynczym wywolaniem.
       const grantsPrivate = next.enabled && next.includePrivate;
-      if (grantsPrivate && !(current.enabled && current.includePrivate)) {
+      const newConsent = grantsPrivate && !(current.enabled && current.includePrivate);
+      if (newConsent) {
         if (extra.acknowledged !== true) return err('consent-required', CONSENT_REQUIRED_MESSAGE);
         if (!this.consumeNonce(extra.nonce)) return err('consent-expired', CONSENT_EXPIRED_MESSAGE);
       }
       if (next.enabled) {
         const availability = await this.deps.git.probe();
         if (!availability.available) return err('git-unavailable', availability.message);
+        if (newConsent) {
+          // Liczba z biezacego skanu biblioteki w main, nie z odczytu stanu w rendererze (ADR 0063).
+          const scan = await this.deps.git.status(false, true);
+          const outcome = await this.deps.confirm.confirm(
+            versioningPrivateConfirmation(scan.items.excludedPrivate),
+          );
+          if (outcome === 'busy') return err('busy', CONFIRM_BUSY_MESSAGE);
+          if (outcome !== 'accept') return err(CONFIRM_CANCELLED_CODE, CONSENT_CANCELLED_MESSAGE);
+        }
         if (!current.enabled || current.includePrivate !== next.includePrivate) {
           const result = await this.enqueue(() =>
             this.deps.git.sync({

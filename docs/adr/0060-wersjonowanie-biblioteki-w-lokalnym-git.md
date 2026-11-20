@@ -1,6 +1,6 @@
 # ADR 0060: wersjonowanie biblioteki w lokalnym repozytorium Git jako warstwa opcjonalna
 
-Status: zaakceptowane
+Status: zaakceptowane, zgoda na elementy prywatne uzupełniona natywnym oknem w ADR 0063
 Data: 2026-11-18
 Dotyczy: ADR 0012 (blokada zapisu), ADR 0019 (Git jako warstwa opcjonalna), ADR 0030 (blokada operacji), ADR 0048 (pluginy z git), ADR 0056 (retencja), ADR 0058 (import z repozytorium Git), ADR 0059 (projekty)
 
@@ -105,7 +105,9 @@ sekundy, nie milisekundy.
      na nim. Main wymusza to samo: zgoda (włączone wersjonowanie z `includePrivate`, gdy jeszcze nie obowiązuje) wymaga
      `acknowledged: true` i jednorazowego znacznika z odczytu stanu (`versioning:get`, ważny 5 minut, zużywany przy
      każdej próbie). Bez nich zapis kończy się `consent-required` albo `consent-expired`, więc skompromitowany renderer
-     nie włączy prywatnych elementów jednym wywołaniem.
+     nie włączy prywatnych elementów jednym wywołaniem. Znacznik nadal trafia do renderera, więc przejęty renderer mógłby
+     go użyć; od ADR 0063 main po ważnym znaczniku pokazuje natywne okno z liczbą elementów z własnego skanu i bez
+     zgody w nim ustawienia się nie zmieniają.
    - `item.json`, którego nie da się odczytać albo którego klasyfikacja ma nieznany kształt, jest wykluczony (`excluded-unreadable`):
      reguła zawodzi na zamknięciu. `libraryGitEligibility` w `core/model/library-git.ts` ma tę regułę w jednym miejscu.
    - Wykluczenie działa przy każdym przebiegu: element, który stał się prywatny albo dostał wykrycie sekretu, jest zdejmowany

@@ -1,6 +1,6 @@
 # ADR 0056: retencja historii i czyszczenie content store
 
-Status: zaakceptowane w zakresie planu (2026-11-17)
+Status: zaakceptowane w zakresie planu (2026-11-17), potwierdzenie uzupełnione natywnym oknem w ADR 0063
 Data: 2026-11-17
 Dotyczy: ADR 0008 (granica IPC), ADR 0014 (log operacji nie wraca z plików), ADR 0019 (historia na content store), ADR 0027 (pełne treści z deduplikacją, czyszczenie odroczone), ADR 0028 (kopia przed operacją), ADR 0030 (blokada wspólna z odbudową indeksu), ADR 0034 (usuwanie tylko przy cofnięciu)
 Źródło: plan `plans/2026-11-17-content-store-gc.md` (lokalny, poza repozytorium); kod w `src/core/services/retention/`, `src/infra/store/object-inventory.ts`, `src/infra/store/retention-settings.ts`, `src/main/services/retention-runner.ts`, `src/renderer/app/features/diagnostics/retention-section.component.*`
@@ -91,7 +91,9 @@ liczymy ją za każdym razem od zera.
     pytania; interfejs pokazuje wcześniej podgląd z liczbami dla nowych limitów. **Podgląd zwraca token** (hash liczb planu,
     czasu i soli, jednorazowy, ważny 5 minut, zapamiętany w main razem z limitami). `apply` musi go podać, odmawia przy
     zmianie zapisanych limitów od podglądu (`stale-plan`) i przerywa się przed usunięciem czegokolwiek (`plan-changed`),
-    gdy przeliczony plan usuwa więcej wpisów albo obiektów, niż pokazał podgląd.
+    gdy przeliczony plan usuwa więcej wpisów albo obiektów, niż pokazał podgląd. `confirmed` i token przychodzą z
+    renderera, więc przejęty renderer mógłby je podać sam; od ADR 0063 zaostrzenie limitu i wykonanie z ważnym tokenem
+    wymagają też zgody w natywnym oknie main z limitami i liczbami zapamiętanymi w main.
 12. **Interfejs: sekcja na ekranie Diagnostyka**, obok ręcznej odbudowy indeksu, bo to ta sama klasa operacji (nieodwracalna
     po potwierdzeniu, pod wspólną blokadą). Aplikacja nie ma osobnego ekranu Ustawienia (kanały `settings:*` usunięto w
     Etapie 10). Formularz z trzema polami (puste znaczy brak limitu), przycisk zapisu, "Sprawdź, ile zwolni", plan z

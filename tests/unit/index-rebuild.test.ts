@@ -34,6 +34,16 @@ import {
   VERSIONED_CHANNELS,
 } from '../../src/main/services/library-git-runner';
 import { PREVIEW_TOKEN_TTL_MS, RetentionRunner } from '../../src/main/services/retention-runner';
+import {
+  TEST_CONFIRM_ENV,
+  fixedConfirmPort,
+  isAccepted,
+  singleDialog,
+  testConfirmAnswer,
+  type ConfirmOutcome,
+  type ConfirmPort,
+  type ConfirmRequest,
+} from '../../src/main/services/native-confirm';
 import { OperationLock } from '../../src/main/services/write-lock';
 import {
   FakeClock,
@@ -558,6 +568,76 @@ describe('kanaly nie przyjmuja sciezki (ADR 0030)', () => {
   });
 });
 
+/** Atrapa natywnego okna (ADR 0063): zapisuje pytania i odpowiada kolejno z `answers`, domyslnie zgoda. */
+function fakeConfirm(): {
+  port: ConfirmPort;
+  asked: ConfirmRequest[];
+  answers: ConfirmOutcome[];
+  during: (() => void)[];
+} {
+  const asked: ConfirmRequest[] = [];
+  const answers: ConfirmOutcome[] = [];
+  const during: (() => void)[] = [];
+  return {
+    asked,
+    answers,
+    during,
+    port: {
+      confirm: (request) => {
+        asked.push(request);
+        during.shift()?.();
+        return Promise.resolve(answers.shift() ?? 'accept');
+      },
+    },
+  };
+}
+
+describe('natywne okno potwierdzenia: odpowiedz testowa (ADR 0063)', () => {
+  it('zmienna testowa dziala tylko w aplikacji niezapakowanej i tylko z dwiema wartosciami', () => {
+    expect(testConfirmAnswer({ [TEST_CONFIRM_ENV]: 'accept' }, false)).toBe('accept');
+    expect(testConfirmAnswer({ [TEST_CONFIRM_ENV]: 'cancel' }, false)).toBe('cancel');
+    // Zapakowana binarka ignoruje zmienna: zawsze pokazuje prawdziwe okno.
+    expect(testConfirmAnswer({ [TEST_CONFIRM_ENV]: 'accept' }, true)).toBeNull();
+    expect(testConfirmAnswer({ [TEST_CONFIRM_ENV]: 'cancel' }, true)).toBeNull();
+    for (const value of [undefined, '', 'ACCEPT', 'tak', '1', 'accept ']) {
+      expect(testConfirmAnswer({ [TEST_CONFIRM_ENV]: value }, false)).toBeNull();
+    }
+    expect(testConfirmAnswer({}, false)).toBeNull();
+  });
+
+  it('zgoda tylko z przyciskiem zgody i zaznaczonym polem; odpowiedz testowa idzie ta sama sciezka', async () => {
+    expect(isAccepted(1, true)).toBe(true);
+    expect(isAccepted(1, false)).toBe(false);
+    expect(isAccepted(0, true)).toBe(false);
+    expect(isAccepted(0, false)).toBe(false);
+    const request: ConfirmRequest = { message: 'm', detail: 'd', confirmLabel: 'Zapisz' };
+    expect(await fixedConfirmPort('accept').confirm(request)).toBe('accept');
+    expect(await fixedConfirmPort('cancel').confirm(request)).toBe('cancel');
+  });
+
+  it('najwyzej jedno okno: kolejna prosba w trakcie dostaje busy od razu, bez kolejki', async () => {
+    let close: (value: { response: number; checkboxChecked: boolean }) => void = () => undefined;
+    const show = vi.fn(
+      () =>
+        new Promise<{ response: number; checkboxChecked: boolean }>((resolve) => {
+          close = resolve;
+        }),
+    );
+    const port = singleDialog(show);
+    const request: ConfirmRequest = { message: 'm', detail: 'd', confirmLabel: 'Zapisz' };
+    const first = port.confirm(request);
+    expect(await port.confirm(request)).toBe('busy');
+    expect(await port.confirm(request)).toBe('busy');
+    expect(show).toHaveBeenCalledTimes(1);
+    close({ response: 1, checkboxChecked: true });
+    expect(await first).toBe('accept');
+    // Po zamknieciu okna nastepna prosba znow je otwiera; blad okna to odmowa.
+    show.mockImplementationOnce(() => Promise.reject(new Error('okno')));
+    expect(await port.confirm(request)).toBe('cancel');
+    expect(show).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)', () => {
   const report: RetentionReport = {
     applied: true,
@@ -585,6 +665,7 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
         : Promise.resolve(report),
     );
     const lock = new OperationLock();
+    const confirm = fakeConfirm();
     const runner = new RetentionRunner({
       settings: {
         load: () => Promise.resolve(stored),
@@ -596,13 +677,20 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
       service: () =>
         options.service === 'missing' ? null : ({ run } as unknown as RetentionService),
       lock,
+      confirm: confirm.port,
       now: () => clock,
     });
     return {
       runner,
       run,
       lock,
+      asked: confirm.asked,
+      answers: confirm.answers,
+      during: confirm.during,
       stored: () => stored,
+      replaceSettings: (next: RetentionSettings) => {
+        stored = next;
+      },
       advance: (ms: number) => {
         clock += ms;
       },
@@ -638,6 +726,70 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
       ok: false,
       error: { code: 'plan-expired' },
     });
+  });
+
+  it('natywne okno przed usunieciem: liczby z podgladu w main, anulowanie nic nie usuwa i zuzywa token', async () => {
+    const h = retention();
+    const token = await tokenOf(h);
+    h.answers.push('cancel');
+    expect(await h.runner.apply(true, token)).toMatchObject({
+      ok: false,
+      error: { code: 'confirmation-cancelled' },
+    });
+    expect(h.run).not.toHaveBeenCalledWith(expect.objectContaining({ apply: true }));
+    expect(h.asked).toEqual([
+      {
+        message: 'Usunąć trwale 1 wpis historii i 2 obiekty?',
+        detail: expect.stringContaining('Czyszczenie zwolni 40 B.') as unknown,
+        confirmLabel: 'Usuń wpisy historii',
+      },
+    ]);
+    expect(await h.runner.apply(true, token)).toMatchObject({ error: { code: 'plan-expired' } });
+    // Bledny albo przeterminowany token nie otwiera okna.
+    expect(h.asked).toHaveLength(1);
+    // Okno nie trzyma blokady wylacznej: w trakcie decyzji zapisy przechodza.
+    const second = await tokenOf(h);
+    let writerDuringDialog: (() => void) | null = null;
+    h.during.push(() => {
+      writerDuringDialog = h.lock.tryEnterWrite();
+      writerDuringDialog?.();
+    });
+    expect(await h.runner.apply(true, second)).toMatchObject({ ok: true });
+    expect(writerDuringDialog).not.toBeNull();
+  });
+
+  it('po oknie pod blokada wylaczna: zmiana limitow albo wygasniecie w trakcie decyzji to stale-plan', async () => {
+    const h = retention();
+    const changed = await tokenOf(h);
+    h.during.push(() => {
+      h.replaceSettings({ ...NO_RETENTION_LIMITS, maxEntries: 10 });
+    });
+    expect(await h.runner.apply(true, changed)).toMatchObject({
+      ok: false,
+      error: { code: 'stale-plan' },
+    });
+    expect(h.run).not.toHaveBeenCalledWith(expect.objectContaining({ apply: true }));
+    // Blokada wylaczna zwolniona po odmowie.
+    const exclusive = h.lock.tryEnterExclusive();
+    expect(exclusive).not.toBeNull();
+    exclusive?.();
+
+    h.replaceSettings(NO_RETENTION_LIMITS);
+    const expiring = await tokenOf(h);
+    h.during.push(() => {
+      h.advance(PREVIEW_TOKEN_TTL_MS + 1);
+    });
+    expect(await h.runner.apply(true, expiring)).toMatchObject({
+      ok: false,
+      error: { code: 'stale-plan' },
+    });
+    expect(h.run).not.toHaveBeenCalledWith(expect.objectContaining({ apply: true }));
+
+    // Inne okno otwarte: busy, nic nie usuniete.
+    const third = await tokenOf(h);
+    h.answers.push('busy');
+    expect(await h.runner.apply(true, third)).toMatchObject({ ok: false, error: { code: 'busy' } });
+    expect(h.run).not.toHaveBeenCalledWith(expect.objectContaining({ apply: true }));
   });
 
   it('token wygasa po kilku minutach, a zmiana ustawien uniewaznia podglad', async () => {
@@ -734,11 +886,25 @@ describe('czyszczenie historii: blokada, potwierdzenie i ustawienia (ADR 0056)',
     });
     expect(h.stored()).toEqual({ maxEntries: 50, maxAgeDays: null, maxStoreMiB: 1_048_576 });
 
+    // Zapis wlaczajacy limit pokazal natywne okno z limitami z ladunku po walidacji w main.
+    expect(h.asked).toHaveLength(1);
+    expect(h.asked[0]?.confirmLabel).toBe('Zapisz limity');
+    expect(h.asked[0]?.detail).toContain('Liczba wpisów: bez limitu -> 50 wpisów');
+    expect(h.asked[0]?.detail).toContain('Rozmiar historii: bez limitu -> 1048576 MiB');
+    expect(h.asked[0]?.detail).not.toContain('Wiek wpisu');
+
     // Zaostrzenie wymaga potwierdzenia, poluzowanie i wylaczenie nie.
     expect(await h.runner.setSettings({ maxEntries: 20, maxStoreMiB: 100 })).toMatchObject({
       ok: false,
       error: { code: 'confirmation-required' },
     });
+    // Anulowanie w oknie natywnym zostawia stare ustawienia.
+    h.answers.push('cancel');
+    expect(
+      await h.runner.setSettings({ maxEntries: 20, maxStoreMiB: 100, confirmed: true }),
+    ).toMatchObject({ ok: false, error: { code: 'confirmation-cancelled' } });
+    expect(h.stored()).toEqual({ maxEntries: 50, maxAgeDays: null, maxStoreMiB: 1_048_576 });
+    expect(h.asked).toHaveLength(2);
     expect(await h.runner.setSettings({ maxEntries: 100 })).toMatchObject({
       ok: true,
     });
@@ -885,6 +1051,7 @@ describe('wersjonowanie biblioteki w Git: ustawienia, zgoda i blokada (ADR 0060)
       },
     };
     const logUnexpected = vi.fn();
+    const confirm = fakeConfirm();
     const runner = new LibraryGitRunner({
       settings: {
         load: () => Promise.resolve(stored),
@@ -895,6 +1062,7 @@ describe('wersjonowanie biblioteki w Git: ustawienia, zgoda i blokada (ADR 0060)
       },
       git,
       lock,
+      confirm: confirm.port,
       logUnexpected,
       now: () => clock,
       newNonce: () => `nonce-${(nonceCounter += 1)}`,
@@ -903,6 +1071,8 @@ describe('wersjonowanie biblioteki w Git: ustawienia, zgoda i blokada (ADR 0060)
       runner,
       calls,
       lock,
+      asked: confirm.asked,
+      answers: confirm.answers,
       stored: () => stored,
       logUnexpected,
       exclusiveDuringCommit,
@@ -1054,11 +1224,38 @@ describe('wersjonowanie biblioteki w Git: ustawienia, zgoda i blokada (ADR 0060)
     }
     expect(h.stored()).toEqual(DEFAULT_LIBRARY_GIT_SETTINGS);
     expect(h.calls).toEqual([]);
+    // Bez waznego znacznika natywne okno sie nie pokazuje.
+    expect(h.asked).toEqual([]);
+
+    // Anulowanie w natywnym oknie (ADR 0063): ustawienia i repozytorium bez zmian, znacznik zuzyty.
+    const cancelledNonce = await nonceOf(h);
+    h.answers.push('cancel');
+    const cancelled = await h.runner.setSettings({
+      ...request,
+      acknowledged: true,
+      nonce: cancelledNonce,
+    });
+    expect(cancelled.ok === false && cancelled.error.code).toBe('confirmation-cancelled');
+    expect(h.stored()).toEqual(DEFAULT_LIBRARY_GIT_SETTINGS);
+    expect(h.calls).toEqual([]);
+    expect(h.asked).toHaveLength(1);
+    // Liczba elementow z biezacego skanu w main, nie z ladunku renderera.
+    expect(h.asked[0]?.detail).toContain(
+      'Elementy prywatne i projektowe bez wykrytego sekretu: 2.',
+    );
+    expect(h.asked[0]?.confirmLabel).toBe('Dołącz do historii');
+    const reused = await h.runner.setSettings({
+      ...request,
+      acknowledged: true,
+      nonce: cancelledNonce,
+    });
+    expect(reused.ok === false && reused.error.code).toBe('consent-expired');
 
     // Znacznik z odczytu stanu dziala raz.
     const nonce = await nonceOf(h);
     const granted = await h.runner.setSettings({ ...request, acknowledged: true, nonce });
     expect(granted.ok).toBe(true);
+    expect(h.asked).toHaveLength(2);
     expect(h.stored()).toEqual({ enabled: true, includePrivate: true });
     const replay = await h.runner.setSettings({
       enabled: true,
@@ -1095,6 +1292,19 @@ describe('wersjonowanie biblioteki w Git: ustawienia, zgoda i blokada (ADR 0060)
     const h = versioning();
     expect((await h.runner.setSettings({ enabled: true, includePrivate: false })).ok).toBe(true);
     expect((await h.runner.setSettings({ enabled: false, includePrivate: true })).ok).toBe(true);
+    expect(h.asked).toEqual([]);
+  });
+
+  it('bez gita okno zgody sie nie pokazuje: najpierw powod niedostepnosci', async () => {
+    const h = versioning({ available: false });
+    const result = await h.runner.setSettings({
+      enabled: true,
+      includePrivate: true,
+      acknowledged: true,
+      nonce: await nonceOf(h),
+    });
+    expect(result.ok === false && result.error.code).toBe('git-unavailable');
+    expect(h.asked).toEqual([]);
   });
 
   it('zapis ustawien odpowiada busy w trakcie odbudowy i odrzuca niepoprawny ladunek', async () => {

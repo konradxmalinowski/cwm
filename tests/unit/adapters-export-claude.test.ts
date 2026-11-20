@@ -535,6 +535,13 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
       server('pathtoken', { ...http, url: `https://mcp.acme.test/${HEX}/sse` }),
       server('query', { ...http, url: 'https://mcp.acme.test/sse?sig=abc' }),
       server('bidi', { ...stdio(), args: ['--name', 'acme\u202Etxt'] }),
+      // Pelna klasa Cf, selektory wariantu, znaczniki i wypelniacze Hangul (ADR 0063).
+      server('joiner', { ...stdio(), args: ['--name', 'acme\u2060txt'] }),
+      server('alm', { ...stdio(), args: ['--name', 'acme\u061Ctxt'] }),
+      server('shy', { ...stdio(), args: ['--name', 'acme\u00ADtxt'] }),
+      server('tag', { ...stdio(), args: ['--name', 'acme\u{E0041}txt'] }),
+      server('vs', { ...stdio(), args: ['--name', 'acme\uFE0Ftxt'] }),
+      server('hangul', { ...stdio(), args: ['--name', 'acme\u3164txt'] }),
       server('constructor', stdio()),
     ];
     const plan = await adapter.plan(items, mcpCtx(reader));
@@ -550,6 +557,9 @@ describe('eksport Claude Code: serwery MCP (ADR 0061)', () => {
     expect(reasons.get('mcp-pathtoken')).toMatch(/token|sekret/);
     expect(reasons.get('mcp-query')).toMatch(/parametr/);
     expect(reasons.get('mcp-bidi')).toMatch(/niewidoczny znak/);
+    for (const name of ['joiner', 'alm', 'shy', 'tag', 'vs', 'hangul']) {
+      expect(reasons.get(`mcp-${name}`)).toMatch(/niewidoczny znak/);
+    }
     expect(reasons.get('mcp-constructor')).toMatch(/zastrzeżona/);
     for (const reason of reasons.values()) {
       expect(reason).not.toContain(HEX);
